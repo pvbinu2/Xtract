@@ -1,0 +1,19 @@
+{
+  "name": "xtract",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "functions/processor"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace apps/api\" \"npm run dev --workspace apps/web\"",
+    "dev:api": "npm run dev --workspace apps/api",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:function": "npm run start --workspace functions/processor"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
