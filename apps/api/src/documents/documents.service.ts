@@ -77,23 +77,29 @@ export class DocumentsService {
     filePath: string;
     category: string;
     documentTypeId: string;
-  }) {
-    const docType = await this.documentTypeModel.findById(payload.documentTypeId);
-    if (!docType) throw new NotFoundException('Document type not found');
+  }[]) {
+    const documents = [] as IncomingDocumentDocument[];
 
-    const document = await this.documentModel.create({
-      ...payload,
-      documentTypeName: docType.name,
-      status: 'processing',
-      extractedData: [],
-    });
+    for (const item of payload) {
+      const docType = await this.documentTypeModel.findById(item.documentTypeId);
+      if (!docType) throw new NotFoundException('Document type not found');
 
-    if (process.env.PROCESSING_MODE === 'queue') {
-      await this.enqueueProcessing(document.id);
-    } else {
-      await this.processDocument(document.id);
+      const document = await this.documentModel.create({
+        ...item,
+        documentTypeName: docType.name,
+        status: 'processing',
+        extractedData: [],
+      });
+
+      documents.push(document);
+      if (process.env.PROCESSING_MODE === 'queue') {
+        await this.enqueueProcessing(document.id);
+      } else {
+        await this.processDocument(document.id);
+      }
     }
-    return this.findById(document.id);
+
+    return Promise.all(documents.map((document) => this.findById(document.id)));
   }
 
   private async enqueueProcessing(documentId: string) {

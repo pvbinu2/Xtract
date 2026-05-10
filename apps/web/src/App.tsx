@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   CheckCircle2,
@@ -649,7 +649,7 @@ function UploadScreen({
   const [category, setCategory] = useState(categories[0] ?? '');
   const availableTypes = documentTypes.filter((type) => type.category === category);
   const [documentTypeId, setDocumentTypeId] = useState(availableTypes[0]?._id ?? '');
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
 
   useEffect(() => {
     setCategory((current) => current || categories[0] || '');
@@ -666,12 +666,12 @@ function UploadScreen({
         className="form-grid"
         onSubmit={(event: FormEvent) => {
           event.preventDefault();
-          if (!file) return;
+          if (!files.length) return;
           onRun(async () => {
-            await api.uploadDocument({ category, documentTypeId, file });
+            await api.uploadDocuments({ category, documentTypeId, files });
             await onRefresh();
             openDocuments();
-          }, 'Document uploaded and processed');
+          }, 'Documents uploaded and processed');
         }}
       >
         <label>
@@ -694,12 +694,21 @@ function UploadScreen({
         </label>
         <label className="file-drop span-2">
           <Upload size={28} />
-          <span>{file ? file.name : 'Choose a PDF for extraction'}</span>
-          <input type="file" accept="application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+          <span>
+            {files.length > 0
+              ? `${files.length} PDF${files.length === 1 ? '' : 's'} selected`
+              : 'Choose PDFs for extraction'}
+          </span>
+          <input
+            type="file"
+            accept="application/pdf"
+            multiple
+            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+          />
         </label>
-        <button className="primary-button" disabled={!documentTypeId || !file}>
+        <button className="primary-button" disabled={!documentTypeId || files.length === 0}>
           <Upload size={16} />
-          Upload Document
+          Upload Document{files.length === 1 ? '' : 's'}
         </button>
       </form>
     </section>
@@ -724,6 +733,7 @@ function DocumentList({
   const [sort, setSort] = useState('latest');
   const [pageSize, setPageSize] = useState(25);
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
+  const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
 
   async function loadPage(page: number) {
@@ -816,7 +826,7 @@ function DocumentList({
                 title="Reprocess document"
                 onClick={(event) => {
                   event.stopPropagation();
-                  reprocessDocument(doc);
+                  setReprocessTarget(doc);
                 }}
               >
                 <RotateCcw size={16} />
@@ -843,6 +853,19 @@ function DocumentList({
           confirmLabel="Delete"
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => deleteDocument(deleteTarget)}
+        />
+      )}
+
+      {reprocessTarget && (
+        <ConfirmDialog
+          title="Reprocess Document"
+          body={`Reprocess "${reprocessTarget.originalName}"? This will re-run the extraction on this document.`}
+          confirmLabel="Reprocess"
+          onCancel={() => setReprocessTarget(null)}
+          onConfirm={() => {
+            reprocessDocument(reprocessTarget);
+            setReprocessTarget(null);
+          }}
         />
       )}
 
@@ -1039,6 +1062,7 @@ function PdfViewer({
   highlights: Array<{ page: number; x: number; y: number; width: number; height: number }>;
 }) {
   const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
+  const pdfContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1063,8 +1087,33 @@ function PdfViewer({
     };
   }, [url]);
 
+  useEffect(() => {
+    if (highlights.length === 0 || !pdfContainerRef.current) return;
+
+    // Get the first highlight's page
+    const firstHighlight = highlights[0];
+    const targetPageIndex = firstHighlight.page;
+
+    // Find the page element corresponding to the target page
+    const pageElements = pdfContainerRef.current.querySelectorAll('.pdf-page');
+    if (targetPageIndex >= 0 && targetPageIndex < pageElements.length) {
+      const targetPageElement = pageElements[targetPageIndex];
+      
+      // Scroll the page into view with smooth behavior
+      targetPageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // Focus on the highlight by finding and highlighting it
+      setTimeout(() => {
+        const highlights = targetPageElement.querySelectorAll('.pdf-highlight');
+        if (highlights.length > 0) {
+          (highlights[0] as HTMLElement).focus({ preventScroll: true });
+        }
+      }, 100);
+    }
+  }, [highlights]);
+
   return (
-    <div className="pdf-pages">
+    <div className="pdf-pages" ref={pdfContainerRef}>
       {pages.map((page, index) => (
         <div className="pdf-page" key={index} style={{ aspectRatio: `${page.width} / ${page.height}` }}>
           <img alt={`PDF page ${index + 1}`} src={page.dataUrl} />
@@ -1080,6 +1129,7 @@ function PdfViewer({
                   width: `${box.width * 100}%`,
                   height: `${box.height * 100}%`,
                 }}
+                tabIndex={0}
               />
             ))}
         </div>

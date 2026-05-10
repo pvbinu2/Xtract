@@ -42,8 +42,15 @@ export const api = {
     const data = new FormData();
     data.append('category', payload.category);
     data.append('documentTypeId', payload.documentTypeId);
-    data.append('file', payload.file);
+    data.append('files', payload.file);
     return request<IncomingDocument>('/documents/upload', { method: 'POST', body: data });
+  },
+  uploadDocuments: (payload: { category: string; documentTypeId: string; files: File[] }) => {
+    const data = new FormData();
+    data.append('category', payload.category);
+    data.append('documentTypeId', payload.documentTypeId);
+    payload.files.forEach((file) => data.append('files', file));
+    return request<IncomingDocument[]>('/documents/upload', { method: 'POST', body: data });
   },
   listDocuments: (params: URLSearchParams) =>
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),

@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { Body, Controller, Delete, Get, Param, Post, Query, Res, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
@@ -33,18 +33,20 @@ export class DocumentsController {
   }
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file', { storage }))
+  @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles() files: Express.Multer.File[],
     @Body() body: { category: string; documentTypeId: string },
   ) {
-    return this.service.upload({
-      fileName: file.filename,
-      originalName: file.originalname,
-      filePath: file.path,
-      category: body.category,
-      documentTypeId: body.documentTypeId,
-    });
+    return this.service.upload(
+      files.map((file) => ({
+        fileName: file.filename,
+        originalName: file.originalname,
+        filePath: file.path,
+        category: body.category,
+        documentTypeId: body.documentTypeId,
+      })),
+    );
   }
 
   @Get(':id')
