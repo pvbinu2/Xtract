@@ -87,7 +87,7 @@ export function App() {
     items: [],
     total: 0,
     page: 1,
-    pageSize: 25,
+    pageSize: 10,
     totalPages: 1,
   });
   const [activeTypeId, setActiveTypeId] = useState('');
@@ -104,7 +104,7 @@ export function App() {
   async function refresh() {
     const [types, docs] = await Promise.all([
       api.listDocumentTypes(),
-      api.listDocuments(new URLSearchParams({ sort: 'latest', page: '1', pageSize: '25' })),
+      api.listDocuments(new URLSearchParams({ sort: 'latest', page: '1', pageSize: '10' })),
     ]);
     setDocumentTypes(types);
     setDocumentPage(docs);
@@ -731,7 +731,7 @@ function DocumentList({
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
   const [sort, setSort] = useState('latest');
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
