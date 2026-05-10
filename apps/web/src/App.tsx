@@ -6,6 +6,7 @@ import {
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
+  Moon,
   PlusCircle,
   FilePlus2,
   FileSearch,
@@ -16,6 +17,7 @@ import {
   RotateCcw,
   RefreshCw,
   Save,
+  Sun,
   X,
   Trash2,
   Upload,
@@ -94,6 +96,7 @@ export function App() {
   const [activeDocumentId, setActiveDocumentId] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
 
   const activeType = documentTypes.find((item) => item._id === activeTypeId) ?? documentTypes[0];
   const categories = useMemo(
@@ -115,6 +118,16 @@ export function App() {
   useEffect(() => {
     refresh().catch((error) => setMessage(error.message));
   }, []);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('xtract-dark-mode');
+    setDarkMode(stored === 'true');
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
+    localStorage.setItem('xtract-dark-mode', String(darkMode));
+  }, [darkMode]);
 
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true);
@@ -173,10 +186,20 @@ export function App() {
             <p className="eyebrow">Extraction operations</p>
             <h1>{view === 'validation' ? 'Validation' : navigation.find((item) => item.id === view)?.label}</h1>
           </div>
-          <div className="status-strip">
-            <StatusMetric label="Processing" value={documents.filter((doc) => doc.status === 'processing').length} />
-            <StatusMetric label="Ready" value={documents.filter((doc) => doc.status === 'extracted').length} />
-            <StatusMetric label="Validated" value={documents.filter((doc) => doc.status === 'validated').length} />
+          <div className="topbar-actions">
+            <div className="status-strip">
+              <StatusMetric label="Processing" value={documents.filter((doc) => doc.status === 'processing').length} />
+              <StatusMetric label="Ready" value={documents.filter((doc) => doc.status === 'extracted').length} />
+              <StatusMetric label="Validated" value={documents.filter((doc) => doc.status === 'validated').length} />
+            </div>
+            <button
+              type="button"
+              className="icon-button theme-toggle"
+              title={darkMode ? 'Disable dark mode' : 'Enable dark mode'}
+              onClick={() => setDarkMode((current) => !current)}
+            >
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
           </div>
         </header>
 
