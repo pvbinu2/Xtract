@@ -282,8 +282,6 @@ function DocumentTypeManagement({
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
-  const [category, setCategory] = useState('Finance');
-  const [name, setName] = useState('Invoice');
   const [prompt, setPrompt] = useState('Invoice number, invoice date, supplier name, subtotal, tax amount, total amount');
   const [sample, setSample] = useState<File | null>(null);
   const [fields, setFields] = useState<ExtractionField[]>([]);
@@ -631,12 +629,9 @@ function DocumentTypeManagement({
       </section>
       {showCreateModal && (
         <CreateDocumentTypeModal
-          category={category}
-          name={name}
+          documentTypes={documentTypes}
           prompt={prompt}
           categories={categories}
-          setCategory={setCategory}
-          setName={setName}
           setPrompt={setPrompt}
           onCancel={() => setShowCreateModal(false)}
           onCreate={(created) => {
@@ -652,23 +647,17 @@ function DocumentTypeManagement({
 }
 
 function CreateDocumentTypeModal({
-  category,
-  name,
+  documentTypes,
   prompt,
   categories,
-  setCategory,
-  setName,
   setPrompt,
   onCancel,
   onCreate,
   onRun,
 }: {
-  category: string;
-  name: string;
+  documentTypes: DocumentType[];
   prompt: string;
   categories: string[];
-  setCategory: (value: string) => void;
-  setName: (value: string) => void;
   setPrompt: (value: string) => void;
   onCancel: () => void;
   onCreate: (created: DocumentType) => void;
@@ -676,6 +665,34 @@ function CreateDocumentTypeModal({
 }) {
   const [isNewCategory, setIsNewCategory] = useState(false);
   const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [category, setCategory] = useState('');
+  const [name, setName] = useState('');
+  const [errors, setErrors] = useState<{ name?: string; category?: string; prompt?: string }>({});
+
+  const validate = () => {
+    const trimmedName = name.trim();
+    const trimmedCategory = category.trim();
+    const trimmedPrompt = prompt.trim();
+    const nextErrors: typeof errors = {};
+
+    if (!trimmedName) {
+      nextErrors.name = 'Document type name is required.';
+    } else if (documentTypes.some((type) => type.name.toLowerCase() === trimmedName.toLowerCase())) {
+      nextErrors.name = 'A document type with this name already exists.';
+    }
+
+    if (!trimmedCategory) {
+      nextErrors.category = 'Category is required.';
+    }
+
+    if (!trimmedPrompt) {
+      nextErrors.prompt = 'Extraction prompt is required.';
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <section className="modal">
@@ -692,8 +709,11 @@ function CreateDocumentTypeModal({
           className="form-grid"
           onSubmit={(event) => {
             event.preventDefault();
+            if (!validate()) {
+              return;
+            }
             onRun(async () => {
-              const created = await api.createDocumentType({ category, name, prompt });
+              const created = await api.createDocumentType({ category, name: name.trim(), prompt: prompt.trim() });
               onCreate(created);
             }, 'Document type created');
           }}
@@ -703,7 +723,16 @@ function CreateDocumentTypeModal({
               <label>
                 Category
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <select value={category} onChange={(event) => setCategory(event.target.value)} required>
+                  <select
+                    value={category}
+                    onChange={(event) => {
+                      setCategory(event.target.value);
+                      if (errors.category && event.target.value.trim()) {
+                        setErrors((current) => ({ ...current, category: undefined }));
+                      }
+                    }}
+                    className={errors.category ? 'input-error' : ''}
+                  >
                     <option value="">Select a category</option>
                     {categories.map((cat) => (
                       <option key={cat} value={cat}>
@@ -711,6 +740,7 @@ function CreateDocumentTypeModal({
                       </option>
                     ))}
                   </select>
+                  {errors.category ? <div className="field-error">{errors.category}</div> : null}
                   <button
                     type="button"
                     className="secondary-button"
@@ -745,6 +775,9 @@ function CreateDocumentTypeModal({
                         setCategory(newCategoryInput.trim());
                         setIsNewCategory(false);
                         setNewCategoryInput('');
+                        if (errors.category) {
+                          setErrors((current) => ({ ...current, category: undefined }));
+                        }
                       }
                     }}
                     style={{ whiteSpace: 'nowrap' }}
@@ -769,11 +802,32 @@ function CreateDocumentTypeModal({
           </div>
           <label>
             Document type
-            <input value={name} onChange={(event) => setName(event.target.value)} required />
+            <input
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                if (errors.name && event.target.value.trim()) {
+                  setErrors((current) => ({ ...current, name: undefined }));
+                }
+              }}
+              className={errors.name ? 'input-error' : ''}
+            />
+            {errors.name ? <div className="field-error">{errors.name}</div> : null}
           </label>
           <label className="span-2">
             Extraction prompt
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} required />
+            <textarea
+              value={prompt}
+              onChange={(event) => {
+                setPrompt(event.target.value);
+                if (errors.prompt && event.target.value.trim()) {
+                  setErrors((current) => ({ ...current, prompt: undefined }));
+                }
+              }}
+              rows={4}
+              className={errors.prompt ? 'input-error' : ''}
+            />
+            {errors.prompt ? <div className="field-error">{errors.prompt}</div> : null}
           </label>
           <div className="modal-footer">
             <button className="secondary-button" type="button" onClick={onCancel}>
@@ -1098,6 +1152,18 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
+  const fieldStyles = useMemo(() => {
+    return values.reduce<Record<string, { border: string; fill: string; activeFill: string }>>((acc, item, index) => {
+      const hue = (index * 47 + 12) % 360;
+      acc[item.key] = {
+        border: `hsl(${hue}, 88%, 47%)`,
+        fill: `hsla(${hue}, 95%, 80%, 0.32)`,
+        activeFill: `hsla(${hue}, 95%, 70%, 0.42)`,
+      };
+      return acc;
+    }, {});
+  }, [values]);
+
   useEffect(() => {
     if (!documentId) return;
     api.getDocument(documentId).then((doc) => {
@@ -1144,7 +1210,16 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
       <section className="pdf-pane">
         <PdfViewer
           url={api.documentFileUrl(document._id)}
-          highlights={values.find((item) => item.key === activeFieldKey)?.boundingBoxes || []}
+          highlights={values.flatMap((item, index) => {
+            const styles = fieldStyles[item.key];
+            return (item.boundingBoxes || []).map((box) => ({
+              ...box,
+              fieldKey: item.key,
+              color: styles?.border || 'rgba(59, 130, 246, 0.8)',
+              activeFill: styles?.activeFill || 'rgba(59, 130, 246, 0.25)',
+            }));
+          })}
+          activeFieldKey={activeFieldKey}
         />
       </section>
       <section className="panel extraction-pane">
@@ -1157,9 +1232,20 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
         </div>
         {message && <div className="toast inline">{message}</div>}
         <div className="extraction-form">
-          {values.map((item, index) =>
-            item.type === 'table' ? (
-              <div className="extraction-field" key={item.key}>
+          {values.map((item, index) => {
+            const styles = fieldStyles[item.key];
+            const isActive = item.key === activeFieldKey;
+            const wrapperStyle = {
+              borderColor: styles?.border,
+              backgroundColor: isActive ? styles?.activeFill : styles?.fill,
+            } as const;
+
+            return item.type === 'table' ? (
+              <div
+                className={`extraction-field${isActive ? ' active' : ''}`}
+                key={item.key}
+                style={wrapperStyle}
+              >
                 <div className="field-label">
                   <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
                     {item.label}
@@ -1169,21 +1255,25 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
                 <TableValuePreview item={item} canEdit={!isValidated} onEdit={() => setTableEditIndex(index)} />
               </div>
             ) : (
-              <label key={item.key}>
-                <span>
+              <label
+                key={item.key}
+                className={`extraction-field${isActive ? ' active' : ''}`}
+                style={wrapperStyle}
+              >
+                <div className="field-label">
                   <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
                     {item.label}
                   </button>
                   {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
-                </span>
+                </div>
                 <input
                   value={coerceValue(item.value)}
                   disabled={isValidated}
                   onChange={(event) => updateValue(index, event.target.value)}
                 />
               </label>
-            ),
-          )}
+            );
+          })}
         </div>
         {isValidated ? (
           <div className="locked-state">
@@ -1214,9 +1304,20 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
 function PdfViewer({
   url,
   highlights,
+  activeFieldKey,
 }: {
   url: string;
-  highlights: Array<{ page: number; x: number; y: number; width: number; height: number }>;
+  highlights: Array<{
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    fieldKey: string;
+    color: string;
+    activeFill: string;
+  }>;
+  activeFieldKey: string | null;
 }) {
   const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
@@ -1245,29 +1346,26 @@ function PdfViewer({
   }, [url]);
 
   useEffect(() => {
-    if (highlights.length === 0 || !pdfContainerRef.current) return;
+    if (!pdfContainerRef.current) return;
+    const selectedHighlights = highlights.filter((box) => box.fieldKey === activeFieldKey);
+    if (selectedHighlights.length === 0) return;
 
-    // Get the first highlight's page
-    const firstHighlight = highlights[0];
+    const firstHighlight = selectedHighlights[0];
     const targetPageIndex = firstHighlight.page;
 
-    // Find the page element corresponding to the target page
     const pageElements = pdfContainerRef.current.querySelectorAll('.pdf-page');
     if (targetPageIndex >= 0 && targetPageIndex < pageElements.length) {
       const targetPageElement = pageElements[targetPageIndex];
-      
-      // Scroll the page into view with smooth behavior
       targetPageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-      // Focus on the highlight by finding and highlighting it
       setTimeout(() => {
-        const highlights = targetPageElement.querySelectorAll('.pdf-highlight');
-        if (highlights.length > 0) {
-          (highlights[0] as HTMLElement).focus({ preventScroll: true });
+        const activeHighlights = targetPageElement.querySelectorAll('.pdf-highlight.active');
+        if (activeHighlights.length > 0) {
+          (activeHighlights[0] as HTMLElement).focus({ preventScroll: true });
         }
       }, 100);
     }
-  }, [highlights]);
+  }, [highlights, activeFieldKey]);
 
   return (
     <div className="pdf-pages" ref={pdfContainerRef}>
@@ -1276,19 +1374,25 @@ function PdfViewer({
           <img alt={`PDF page ${index + 1}`} src={page.dataUrl} />
           {highlights
             .filter((box) => box.page === index)
-            .map((box, boxIndex) => (
-              <div
-                className="pdf-highlight"
-                key={`${index}-${boxIndex}`}
-                style={{
-                  left: `${box.x * 100}%`,
-                  top: `${box.y * 100}%`,
-                  width: `${box.width * 100}%`,
-                  height: `${box.height * 100}%`,
-                }}
-                tabIndex={0}
-              />
-            ))}
+            .map((box, boxIndex) => {
+              const isActive = box.fieldKey === activeFieldKey;
+              return (
+                <div
+                  className={`pdf-highlight${isActive ? ' active' : ''}`}
+                  key={`${index}-${boxIndex}`}
+                  style={{
+                    left: `${box.x * 100}%`,
+                    top: `${box.y * 100}%`,
+                    width: `${box.width * 100}%`,
+                    height: `${box.height * 100}%`,
+                    borderColor: box.color,
+                    backgroundColor: isActive ? box.activeFill : 'transparent',
+                    boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
+                  }}
+                  tabIndex={isActive ? 0 : -1}
+                />
+              );
+            })}
         </div>
       ))}
     </div>
