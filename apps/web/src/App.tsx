@@ -98,7 +98,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
 
-  const activeType = documentTypes.find((item) => item._id === activeTypeId) ?? documentTypes[0];
+  const activeType = activeTypeId ? documentTypes.find((item) => item._id === activeTypeId) : undefined;
   const categories = useMemo(
     () => Array.from(new Set(documentTypes.map((item) => item.category))).sort(),
     [documentTypes],
@@ -112,7 +112,6 @@ export function App() {
     setDocumentTypes(types);
     setDocumentPage(docs);
     setDocuments(docs.items);
-    if (!activeTypeId && types[0]) setActiveTypeId(types[0]._id);
   }
 
   useEffect(() => {
@@ -216,6 +215,7 @@ export function App() {
             documentTypes={documentTypes}
             activeType={activeType}
             setActiveTypeId={setActiveTypeId}
+            categories={categories}
             onRun={run}
             onRefresh={refresh}
           />
@@ -271,12 +271,14 @@ function DocumentTypeManagement({
   documentTypes,
   activeType,
   setActiveTypeId,
+  categories,
   onRun,
   onRefresh,
 }: {
   documentTypes: DocumentType[];
   activeType?: DocumentType;
   setActiveTypeId: (id: string) => void;
+  categories: string[];
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
@@ -287,6 +289,7 @@ function DocumentTypeManagement({
   const [fields, setFields] = useState<ExtractionField[]>([]);
   const [schemaEditing, setSchemaEditing] = useState(false);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
@@ -319,37 +322,11 @@ function DocumentTypeManagement({
     <div className="two-column">
       <section className="panel">
         <div className="panel-heading">
-          <h2>Create Type</h2>
-          <Plus size={18} />
-        </div>
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onRun(async () => {
-              const created = await api.createDocumentType({ category, name, prompt });
-              setActiveTypeId(created._id);
-              await onRefresh();
-            }, 'Document type created');
-          }}
-        >
-          <label>
-            Category
-            <input value={category} onChange={(event) => setCategory(event.target.value)} />
-          </label>
-          <label>
-            Document type
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label className="span-2">
-            Extraction prompt
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
-          </label>
-          <button className="primary-button" type="submit">
-            <Plus size={16} />
-            Create
+          <h2>Document Types</h2>
+          <button className="icon-button" title="Create document type" onClick={() => setShowCreateModal(true)}>
+            <Plus size={18} />
           </button>
-        </form>
+        </div>
 
         <div className="type-list">
           {documentTypes.map((type) => (
@@ -649,8 +626,165 @@ function DocumentTypeManagement({
             </div>
           </>
         ) : (
-          <EmptyState text="Create a document type to begin." />
+          <EmptyState text="Select a document type to view details." />
         )}
+      </section>
+      {showCreateModal && (
+        <CreateDocumentTypeModal
+          category={category}
+          name={name}
+          prompt={prompt}
+          categories={categories}
+          setCategory={setCategory}
+          setName={setName}
+          setPrompt={setPrompt}
+          onCancel={() => setShowCreateModal(false)}
+          onCreate={(created) => {
+            setActiveTypeId(created._id);
+            setShowCreateModal(false);
+            onRefresh();
+          }}
+          onRun={onRun}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateDocumentTypeModal({
+  category,
+  name,
+  prompt,
+  categories,
+  setCategory,
+  setName,
+  setPrompt,
+  onCancel,
+  onCreate,
+  onRun,
+}: {
+  category: string;
+  name: string;
+  prompt: string;
+  categories: string[];
+  setCategory: (value: string) => void;
+  setName: (value: string) => void;
+  setPrompt: (value: string) => void;
+  onCancel: () => void;
+  onCreate: (created: DocumentType) => void;
+  onRun: (action: () => Promise<void>, success: string) => Promise<void>;
+}) {
+  const [isNewCategory, setIsNewCategory] = useState(false);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="modal">
+        <div className="modal-heading">
+          <div>
+            <h2>Create Document Type</h2>
+            <p>Define a new document type for extraction.</p>
+          </div>
+          <button className="icon-button" title="Close" onClick={onCancel}>
+            <X size={17} />
+          </button>
+        </div>
+        <form
+          className="form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onRun(async () => {
+              const created = await api.createDocumentType({ category, name, prompt });
+              onCreate(created);
+            }, 'Document type created');
+          }}
+        >
+          <div>
+            {!isNewCategory ? (
+              <label>
+                Category
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select value={category} onChange={(event) => setCategory(event.target.value)} required>
+                    <option value="">Select a category</option>
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    title="Add new category"
+                    onClick={() => {
+                      setIsNewCategory(true);
+                      setNewCategoryInput('');
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+              </label>
+            ) : (
+              <label>
+                New Category
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    value={newCategoryInput}
+                    onChange={(event) => setNewCategoryInput(event.target.value)}
+                    placeholder="Enter new category"
+                    autoFocus
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    title="Use this category"
+                    onClick={() => {
+                      if (newCategoryInput.trim()) {
+                        setCategory(newCategoryInput.trim());
+                        setIsNewCategory(false);
+                        setNewCategoryInput('');
+                      }
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    title="Cancel"
+                    onClick={() => {
+                      setIsNewCategory(false);
+                      setNewCategoryInput('');
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </label>
+            )}
+          </div>
+          <label>
+            Document type
+            <input value={name} onChange={(event) => setName(event.target.value)} required />
+          </label>
+          <label className="span-2">
+            Extraction prompt
+            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} required />
+          </label>
+          <div className="modal-footer">
+            <button className="secondary-button" type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button className="primary-button" type="submit">
+              <Plus size={16} />
+              Create
+            </button>
+          </div>
+        </form>
       </section>
     </div>
   );
