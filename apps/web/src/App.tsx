@@ -365,42 +365,48 @@ function DocumentTypeManagement({
               </button>
             </div>
 
-            <div className="sample-row">
-              <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
+            {!fields.length && (
+              <>
+                <div className="sample-row">
+                  <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
+                  <button
+                    className="secondary-button"
+                    disabled={!sample}
+                    onClick={() =>
+                      sample &&
+                      onRun(async () => {
+                        await api.uploadSample(activeType._id, sample);
+                        await onRefresh();
+                      }, 'Sample uploaded')
+                    }
+                  >
+                    <Upload size={16} />
+                    Sample
+                  </button>
+                </div>
+
+                <label className="full-label">
+                  Prompt
+                  <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
+                </label>
+              </>
+            )}
+            {!fields.length && (
               <button
-                className="secondary-button"
-                disabled={!sample}
+                className="primary-button"
                 onClick={() =>
-                  sample &&
                   onRun(async () => {
-                    await api.uploadSample(activeType._id, sample);
+                    const updated = await api.generateTemplate(activeType._id, prompt);
+                    setFields(withUiIds(updated.fields));
+                    setSchemaEditing(false);
                     await onRefresh();
-                  }, 'Sample uploaded')
+                  }, 'Template generated')
                 }
               >
-                <Upload size={16} />
-                Sample
+                <FileSearch size={16} />
+                Generate Template
               </button>
-            </div>
-
-            <label className="full-label">
-              Prompt
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
-            </label>
-            <button
-              className="primary-button"
-              onClick={() =>
-                onRun(async () => {
-                  const updated = await api.generateTemplate(activeType._id, prompt);
-                  setFields(withUiIds(updated.fields));
-                  setSchemaEditing(false);
-                  await onRefresh();
-                }, 'Template generated')
-              }
-            >
-              <FileSearch size={16} />
-              Generate Template
-            </button>
+            )}
 
             {!!fields.length && (
               <div className="schema-toolbar">
@@ -630,9 +636,7 @@ function DocumentTypeManagement({
       {showCreateModal && (
         <CreateDocumentTypeModal
           documentTypes={documentTypes}
-          prompt={prompt}
           categories={categories}
-          setPrompt={setPrompt}
           onCancel={() => setShowCreateModal(false)}
           onCreate={(created) => {
             setActiveTypeId(created._id);
@@ -648,17 +652,13 @@ function DocumentTypeManagement({
 
 function CreateDocumentTypeModal({
   documentTypes,
-  prompt,
   categories,
-  setPrompt,
   onCancel,
   onCreate,
   onRun,
 }: {
   documentTypes: DocumentType[];
-  prompt: string;
   categories: string[];
-  setPrompt: (value: string) => void;
   onCancel: () => void;
   onCreate: (created: DocumentType) => void;
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
@@ -667,6 +667,7 @@ function CreateDocumentTypeModal({
   const [newCategoryInput, setNewCategoryInput] = useState('');
   const [category, setCategory] = useState('');
   const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
   const [errors, setErrors] = useState<{ name?: string; category?: string; prompt?: string }>({});
 
   const validate = () => {
