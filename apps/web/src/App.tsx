@@ -135,14 +135,25 @@ export function App() {
     [documentTypes],
   );
 
-  async function refresh() {
-    const [types, docs] = await Promise.all([
-      api.listDocumentTypes(),
-      api.listDocuments(new URLSearchParams({ sort: 'latest', page: '1', pageSize: '10' })),
-    ]);
+  async function refreshDocumentTypes() {
+    const types = await api.listDocumentTypes();
     setDocumentTypes(types);
+  }
+
+  async function refreshDocuments() {
+    const docs = await api.listDocuments(
+      new URLSearchParams({
+        sort: 'latest',
+        page: String(documentPage.page),
+        pageSize: String(documentPage.pageSize),
+      }),
+    );
     setDocumentPage(docs);
     setDocuments(docs.items);
+  }
+
+  async function refresh() {
+    await Promise.all([refreshDocumentTypes(), refreshDocuments()]);
   }
 
   useEffect(() => {
@@ -218,10 +229,6 @@ export function App() {
             );
           })}
         </nav>
-        <button className="ghost-button" onClick={() => refresh()} title="Refresh">
-          <RefreshCw size={16} />
-          Refresh
-        </button>
       </aside>
 
       <section className="workspace">
@@ -263,14 +270,14 @@ export function App() {
             setActiveTypeId={setActiveTypeId}
             categories={categories}
             onRun={run}
-            onRefresh={refresh}
+            onRefresh={refreshDocumentTypes}
           />
         )}
         {view === 'classification' && (
           <ClassificationScreen
             documentTypes={documentTypes}
             onRun={run}
-            onRefresh={refresh}
+            onRefresh={refreshDocumentTypes}
           />
         )}
         {view === 'upload' && (
@@ -278,7 +285,7 @@ export function App() {
             categories={categories}
             documentTypes={documentTypes}
             onRun={run}
-            onRefresh={refresh}
+            onRefresh={refreshDocumentTypes}
             openDocuments={() => setView('documents')}
           />
         )}
@@ -303,6 +310,7 @@ export function App() {
             documentTypes={documentTypes}
             downstreamUrl={config.downstreamUrl}
             defaultDeleteAfterDownstream={config.deleteAfterDownstream}
+            onRefresh={refreshDocumentTypes}
             onValidated={async () => {
               await refresh();
               setView('documents');
@@ -336,6 +344,16 @@ function ConfigurationScreen({
   config: AppConfig;
   onConfigChange: (config: AppConfig) => void;
 }) {
+  function refreshConfig() {
+    const storedConfig = localStorage.getItem('xtract-config');
+    if (!storedConfig) return;
+    try {
+      onConfigChange(JSON.parse(storedConfig));
+    } catch {
+      // ignore malformed stored configuration
+    }
+  }
+
   return (
     <div className="panel configuration-panel">
       <div className="panel-heading">
@@ -343,6 +361,9 @@ function ConfigurationScreen({
           <h2>Downstream Configuration</h2>
           <p>Configure where validated document data is sent and whether the document should be deleted afterward.</p>
         </div>
+        <button className="icon-button" title="Refresh configuration" onClick={refreshConfig}>
+          <RefreshCw size={16} />
+        </button>
       </div>
       <div className="configuration-form">
         <label>
@@ -409,19 +430,24 @@ function ClassificationScreen({
             <h2>Classifier Training</h2>
             <p>Finalized document types with at least one sample are included.</p>
           </div>
-          <button
-            className="primary-button"
-            disabled={!includedTypes.length}
-            onClick={() =>
-              onRun(async () => {
-                await Promise.all(includedTypes.map((type) => trainType(type)));
-                await onRefresh();
-              }, 'Classifier training queued')
-            }
-          >
-            <BrainCircuit size={16} />
-            Train All
-          </button>
+          <div className="panel-heading-actions">
+            <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
+              <RefreshCw size={16} />
+            </button>
+            <button
+              className="primary-button"
+              disabled={!includedTypes.length}
+              onClick={() =>
+                onRun(async () => {
+                  await Promise.all(includedTypes.map((type) => trainType(type)));
+                  await onRefresh();
+                }, 'Classifier training queued')
+              }
+            >
+              <BrainCircuit size={16} />
+              Train All
+            </button>
+          </div>
         </div>
 
         <div className="classification-table">
@@ -511,12 +537,18 @@ function DocumentTypeManagement({
     <div className="two-column">
       <section className="panel">
         <div className="panel-heading">
-          <h2>Document Types</h2>
-          <button className="icon-button" title="Create document type" onClick={() => setShowCreateModal(true)}>
-            <Plus size={18} />
-          </button>
+          <div>
+            <h2>Document Types</h2>
+          </div>
+          <div className="panel-heading-actions">
+            <button className="icon-button" title="Refresh document types" onClick={onRefresh}>
+              <RefreshCw size={16} />
+            </button>
+            <button className="icon-button" title="Create document type" onClick={() => setShowCreateModal(true)}>
+              <Plus size={18} />
+            </button>
+          </div>
         </div>
-
         <div className="type-list">
           {documentTypes.map((type) => (
             <button
@@ -1084,6 +1116,15 @@ function UploadScreen({
 
   return (
     <section className="panel upload-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Upload Documents</h2>
+          <p>Send new files into the extraction workflow.</p>
+        </div>
+        <button className="icon-button" title="Refresh upload page" onClick={onRefresh}>
+          <RefreshCw size={16} />
+        </button>
+      </div>
       <form
         className="form-grid"
         onSubmit={(event: FormEvent) => {
@@ -1218,6 +1259,15 @@ function DocumentList({
 
   return (
     <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Documents</h2>
+          <p>Browse uploaded files and manage document state.</p>
+        </div>
+        <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
+          <RefreshCw size={16} />
+        </button>
+      </div>
       <div className="filters">
         <label>
           Status
@@ -1462,12 +1512,14 @@ function ValidationScreen({
   documentTypes,
   downstreamUrl,
   defaultDeleteAfterDownstream = false,
+  onRefresh,
   onValidated,
 }: {
   documentId: string;
   documentTypes: DocumentType[];
   downstreamUrl: string;
   defaultDeleteAfterDownstream?: boolean;
+  onRefresh: () => Promise<void>;
   onValidated: () => Promise<void>;
 }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
@@ -1479,6 +1531,17 @@ function ValidationScreen({
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
+
+  async function refreshPage() {
+    if (!documentId) return;
+    const refreshed = await api.getDocument(documentId);
+    setDocument(refreshed);
+    setValues(refreshed.extractedData);
+    setReclassifyCategory(refreshed.category);
+    setReclassifyDocumentType(refreshed.documentTypeId || '');
+    await onRefresh();
+    setMessage('Validation page refreshed');
+  }
 
   useEffect(() => {
     setDeleteAfterDownstream(defaultDeleteAfterDownstream);
@@ -1585,7 +1648,12 @@ function ValidationScreen({
               <ClassificationMethodIcon method={document.classificationMethod} />
             </div>
           </div>
-          <span className={`pill ${document.status}`}>{document.status}</span>
+          <div className="panel-heading-actions">
+            <button className="icon-button" title="Refresh validation page" onClick={refreshPage}>
+              <RefreshCw size={16} />
+            </button>
+            <span className={`pill ${document.status}`}>{document.status}</span>
+          </div>
         </div>
         {message && <div className="toast inline">{message}</div>}
         {!downstreamUrl && (
