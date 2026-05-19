@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState, useRef } from 're
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   CheckCircle2,
+  BrainCircuit,
   ChevronRight,
   ChevronUp,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   FilePlus2,
   FileSearch,
   Files,
+  Gauge,
   Loader2,
   Pencil,
   Plus,
@@ -27,7 +29,7 @@ import { DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocum
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'upload' | 'documents' | 'validation';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation';
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 
@@ -60,6 +62,10 @@ function toKey(label: string) {
 function coerceValue(value: unknown) {
   if (typeof value === 'string') return value;
   return JSON.stringify(value, null, 2);
+}
+
+function formatScore(score?: number) {
+  return typeof score === 'number' ? `${Math.round(score * 100)}%` : 'N/A';
 }
 
 function asTableRows(value: unknown): Record<string, unknown>[] {
@@ -143,6 +149,7 @@ export function App() {
 
   const navigation = [
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
+    { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
     { id: 'documents' as View, label: 'Documents', icon: Files },
   ];
@@ -190,6 +197,7 @@ export function App() {
               <StatusMetric label="Processing" value={documents.filter((doc) => doc.status === 'processing').length} />
               <StatusMetric label="Ready" value={documents.filter((doc) => doc.status === 'extracted').length} />
               <StatusMetric label="Validated" value={documents.filter((doc) => doc.status === 'validated').length} />
+              <StatusMetric label="Rejected" value={documents.filter((doc) => doc.status === 'rejected').length} />
             </div>
             <button
               type="button"
@@ -216,6 +224,13 @@ export function App() {
             activeType={activeType}
             setActiveTypeId={setActiveTypeId}
             categories={categories}
+            onRun={run}
+            onRefresh={refresh}
+          />
+        )}
+        {view === 'classification' && (
+          <ClassificationScreen
+            documentTypes={documentTypes}
             onRun={run}
             onRefresh={refresh}
           />
@@ -263,6 +278,94 @@ function StatusMetric({ label, value }: { label: string; value: number }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function classifierStatus(type: DocumentType) {
+  if (!type.finalized) return 'draft';
+  if (!type.sampleFiles.length) return 'needs sample';
+  return type.classifierTrainingStatus || 'untrained';
+}
+
+function ClassificationScreen({
+  documentTypes,
+  onRun,
+  onRefresh,
+}: {
+  documentTypes: DocumentType[];
+  onRun: (action: () => Promise<void>, success: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  const includedTypes = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0);
+  const trainedCount = documentTypes.filter((type) => type.classifierTrainingStatus === 'trained').length;
+  const trainingCount = documentTypes.filter((type) => type.classifierTrainingStatus === 'training').length;
+  const fileCount = documentTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
+
+  async function trainType(type: DocumentType) {
+    await api.trainClassifier(type._id);
+  }
+
+  return (
+    <div className="classification-layout">
+      <section className="panel classification-summary">
+        <StatusMetric label="Included Types" value={includedTypes.length} />
+        <StatusMetric label="Training" value={trainingCount} />
+        <StatusMetric label="Trained" value={trainedCount} />
+        <StatusMetric label="Sample Files" value={fileCount} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Classifier Training</h2>
+            <p>Finalized document types with at least one sample are included.</p>
+          </div>
+          <button
+            className="primary-button"
+            disabled={!includedTypes.length}
+            onClick={() =>
+              onRun(async () => {
+                await Promise.all(includedTypes.map((type) => trainType(type)));
+                await onRefresh();
+              }, 'Classifier training queued')
+            }
+          >
+            <BrainCircuit size={16} />
+            Train All
+          </button>
+        </div>
+
+        <div className="classification-table">
+          {documentTypes.map((type) => {
+            const status = classifierStatus(type);
+            const canTrain = type.finalized && type.sampleFiles.length > 0;
+            return (
+              <div className="classification-row" key={type._id}>
+                <div>
+                  <strong>{type.name}</strong>
+                  <small>{type.category}</small>
+                </div>
+                <span className="file-count">{type.sampleFiles.length} file{type.sampleFiles.length === 1 ? '' : 's'}</span>
+                <span className={`classifier-pill ${status.replace(/\s+/g, '-')}`}>{status}</span>
+                <button
+                  className="secondary-button compact"
+                  disabled={!canTrain}
+                  onClick={() =>
+                    onRun(async () => {
+                      await trainType(type);
+                      await onRefresh();
+                    }, `${type.name} training queued`)
+                  }
+                >
+                  <BrainCircuit size={14} />
+                  Train
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -337,7 +440,15 @@ function DocumentTypeManagement({
                 <strong>{type.name}</strong>
                 <small>{type.category}</small>
               </span>
-              <em>{type.finalized ? 'Saved' : 'Draft'}</em>
+              <em>
+                {!type.finalized
+                  ? 'Draft'
+                  : type.classifierTrainingStatus === 'trained'
+                    ? 'Trained'
+                    : type.sampleFiles.length
+                      ? 'Training'
+                      : 'Needs sample'}
+              </em>
             </button>
           ))}
         </div>
@@ -365,26 +476,35 @@ function DocumentTypeManagement({
               </button>
             </div>
 
+            <div className={activeType.classifierTrainingStatus === 'trained' ? 'training-status ready' : 'training-status'}>
+              <Gauge size={16} />
+              <span>
+                Classifier training: {activeType.classifierTrainingStatus || 'untrained'} with {activeType.sampleFiles.length} sample
+                {activeType.sampleFiles.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="sample-row">
+              <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
+              <button
+                className="secondary-button"
+                disabled={!sample}
+                onClick={() =>
+                  sample &&
+                  onRun(async () => {
+                    await api.uploadSample(activeType._id, sample);
+                    setSample(null);
+                    await onRefresh();
+                  }, 'Sample uploaded')
+                }
+              >
+                <Upload size={16} />
+                Sample
+              </button>
+            </div>
+
             {!fields.length && (
               <>
-                <div className="sample-row">
-                  <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
-                  <button
-                    className="secondary-button"
-                    disabled={!sample}
-                    onClick={() =>
-                      sample &&
-                      onRun(async () => {
-                        await api.uploadSample(activeType._id, sample);
-                        await onRefresh();
-                      }, 'Sample uploaded')
-                    }
-                  >
-                    <Upload size={16} />
-                    Sample
-                  </button>
-                </div>
-
                 <label className="full-label">
                   Prompt
                   <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
@@ -861,7 +981,9 @@ function UploadScreen({
   const [category, setCategory] = useState(categories[0] ?? '');
   const availableTypes = documentTypes.filter((type) => type.category === category);
   const [documentTypeId, setDocumentTypeId] = useState(availableTypes[0]?._id ?? '');
+  const [autoClassify, setAutoClassify] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
+  const trainedTypeCount = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0).length;
 
   useEffect(() => {
     setCategory((current) => current || categories[0] || '');
@@ -880,15 +1002,26 @@ function UploadScreen({
           event.preventDefault();
           if (!files.length) return;
           onRun(async () => {
-            await api.uploadDocuments({ category, documentTypeId, files });
+            await api.uploadDocuments(autoClassify ? { files } : { category, documentTypeId, files });
             await onRefresh();
             openDocuments();
-          }, 'Documents uploaded and processed');
+          }, autoClassify ? 'Documents classified and processed' : 'Documents uploaded and processed');
         }}
       >
+        <label className="span-2 checkbox-row">
+          <input
+            type="checkbox"
+            checked={autoClassify}
+            onChange={(event) => setAutoClassify(event.target.checked)}
+          />
+          <span>
+            Auto classify with trained samples
+            <small>{trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} available</small>
+          </span>
+        </label>
         <label>
           Category
-          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+          <select value={category} disabled={autoClassify} onChange={(event) => setCategory(event.target.value)}>
             {categories.map((item) => (
               <option key={item}>{item}</option>
             ))}
@@ -896,7 +1029,7 @@ function UploadScreen({
         </label>
         <label>
           Document type
-          <select value={documentTypeId} onChange={(event) => setDocumentTypeId(event.target.value)}>
+          <select value={documentTypeId} disabled={autoClassify} onChange={(event) => setDocumentTypeId(event.target.value)}>
             {availableTypes.map((type) => (
               <option key={type._id} value={type._id}>
                 {type.name}
@@ -918,9 +1051,12 @@ function UploadScreen({
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
         </label>
-        <button className="primary-button" disabled={!documentTypeId || files.length === 0}>
+        <button
+          className="primary-button"
+          disabled={(!autoClassify && !documentTypeId) || (autoClassify && trainedTypeCount === 0) || files.length === 0}
+        >
           <Upload size={16} />
-          Upload Document{files.length === 1 ? '' : 's'}
+          {autoClassify ? 'Classify & Process' : `Upload Document${files.length === 1 ? '' : 's'}`}
         </button>
       </form>
     </section>
@@ -985,6 +1121,7 @@ function DocumentList({
             <option value="processing">Processing</option>
             <option value="extracted">Extracted</option>
             <option value="validated">Validated</option>
+            <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
           </select>
         </label>
@@ -1028,8 +1165,13 @@ function DocumentList({
                 <small>
                   {doc.category} / {doc.documentTypeName}
                 </small>
+                <small>
+                  Classification score {formatScore(doc.classificationScore)}
+                  {doc.classificationMethod === 'rag' ? ' auto' : ' manual'}
+                </small>
               </span>
               <span className={`pill ${doc.status}`}>{doc.status}</span>
+              <span className="score-badge">{formatScore(doc.classificationScore)}</span>
               <time>{new Date(doc.createdAt).toLocaleString()}</time>
             </button>
             <div className="row-actions">
@@ -1201,10 +1343,17 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
     await onValidated();
   }
 
+  async function reject() {
+    if (!document) return;
+    await api.rejectDocument(document._id);
+    setMessage('Document rejected');
+    await onValidated();
+  }
+
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
-  const isValidated = document.status === 'validated';
+  const isLocked = document.status === 'validated' || document.status === 'rejected';
 
   return (
     <div className="validation-layout">
@@ -1228,6 +1377,10 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
           <div>
             <h2>{document.originalName}</h2>
             <p>{document.category} / {document.documentTypeName}</p>
+            <p>
+              Classification score {formatScore(document.classificationScore)}
+              {document.classificationMethod === 'rag' ? ' auto' : ' manual'}
+            </p>
           </div>
           <span className={`pill ${document.status}`}>{document.status}</span>
         </div>
@@ -1253,7 +1406,7 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
                   </button>
                   {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
                 </div>
-                <TableValuePreview item={item} canEdit={!isValidated} onEdit={() => setTableEditIndex(index)} />
+                <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
               </div>
             ) : (
               <label
@@ -1269,23 +1422,29 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
                 </div>
                 <input
                   value={coerceValue(item.value)}
-                  disabled={isValidated}
+                  disabled={isLocked}
                   onChange={(event) => updateValue(index, event.target.value)}
                 />
               </label>
             );
           })}
         </div>
-        {isValidated ? (
-          <div className="locked-state">
-            <CheckCircle2 size={16} />
-            Validated documents are locked.
+        {isLocked ? (
+          <div className={`locked-state ${document.status}`}>
+            {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}
+            {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
           </div>
         ) : (
-          <button className="primary-button" type="button" onClick={submit}>
-            <CheckCircle2 size={16} />
-            Submit Validation
-          </button>
+          <div className="validation-actions">
+            <button className="secondary-button danger-outline" type="button" onClick={reject}>
+              <X size={16} />
+              Reject
+            </button>
+            <button className="primary-button" type="button" onClick={submit}>
+              <CheckCircle2 size={16} />
+              Submit Validation
+            </button>
+          </div>
         )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (

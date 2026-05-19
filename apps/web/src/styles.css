@@ -293,6 +293,28 @@ textarea {
   margin-top: 6px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.checkbox-row input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.checkbox-row small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 textarea {
   resize: vertical;
 }
@@ -335,11 +357,23 @@ textarea {
 
 .type-list,
 .document-table,
+.classification-table,
 .fields-table,
 .extraction-form {
   display: grid;
   gap: 10px;
   margin-top: 18px;
+}
+
+.classification-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.classification-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .schema-toolbar {
@@ -362,6 +396,7 @@ textarea {
 }
 
 .type-row,
+.classification-row,
 .document-row,
 .document-open {
   display: grid;
@@ -372,6 +407,7 @@ textarea {
 }
 
 .type-row,
+.classification-row,
 .document-row {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -380,8 +416,19 @@ textarea {
   text-align: left;
 }
 
+.classification-row {
+  grid-template-columns: minmax(0, 1fr) 110px 130px auto;
+}
+
+.classification-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .document-open {
-  grid-template-columns: minmax(0, 1fr) 120px 190px;
+  grid-template-columns: minmax(0, 1fr) 120px 90px 190px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -398,6 +445,73 @@ textarea {
   font-size: 12px;
   font-style: normal;
   font-weight: 800;
+}
+
+.training-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.training-status.ready {
+  border-color: rgba(15, 118, 110, 0.35);
+  background: rgba(20, 184, 166, 0.12);
+  color: var(--primary);
+}
+
+.score-badge {
+  min-width: 68px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.file-count,
+.classifier-pill {
+  justify-self: start;
+  min-width: 94px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  text-transform: capitalize;
+}
+
+.classifier-pill.trained {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.classifier-pill.training {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.classifier-pill.failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.classifier-pill.draft,
+.classifier-pill.needs-sample,
+.classifier-pill.untrained {
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .sample-row {
@@ -577,6 +691,11 @@ textarea {
 .pill.validated {
   background: #dcfce7;
   color: #166534;
+}
+
+.pill.rejected {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .pill.failed {
@@ -798,6 +917,22 @@ textarea {
   font-weight: 800;
 }
 
+.locked-state.rejected {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.validation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.danger-outline {
+  border-color: rgba(185, 28, 28, 0.45);
+  color: var(--danger);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -951,7 +1086,9 @@ textarea {
 
   .form-grid,
   .filters,
+  .classification-summary,
   .document-row,
+  .classification-row,
   .document-open {
     grid-template-columns: 1fr;
   }

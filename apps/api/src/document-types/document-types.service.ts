@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { join } from 'path';
@@ -107,9 +108,53 @@ export class DocumentTypesService {
   }
 
   async addSample(id: string, fileName: string) {
-    const updated = await this.model.findByIdAndUpdate(id, { $push: { sampleFiles: fileName } }, { new: true });
+    const canQueueTraining = this.hasQueueConnection();
+    const updated = await this.model.findByIdAndUpdate(
+      id,
+      {
+        $push: { sampleFiles: fileName },
+        $set: {
+          classifierTrainingStatus: canQueueTraining ? 'training' : 'untrained',
+          classifierTrainingError: canQueueTraining ? undefined : 'Classifier training queue is not configured.',
+        },
+      },
+      { new: true },
+    );
     if (!updated) throw new NotFoundException('Document type not found');
+    if (canQueueTraining) await this.enqueueClassifierTraining(updated.id, fileName);
     return updated;
+  }
+
+  async trainClassifier(id: string) {
+    if (!this.hasQueueConnection()) {
+      throw new BadRequestException('Classifier training requires Azure queue storage and the function worker.');
+    }
+
+    const docType = await this.model.findById(id);
+    if (!docType) throw new NotFoundException('Document type not found');
+
+    const sampleFileName = docType.sampleFiles.at(-1);
+    if (!sampleFileName) {
+      throw new BadRequestException('Upload at least one sample document before training the classifier.');
+    }
+
+    docType.classifierTrainingStatus = 'training';
+    docType.classifierTrainingError = undefined;
+    await docType.save();
+    await this.enqueueClassifierTraining(docType.id, sampleFileName);
+    return docType;
+  }
+
+  private hasQueueConnection() {
+    return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
+  }
+
+  private async enqueueClassifierTraining(documentTypeId: string, sampleFileName: string) {
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
+    if (!connectionString) return;
+    const queue = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('classifier-training');
+    await queue.createIfNotExists();
+    await queue.sendMessage(Buffer.from(JSON.stringify({ documentTypeId, sampleFileName })).toString('base64'));
   }
 
   async generateTemplate(id: string, prompt: string) {

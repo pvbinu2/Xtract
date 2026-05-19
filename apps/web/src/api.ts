@@ -26,6 +26,7 @@ export const api = {
     data.append('file', file);
     return request<DocumentType>(`/document-types/${id}/samples`, { method: 'POST', body: data });
   },
+  trainClassifier: (id: string) => request<DocumentType>(`/document-types/${id}/train-classifier`, { method: 'POST' }),
   generateTemplate: (id: string, prompt: string) =>
     request<DocumentType>(`/document-types/${id}/generate-template`, {
       method: 'POST',
@@ -38,17 +39,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields }),
     }),
-  uploadDocument: (payload: { category: string; documentTypeId: string; file: File }) => {
+  uploadDocument: (payload: { category?: string; documentTypeId?: string; file: File }) => {
     const data = new FormData();
-    data.append('category', payload.category);
-    data.append('documentTypeId', payload.documentTypeId);
+    if (payload.category) data.append('category', payload.category);
+    if (payload.documentTypeId) data.append('documentTypeId', payload.documentTypeId);
     data.append('files', payload.file);
     return request<IncomingDocument>('/documents/upload', { method: 'POST', body: data });
   },
-  uploadDocuments: (payload: { category: string; documentTypeId: string; files: File[] }) => {
+  uploadDocuments: (payload: { category?: string; documentTypeId?: string; files: File[] }) => {
     const data = new FormData();
-    data.append('category', payload.category);
-    data.append('documentTypeId', payload.documentTypeId);
+    if (payload.category) data.append('category', payload.category);
+    if (payload.documentTypeId) data.append('documentTypeId', payload.documentTypeId);
     payload.files.forEach((file) => data.append('files', file));
     return request<IncomingDocument[]>('/documents/upload', { method: 'POST', body: data });
   },
@@ -63,4 +64,5 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ extractedData }),
     }),
+  rejectDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reject`, { method: 'POST' }),
 };
