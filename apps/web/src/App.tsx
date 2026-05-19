@@ -1259,6 +1259,27 @@ function DocumentList({
     await loadPage(pagination.page);
   }
 
+  async function resetFilters() {
+    const nextStatus = '';
+    const nextCategory = '';
+    const nextNameFilter = '';
+    const nextSort = 'latest';
+    const nextPageSize = 10;
+
+    setStatus(nextStatus);
+    setCategory(nextCategory);
+    setNameFilter(nextNameFilter);
+    setSort(nextSort);
+    setPageSize(nextPageSize);
+
+    const params = new URLSearchParams({
+      sort: nextSort,
+      page: String(1),
+      pageSize: String(nextPageSize),
+    });
+    onPage(await api.listDocuments(params));
+  }
+
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -1266,9 +1287,11 @@ function DocumentList({
           <h2>Documents</h2>
           <p>Browse uploaded files and manage document state.</p>
         </div>
-        <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
-          <RefreshCw size={16} />
-        </button>
+        <div className="panel-heading-actions">
+          <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
+            <RefreshCw size={16} />
+          </button>
+        </div>
       </div>
       <div className="filters">
         <label>
@@ -1316,9 +1339,11 @@ function DocumentList({
             <option value={100}>100</option>
           </select>
         </label>
-        <button className="secondary-button" onClick={applyFilters}>
-          <ChevronDown size={16} />
+        <button className="secondary-button compact" onClick={applyFilters}>
           Apply
+        </button>
+        <button className="secondary-button compact" onClick={resetFilters}>
+          Reset
         </button>
       </div>
 
