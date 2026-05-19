@@ -64,11 +64,11 @@ export const api = {
       body: JSON.stringify({ documentTypeId }),
     }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
-  validateDocument: (id: string, extractedData: ExtractedValue[]) =>
-    request<IncomingDocument>(`/documents/${id}/validate`, {
+  validateDocument: (id: string, extractedData: ExtractedValue[], deleteAfterDownstream = false, downstreamUrl?: string) =>
+    request<any>(`/documents/${id}/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extractedData }),
+      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl }),
     }),
   rejectDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reject`, { method: 'POST' }),
 };

@@ -30,7 +30,12 @@ import { DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocum
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration';
+
+type AppConfig = {
+  downstreamUrl: string;
+  deleteAfterDownstream: boolean;
+};
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 
@@ -122,6 +127,7 @@ export function App() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [config, setConfig] = useState<AppConfig>({ downstreamUrl: '', deleteAfterDownstream: false });
 
   const activeType = activeTypeId ? documentTypes.find((item) => item._id === activeTypeId) : undefined;
   const categories = useMemo(
@@ -146,12 +152,24 @@ export function App() {
   useEffect(() => {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
+    const storedConfig = localStorage.getItem('xtract-config');
+    if (storedConfig) {
+      try {
+        setConfig(JSON.parse(storedConfig));
+      } catch {
+        // ignore invalid saved config
+      }
+    }
   }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
     localStorage.setItem('xtract-dark-mode', String(darkMode));
   }, [darkMode]);
+
+  useEffect(() => {
+    localStorage.setItem('xtract-config', JSON.stringify(config));
+  }, [config]);
 
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true);
@@ -171,6 +189,7 @@ export function App() {
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
     { id: 'documents' as View, label: 'Documents', icon: Files },
+    { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
   ];
 
   return (
@@ -282,10 +301,18 @@ export function App() {
           <ValidationScreen
             documentId={activeDocumentId || documents[0]?._id || ''}
             documentTypes={documentTypes}
+            downstreamUrl={config.downstreamUrl}
+            defaultDeleteAfterDownstream={config.deleteAfterDownstream}
             onValidated={async () => {
               await refresh();
               setView('documents');
             }}
+          />
+        )}
+        {view === 'configuration' && (
+          <ConfigurationScreen
+            config={config}
+            onConfigChange={setConfig}
           />
         )}
       </section>
@@ -298,6 +325,47 @@ function StatusMetric({ label, value }: { label: string; value: number }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ConfigurationScreen({
+  config,
+  onConfigChange,
+}: {
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+}) {
+  return (
+    <div className="panel configuration-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Downstream Configuration</h2>
+          <p>Configure where validated document data is sent and whether the document should be deleted afterward.</p>
+        </div>
+      </div>
+      <div className="configuration-form">
+        <label>
+          Downstream API URL
+          <input
+            type="url"
+            placeholder="https://example.com/api/documents"
+            value={config.downstreamUrl}
+            onChange={(event) => onConfigChange({ ...config, downstreamUrl: event.target.value })}
+          />
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={config.deleteAfterDownstream}
+            onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
+          />
+          <span>Delete document after sending to downstream</span>
+        </label>
+        <p className="help-text">
+          When configured, validation submits will forward clean JSON data to the downstream system using this URL.
+        </p>
+      </div>
     </div>
   );
 }
@@ -1389,7 +1457,19 @@ function ConfirmDialog({
   );
 }
 
-function ValidationScreen({ documentId, documentTypes, onValidated }: { documentId: string; documentTypes: DocumentType[]; onValidated: () => Promise<void> }) {
+function ValidationScreen({
+  documentId,
+  documentTypes,
+  downstreamUrl,
+  defaultDeleteAfterDownstream = false,
+  onValidated,
+}: {
+  documentId: string;
+  documentTypes: DocumentType[];
+  downstreamUrl: string;
+  defaultDeleteAfterDownstream?: boolean;
+  onValidated: () => Promise<void>;
+}) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
@@ -1398,6 +1478,11 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
+  const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
+
+  useEffect(() => {
+    setDeleteAfterDownstream(defaultDeleteAfterDownstream);
+  }, [defaultDeleteAfterDownstream]);
 
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
@@ -1447,7 +1532,7 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
         return item;
       }
     });
-    await api.validateDocument(document._id, normalized);
+    await api.validateDocument(document._id, normalized, deleteAfterDownstream, downstreamUrl);
     setMessage('Document validated');
     await onValidated();
   }
@@ -1503,6 +1588,11 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
           <span className={`pill ${document.status}`}>{document.status}</span>
         </div>
         {message && <div className="toast inline">{message}</div>}
+        {!downstreamUrl && (
+          <div className="toast inline">
+            Downstream URL is not configured. Document validation will complete locally only.
+          </div>
+        )}
         <div className="extraction-form">
           {values.map((item, index) => {
             const styles = fieldStyles[item.key];
@@ -1553,20 +1643,30 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
             {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
           </div>
         ) : (
-          <div className="validation-actions">
-            <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
-              <BrainCircuit size={16} />
-              Reclassify
-            </button>
-            <button className="secondary-button danger-outline" type="button" onClick={reject}>
-              <X size={16} />
-              Reject
-            </button>
-            <button className="primary-button" type="button" onClick={submit}>
-              <CheckCircle2 size={16} />
-              Submit Validation
-            </button>
-          </div>
+          <>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={deleteAfterDownstream}
+                onChange={(event) => setDeleteAfterDownstream(event.target.checked)}
+              />
+              <span>Delete document after sending to downstream</span>
+            </label>
+            <div className="validation-actions">
+              <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
+                <BrainCircuit size={16} />
+                Reclassify
+              </button>
+              <button className="secondary-button danger-outline" type="button" onClick={reject}>
+                <X size={16} />
+                Reject
+              </button>
+              <button className="primary-button" type="button" onClick={submit}>
+                <CheckCircle2 size={16} />
+                Submit Validation
+              </button>
+            </div>
+          </>
         )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (
