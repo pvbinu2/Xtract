@@ -9,6 +9,35 @@ Xtract is a local-first document extraction prototype.
 - MongoDB for local persistence
 - JavaScript Azure Function worker for document processing
 
+## Business Application
+
+Xtract is designed for organizations that need to automate document processing workflows at scale. It solves the critical challenge of extracting structured data from unstructured PDF documents efficiently and accurately.
+
+### Key Business Benefits
+
+- **Cost Reduction**: Automate manual document data entry, reducing labor costs and human error.
+- **Faster Processing**: Process hundreds or thousands of documents quickly with intelligent classification and extraction.
+- **Flexible Classification**: Support multiple document types with customizable extraction templates, enabling use across diverse business processes.
+- **Quality Control**: Review, validate, and correct extracted data side-by-side with source PDFs before finalization.
+- **Scalability**: Process documents on-demand with queue-based architecture supporting high-volume workflows.
+
+### Ideal Use Cases
+
+- **Accounts Payable**: Extract invoice details (vendor, amount, due date, line items) for automated payment processing.
+- **Document Management**: Classify and extract metadata from contracts, policies, and correspondence.
+- **Compliance & Auditing**: Capture required fields from regulatory documents with quality validation.
+- **Healthcare**: Extract patient information, lab results, and prescriptions from medical records.
+- **Finance**: Process loan applications, tax forms, and financial statements with standardized field extraction.
+- **HR & Recruitment**: Extract resume data, employment history, and certifications for candidate processing.
+
+### How It Works for Business Users
+
+1. **Define**: Create document categories and extraction templates matching your specific business needs.
+2. **Train**: Upload sample documents and refine extraction rules until accuracy meets requirements.
+3. **Process**: Batch upload incoming documents for automatic classification and extraction.
+4. **Validate**: Review extracted data with visual confirmation against source documents.
+5. **Export**: Integrate extracted data into downstream systems and databases.
+
 ## Local Setup
 
 1. Install dependencies:
@@ -83,3 +112,36 @@ docker compose up -d mongo azurite qdrant
 Use `QDRANT_URL=http://127.0.0.1:6333` for local vector search. Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`. To use the Azure Function worker, run the API with `PROCESSING_MODE=queue` and set `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage`, then start `npm run dev:function`.
 
 OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts. The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.
+
+## Document Reclassification
+
+The reclassify feature allows users to reprocess a document with a different document type, enabling quick corrections if a document was initially misclassified.
+
+### Where to Use Reclassify
+
+1. **Document List Page**: Click the brain icon button on any document row to open the reclassify dialog.
+2. **Validation Page**: Click the "Reclassify" button in the document detail panel before submitting validation.
+
+### How It Works
+
+1. Open the reclassify dialog for a document.
+2. Select a new **Category** from the dropdown menu.
+3. The **Document Type** dropdown automatically updates to show only types in the selected category.
+4. Select the correct **Document Type**.
+5. Click **Reclassify** to reprocess the document.
+
+### What Happens on Reclassify
+
+- The document's category and document type are updated.
+- All extracted data is cleared and the document status is reset to `processing`.
+- The document is reprocessed with the new document type's schema and extraction rules.
+- Once complete, the document status changes to `extracted` with fresh extraction data.
+- You can then review and validate the new extracted values.
+
+### Use Cases
+
+- **Misclassified Documents**: If the automatic classification assigned a document to the wrong type.
+- **Schema Changes**: When you've refined the extraction template and want to re-extract with the updated schema.
+- **Manual Corrections**: After reviewing a document, reassign it to the correct category if needed.
+
+This feature ensures documents can be corrected without needing to delete and re-upload them.
