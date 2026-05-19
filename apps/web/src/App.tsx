@@ -13,6 +13,7 @@ import {
   FileSearch,
   Files,
   Gauge,
+  Network,
   Loader2,
   Pencil,
   Plus,
@@ -66,6 +67,24 @@ function coerceValue(value: unknown) {
 
 function formatScore(score?: number) {
   return typeof score === 'number' ? `${Math.round(score * 100)}%` : 'N/A';
+}
+
+function ClassificationMethodIcon({ method }: { method?: IncomingDocument['classificationMethod'] }) {
+  if (method === 'vector') {
+    return (
+      <span className="method-icon vector" title="Vector classification" aria-label="Vector classification">
+        <Network size={14} />
+      </span>
+    );
+  }
+  if (method === 'llm') {
+    return (
+      <span className="method-icon llm" title="LLM classification" aria-label="LLM classification">
+        <BrainCircuit size={14} />
+      </span>
+    );
+  }
+  return null;
 }
 
 function asTableRows(value: unknown): Record<string, unknown>[] {
@@ -262,6 +281,7 @@ export function App() {
         {view === 'validation' && (
           <ValidationScreen
             documentId={activeDocumentId || documents[0]?._id || ''}
+            documentTypes={documentTypes}
             onValidated={async () => {
               await refresh();
               setView('documents');
@@ -1019,24 +1039,28 @@ function UploadScreen({
             <small>{trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} available</small>
           </span>
         </label>
-        <label>
-          Category
-          <select value={category} disabled={autoClassify} onChange={(event) => setCategory(event.target.value)}>
-            {categories.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Document type
-          <select value={documentTypeId} disabled={autoClassify} onChange={(event) => setDocumentTypeId(event.target.value)}>
-            {availableTypes.map((type) => (
-              <option key={type._id} value={type._id}>
-                {type.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!autoClassify && (
+          <>
+            <label>
+              Category
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                {categories.map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Document type
+              <select value={documentTypeId} onChange={(event) => setDocumentTypeId(event.target.value)}>
+                {availableTypes.map((type) => (
+                  <option key={type._id} value={type._id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         <label className="file-drop span-2">
           <Upload size={28} />
           <span>
@@ -1082,7 +1106,12 @@ function DocumentList({
   const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
+  const [reclassifyTarget, setReclassifyTarget] = useState<IncomingDocument | null>(null);
+  const [reclassifyCategory, setReclassifyCategory] = useState('');
+  const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
+
+  const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
 
   async function loadPage(page: number) {
     const params = new URLSearchParams({
@@ -1108,6 +1137,14 @@ function DocumentList({
 
   async function reprocessDocument(document: IncomingDocument) {
     await api.reprocessDocument(document._id);
+    await loadPage(pagination.page);
+  }
+
+  async function reclassifyDocument(document: IncomingDocument, documentTypeId: string) {
+    if (!documentTypeId) return;
+    await api.reclassifyDocument(document._id, documentTypeId);
+    setReclassifyTarget(null);
+    setReclassifyDocumentType('');
     await loadPage(pagination.page);
   }
 
@@ -1165,16 +1202,28 @@ function DocumentList({
                 <small>
                   {doc.category} / {doc.documentTypeName}
                 </small>
-                <small>
-                  Classification score {formatScore(doc.classificationScore)}
-                  {doc.classificationMethod === 'rag' ? ' auto' : ' manual'}
-                </small>
               </span>
               <span className={`pill ${doc.status}`}>{doc.status}</span>
-              <span className="score-badge">{formatScore(doc.classificationScore)}</span>
+              <span className="score-badge">
+                {formatScore(doc.classificationScore)}
+                <ClassificationMethodIcon method={doc.classificationMethod} />
+              </span>
               <time>{new Date(doc.createdAt).toLocaleString()}</time>
             </button>
             <div className="row-actions">
+              <button
+                className="icon-button"
+                title="Reclassify document"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setReclassifyTarget(doc);
+                  const docCategory = doc.category;
+                  setReclassifyCategory(docCategory);
+                  setReclassifyDocumentType(doc.documentTypeId || '');
+                }}
+              >
+                <BrainCircuit size={16} />
+              </button>
               <button
                 className="icon-button"
                 title="Reprocess document"
@@ -1221,6 +1270,58 @@ function DocumentList({
             setReprocessTarget(null);
           }}
         />
+      )}
+
+      {reclassifyTarget && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setReclassifyTarget(null)}>
+          <section className="confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-heading">
+              <div>
+                <h2>Reclassify Document</h2>
+                <p>{reclassifyTarget.originalName}</p>
+              </div>
+              <button className="icon-button" title="Close" onClick={() => setReclassifyTarget(null)}>
+                <X size={17} />
+              </button>
+            </div>
+            <label>
+              Category
+              <select value={reclassifyCategory} onChange={(e) => {
+                setReclassifyCategory(e.target.value);
+                setReclassifyDocumentType('');
+              }}>
+                <option value="">Choose a category...</option>
+                {categories.map((cat) => (
+                  <option key={cat}>{cat}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Document Type
+              <select value={reclassifyDocumentType} onChange={(e) => setReclassifyDocumentType(e.target.value)} disabled={!reclassifyCategory}>
+                <option value="">Choose a document type...</option>
+                {reclassifyAvailableTypes.map((type) => (
+                  <option key={type._id} value={type._id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="modal-footer">
+              <button className="secondary-button" onClick={() => setReclassifyTarget(null)}>
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={!reclassifyDocumentType}
+                onClick={() => reclassifyDocument(reclassifyTarget, reclassifyDocumentType)}
+              >
+                <BrainCircuit size={16} />
+                Reclassify
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       <div className="pager">
@@ -1288,12 +1389,18 @@ function ConfirmDialog({
   );
 }
 
-function ValidationScreen({ documentId, onValidated }: { documentId: string; onValidated: () => Promise<void> }) {
+function ValidationScreen({ documentId, documentTypes, onValidated }: { documentId: string; documentTypes: DocumentType[]; onValidated: () => Promise<void> }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
+  const [reclassifyCategory, setReclassifyCategory] = useState('');
+  const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
+
+  const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
+  const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
 
   const fieldStyles = useMemo(() => {
     return values.reduce<Record<string, { border: string; fill: string; activeFill: string }>>((acc, item, index) => {
@@ -1312,6 +1419,8 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
     api.getDocument(documentId).then((doc) => {
       setDocument(doc);
       setValues(doc.extractedData);
+      setReclassifyCategory(doc.category);
+      setReclassifyDocumentType(doc.documentTypeId || '');
     });
   }, [documentId]);
 
@@ -1350,6 +1459,14 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
     await onValidated();
   }
 
+  async function reclassify() {
+    if (!document || !reclassifyDocumentType) return;
+    await api.reclassifyDocument(document._id, reclassifyDocumentType);
+    setShowReclassifyDialog(false);
+    setMessage('Document reclassified');
+    await onValidated();
+  }
+
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
@@ -1377,10 +1494,11 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
           <div>
             <h2>{document.originalName}</h2>
             <p>{document.category} / {document.documentTypeName}</p>
-            <p>
-              Classification score {formatScore(document.classificationScore)}
-              {document.classificationMethod === 'rag' ? ' auto' : ' manual'}
-            </p>
+            <div className="classification-score-line">
+              <span>Classification score</span>
+              <strong>{formatScore(document.classificationScore)}</strong>
+              <ClassificationMethodIcon method={document.classificationMethod} />
+            </div>
           </div>
           <span className={`pill ${document.status}`}>{document.status}</span>
         </div>
@@ -1436,6 +1554,10 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
           </div>
         ) : (
           <div className="validation-actions">
+            <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
+              <BrainCircuit size={16} />
+              Reclassify
+            </button>
             <button className="secondary-button danger-outline" type="button" onClick={reject}>
               <X size={16} />
               Reject
@@ -1456,6 +1578,57 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
             setTableEditIndex(null);
           }}
         />
+      )}
+      {showReclassifyDialog && document && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowReclassifyDialog(false)}>
+          <section className="confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-heading">
+              <div>
+                <h2>Reclassify Document</h2>
+                <p>{document.originalName}</p>
+              </div>
+              <button className="icon-button" title="Close" onClick={() => setShowReclassifyDialog(false)}>
+                <X size={17} />
+              </button>
+            </div>
+            <label>
+              Category
+              <select value={reclassifyCategory} onChange={(e) => {
+                setReclassifyCategory(e.target.value);
+                setReclassifyDocumentType('');
+              }}>
+                <option value="">Choose a category...</option>
+                {categories.map((cat) => (
+                  <option key={cat}>{cat}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Document Type
+              <select value={reclassifyDocumentType} onChange={(e) => setReclassifyDocumentType(e.target.value)} disabled={!reclassifyCategory}>
+                <option value="">Choose a document type...</option>
+                {reclassifyAvailableTypes.map((type) => (
+                  <option key={type._id} value={type._id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="modal-footer">
+              <button className="secondary-button" onClick={() => setShowReclassifyDialog(false)}>
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={!reclassifyDocumentType}
+                onClick={reclassify}
+              >
+                <BrainCircuit size={16} />
+                Reclassify
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

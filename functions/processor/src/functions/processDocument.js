@@ -5,6 +5,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
+const { withOpenAIRetry } = require('../openaiRetry');
 
 let clientPromise;
 let openai;
@@ -34,7 +35,7 @@ async function extractValuesWithOpenAI(document, documentType) {
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const pdf = fs.readFileSync(document.filePath).toString('base64');
-  const response = await client.responses.create({
+  const response = await withOpenAIRetry(() => client.responses.create({
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     input: [
       {
@@ -69,7 +70,7 @@ async function extractValuesWithOpenAI(document, documentType) {
       },
     ],
     text: { format: { type: 'json_object' } },
-  });
+  }), `Extraction for document ${document._id || document.fileName}`);
 
   const parsed = parseJsonObject(response.output_text);
   const byKey = new Map((parsed.fields || []).map((field) => [field.key, field]));
@@ -175,7 +176,7 @@ async function processDocument(message, context) {
             documentTypeId: normalizeObjectId(documentType._id),
             documentTypeName: documentType.name,
             classificationScore: classification.score,
-            classificationMethod: 'rag',
+            classificationMethod: classification.method || 'llm',
             updatedAt: new Date(),
           },
         },

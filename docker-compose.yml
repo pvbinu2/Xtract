@@ -16,7 +16,16 @@ services:
       - "10002:10002"
     volumes:
       - azurite-data:/data
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    container_name: xtract-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
 
 volumes:
   mongo-data:
   azurite-data:
+  qdrant-data:

@@ -50,7 +50,7 @@ export type IncomingDocument = {
   documentTypeId: string;
   documentTypeName: string;
   classificationScore?: number;
-  classificationMethod?: 'manual' | 'rag';
+  classificationMethod?: 'manual' | 'vector' | 'llm';
   status: 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
   extractedData: ExtractedValue[];
   createdAt: string;

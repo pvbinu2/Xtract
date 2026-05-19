@@ -10,5 +10,13 @@
         "isEnabled": true
       }
     }
+  },
+  "extensions": {
+    "queues": {
+      "batchSize": 1,
+      "newBatchThreshold": 0,
+      "maxDequeueCount": 5,
+      "visibilityTimeout": "00:05:00"
+    }
   }
 }

@@ -57,6 +57,12 @@ export const api = {
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
   deleteDocument: (id: string) => request(`/documents/${id}`, { method: 'DELETE' }),
   reprocessDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reprocess`, { method: 'POST' }),
+  reclassifyDocument: (id: string, documentTypeId: string) =>
+    request<IncomingDocument>(`/documents/${id}/reprocess`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentTypeId }),
+    }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
   validateDocument: (id: string, extractedData: ExtractedValue[]) =>
     request<IncomingDocument>(`/documents/${id}/validate`, {

@@ -71,8 +71,8 @@ export class DocumentsController {
   }
 
   @Post(':id/reprocess')
-  reprocess(@Param('id') id: string) {
-    return this.service.reprocess(id);
+  reprocess(@Param('id') id: string, @Body() body?: { documentTypeId?: string }) {
+    return this.service.reprocess(id, body?.documentTypeId);
   }
 
   @Delete(':id')

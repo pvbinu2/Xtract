@@ -2,8 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
+const { withOpenAIRetry } = require('./openaiRetry');
 
 let openai;
+let pdfjsPromise;
 
 function getOpenAI() {
   if (!process.env.OPENAI_API_KEY) return undefined;
@@ -13,6 +15,38 @@ function getOpenAI() {
 
 function modelName() {
   return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+}
+
+function embeddingModelName() {
+  return process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+}
+
+function vectorSize() {
+  return Number(process.env.VECTOR_SIZE || 1536);
+}
+
+function qdrantUrl() {
+  return (process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
+}
+
+function qdrantCollection() {
+  return process.env.QDRANT_COLLECTION || 'xtract_document_classifier';
+}
+
+function vectorScoreThreshold() {
+  return Number(process.env.CLASSIFIER_VECTOR_SCORE_THRESHOLD || 0.82);
+}
+
+function embeddingTextLimit() {
+  return Number(process.env.CLASSIFIER_EMBED_TEXT_LIMIT || 6000);
+}
+
+function maxTrainChunksPerDocument() {
+  return Number(process.env.CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT || 6);
+}
+
+function maxQueryChunksPerDocument() {
+  return Number(process.env.CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT || 3);
 }
 
 function uploadRoot() {
@@ -30,6 +64,38 @@ function pdfInput(filePath) {
     filename: path.basename(filePath),
     file_data: `data:application/pdf;base64,${data}`,
   };
+}
+
+async function loadPdfJs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((module) => {
+      module.GlobalWorkerOptions.workerSrc = require.resolve('pdfjs-dist/build/pdf.worker.mjs');
+      return module;
+    });
+  }
+  return pdfjsPromise;
+}
+
+async function extractPdfText(filePath) {
+  const { getDocument } = await loadPdfJs();
+  const data = fs.readFileSync(filePath);
+  const standardFontDataUrl = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + path.sep;
+  const pdf = await getDocument({ data: new Uint8Array(data), disableWorker: true, standardFontDataUrl }).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const text = textContent.items
+      .filter((item) => 'str' in item)
+      .map((item) => item.str)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (text) pages.push(text);
+  }
+
+  return pages.join('\n').slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
 }
 
 function parseJsonObject(text) {
@@ -53,6 +119,10 @@ function fileExists(filePath) {
 
 function latestExistingSample(documentType) {
   return [...(documentType.sampleFiles || [])].reverse().find((fileName) => fileExists(samplePath(fileName)));
+}
+
+function existingSamples(documentType) {
+  return (documentType.sampleFiles || []).filter((fileName) => fileExists(samplePath(fileName)));
 }
 
 function fallbackProfile(documentType, sampleFileName) {
@@ -85,42 +155,170 @@ function fallbackClassify(fileName, candidates) {
   return {
     documentType: scored[0].candidate,
     score: Number(scored[0].score.toFixed(2)),
+    method: 'llm',
   };
 }
 
-async function trainClassifierProfile(documentType, sampleFileName) {
-  const sample = samplePath(sampleFileName);
-  if (!fileExists(sample)) {
-    throw new Error(`Training sample file not found: ${sample}`);
+function pointId(documentTypeId, sampleFileName, chunkIndex) {
+  const input = `${documentTypeId}:${sampleFileName}:${chunkIndex}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function chunkText(text, maxChars = embeddingTextLimit(), maxChunks = maxTrainChunksPerDocument()) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return ['empty document'];
+
+  const chunks = [];
+  for (let index = 0; index < normalized.length && chunks.length < maxChunks; index += maxChars) {
+    chunks.push(normalized.slice(index, index + maxChars));
+  }
+  return chunks;
+}
+
+async function qdrantRequest(pathname, options = {}) {
+  const response = await fetch(`${qdrantUrl()}${pathname}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Qdrant request failed: ${response.status} ${message}`);
+  }
+  return response.status === 204 ? undefined : response.json();
+}
+
+async function ensureVectorCollection() {
+  const collection = qdrantCollection();
+  const response = await fetch(`${qdrantUrl()}/collections/${collection}`);
+  if (response.ok) return;
+  const createResponse = await fetch(`${qdrantUrl()}/collections/${collection}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      vectors: {
+        size: vectorSize(),
+        distance: 'Cosine',
+      },
+    }),
+  });
+  if (createResponse.ok || createResponse.status === 409) return;
+  const message = await createResponse.text();
+  throw new Error(`Qdrant request failed: ${createResponse.status} ${message}`);
+}
+
+async function embedText(text) {
+  const client = getOpenAI();
+  if (!client) throw new Error('OPENAI_API_KEY is required to create classifier embeddings.');
+  const response = await withOpenAIRetry(() => client.embeddings.create({
+    model: embeddingModelName(),
+    input: text || 'empty document',
+  }), 'Classifier embedding');
+  return response.data[0].embedding;
+}
+
+async function deleteDocumentTypeVectors(documentTypeId) {
+  await ensureVectorCollection();
+  await qdrantRequest(`/collections/${qdrantCollection()}/points/delete`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: {
+        must: [{ key: 'documentTypeId', match: { value: String(documentTypeId) } }],
+      },
+    }),
+  });
+}
+
+async function upsertDocumentTypeVectors(documentType, samples) {
+  await ensureVectorCollection();
+  const points = [];
+
+  for (const sampleFileName of samples) {
+    const filePath = samplePath(sampleFileName);
+    const text = [
+      `Document type: ${documentType.name}`,
+      `Category: ${documentType.category}`,
+      documentType.prompt ? `Prompt: ${documentType.prompt}` : '',
+      await extractPdfText(filePath),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const chunks = chunkText(text);
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+      points.push({
+        id: pointId(documentType._id, sampleFileName, chunkIndex),
+        vector: await embedText(chunks[chunkIndex]),
+        payload: {
+          documentTypeId: String(documentType._id),
+          documentTypeName: documentType.name,
+          category: documentType.category,
+          sampleFileName,
+          chunkIndex,
+        },
+      });
+    }
   }
 
-  const client = getOpenAI();
-  if (!client) return fallbackProfile(documentType, sampleFileName);
-
-  const response = await client.responses.create({
-    model: modelName(),
-    input: [
-      {
-        role: 'user',
-        content: [
-          pdfInput(sample),
-          {
-            type: 'input_text',
-            text: [
-              'Create a compact retrieval profile for classifying future documents against this document type.',
-              'Summarize visual layout cues, issuer/recipient patterns, titles, labels, table structures, and terms that distinguish this type.',
-              'Do not extract private values unless they are structural labels.',
-              `Document type: ${documentType.name}`,
-              `Category: ${documentType.category}`,
-              `Extraction prompt: ${documentType.prompt || 'none'}`,
-            ].join('\n'),
-          },
-        ],
-      },
-    ],
+  if (!points.length) return;
+  await qdrantRequest(`/collections/${qdrantCollection()}/points?wait=true`, {
+    method: 'PUT',
+    body: JSON.stringify({ points }),
   });
+}
 
-  return response.output_text.trim();
+async function searchDocumentTypeVectors(document) {
+  await ensureVectorCollection();
+  const text = await extractPdfText(document.filePath);
+  const chunks = chunkText([
+    `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
+    text,
+  ].join('\n'), embeddingTextLimit(), maxQueryChunksPerDocument());
+  const hitsByPoint = new Map();
+
+  for (const chunk of chunks) {
+    const vector = await embedText(chunk);
+    const response = await qdrantRequest(`/collections/${qdrantCollection()}/points/search`, {
+      method: 'POST',
+      body: JSON.stringify({
+        vector,
+        limit: Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5),
+        with_payload: true,
+      }),
+    });
+
+    for (const hit of response.result || []) {
+      const existing = hitsByPoint.get(hit.id);
+      if (!existing || hit.score > existing.score) hitsByPoint.set(hit.id, hit);
+    }
+  }
+
+  return Array.from(hitsByPoint.values()).sort((a, b) => b.score - a.score);
+}
+
+async function trainClassifierProfile(documentType, sampleFileName) {
+  const samples = existingSamples(documentType);
+  if (!samples.length) {
+    throw new Error(`Training sample file not found for ${documentType.name}`);
+  }
+
+  await deleteDocumentTypeVectors(documentType._id);
+  await upsertDocumentTypeVectors(documentType, samples);
+
+  const latestSample = sampleFileName || samples.at(-1);
+  const sampleText = await extractPdfText(samplePath(latestSample));
+  return [
+    fallbackProfile(documentType, latestSample),
+    `Training samples indexed: ${samples.length}`,
+    `Sample text preview: ${sampleText.slice(0, Number(process.env.CLASSIFIER_PROFILE_TEXT_LIMIT || 2000))}`,
+  ].join('\n');
 }
 
 async function classifyDocument(document, documentTypes) {
@@ -129,8 +327,32 @@ async function classifyDocument(document, documentTypes) {
     throw new Error('Upload at least one sample and save the schema for a document type before automatic classification.');
   }
 
+  let vectorHits = [];
+  try {
+    vectorHits = await searchDocumentTypeVectors(document);
+  } catch (error) {
+    vectorHits = [];
+  }
+  const topHit = vectorHits[0];
+  const vectorDocumentType = topHit
+    ? candidates.find((candidate) => String(candidate._id) === topHit.payload?.documentTypeId)
+    : undefined;
+  if (vectorDocumentType && topHit.score >= vectorScoreThreshold()) {
+    return {
+      documentType: vectorDocumentType,
+      score: Number(clampScore(topHit.score).toFixed(2)),
+      method: 'vector',
+    };
+  }
+
   const client = getOpenAI();
   if (!client) return fallbackClassify(document.originalName || document.fileName || '', candidates);
+
+  const retrievedIds = new Set(vectorHits.map((hit) => hit.payload?.documentTypeId).filter(Boolean));
+  const llmCandidates = [
+    ...candidates.filter((candidate) => retrievedIds.has(String(candidate._id))),
+    ...candidates.filter((candidate) => !retrievedIds.has(String(candidate._id))),
+  ].slice(0, Number(process.env.CLASSIFIER_LLM_CANDIDATE_LIMIT || 8));
 
   const content = [
     pdfInput(document.filePath),
@@ -144,14 +366,17 @@ async function classifyDocument(document, documentTypes) {
         '{"documentTypeId":"candidate_id","score":0.92}',
         `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
         'Candidates:',
-        ...candidates.map((candidate, index) => (
+        ...llmCandidates.map((candidate, index) => (
           `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`
         )),
+        vectorHits.length
+          ? `Vector search top results: ${vectorHits.map((hit) => `${hit.payload?.documentTypeName || hit.payload?.documentTypeId} score=${Number(hit.score).toFixed(3)}`).join('; ')}`
+          : 'Vector search returned no usable result.',
       ].join('\n'),
     },
   ];
 
-  candidates.forEach((candidate, index) => {
+  llmCandidates.forEach((candidate, index) => {
     const sampleFileName = latestExistingSample(candidate);
     if (!sampleFileName) return;
     content.push({
@@ -161,17 +386,18 @@ async function classifyDocument(document, documentTypes) {
     content.push(pdfInput(samplePath(sampleFileName)));
   });
 
-  const response = await client.responses.create({
+  const response = await withOpenAIRetry(() => client.responses.create({
     model: modelName(),
     input: [{ role: 'user', content }],
     text: { format: { type: 'json_object' } },
-  });
+  }), `Classifier LLM fallback for ${document._id || document.fileName}`);
 
   const parsed = parseJsonObject(response.output_text);
-  const selected = candidates.find((candidate) => String(candidate._id) === parsed.documentTypeId) || candidates[0];
+  const selected = llmCandidates.find((candidate) => String(candidate._id) === parsed.documentTypeId) || llmCandidates[0];
   return {
     documentType: selected,
     score: Number(clampScore(parsed.score).toFixed(2)),
+    method: 'llm',
   };
 }
 
