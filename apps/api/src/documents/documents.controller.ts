@@ -24,6 +24,7 @@ export class DocumentsController {
   list(@Query() query: {
     status?: string;
     category?: string;
+    name?: string;
     documentTypeId?: string;
     sort?: string;
     page?: string;

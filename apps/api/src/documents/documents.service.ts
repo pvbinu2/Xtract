@@ -41,9 +41,14 @@ export class DocumentsService {
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
   ) {}
 
+  private escapeRegex(input: string) {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   async list(query: {
     status?: string;
     category?: string;
+    name?: string;
     documentTypeId?: string;
     sort?: string;
     page?: string;
@@ -52,6 +57,7 @@ export class DocumentsService {
     const filter: Record<string, unknown> = {};
     if (query.status) filter.status = query.status;
     if (query.category) filter.category = query.category;
+    if (query.name) filter.originalName = new RegExp(this.escapeRegex(query.name), 'i');
     if (query.documentTypeId) filter.documentTypeId = query.documentTypeId;
     const sort = query.sort === 'oldest' ? ({ createdAt: 1 } as const) : ({ createdAt: -1 } as const);
     const page = Math.max(Number(query.page) || 1, 1);

@@ -1211,6 +1211,7 @@ function DocumentList({
 }) {
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
+  const [nameFilter, setNameFilter] = useState('');
   const [sort, setSort] = useState('latest');
   const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
@@ -1230,6 +1231,7 @@ function DocumentList({
     });
     if (status) params.set('status', status);
     if (category) params.set('category', category);
+    if (nameFilter) params.set('name', nameFilter);
     onPage(await api.listDocuments(params));
   }
 
@@ -1279,6 +1281,15 @@ function DocumentList({
             <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
           </select>
+        </label>
+        <label>
+          Document name
+          <input
+            type="text"
+            placeholder="Search by name"
+            value={nameFilter}
+            onChange={(event) => setNameFilter(event.target.value)}
+          />
         </label>
         <label>
           Category
