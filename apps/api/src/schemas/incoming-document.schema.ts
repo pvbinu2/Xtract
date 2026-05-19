@@ -71,7 +71,7 @@ export class IncomingDocument {
   classificationScore?: number;
 
   @Prop({ default: 'manual' })
-  classificationMethod!: 'manual' | 'rag';
+  classificationMethod!: 'manual' | 'vector' | 'llm';
 
   @Prop({ default: 'uploaded' })
   status!: DocumentStatus;

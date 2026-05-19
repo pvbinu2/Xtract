@@ -94,7 +94,7 @@ export class DocumentsService {
         documentTypeId: docType?._id,
         documentTypeName: docType?.name ?? 'Pending classification',
         classificationScore: docType ? 1 : undefined,
-        classificationMethod: docType ? 'manual' : 'rag',
+        classificationMethod: docType ? 'manual' : 'vector',
         status: 'processing',
         extractedData: [],
       });
@@ -140,9 +140,19 @@ export class DocumentsService {
     return document.save();
   }
 
-  async reprocess(id: string) {
+  async reprocess(id: string, newDocumentTypeId?: string) {
     const document = await this.documentModel.findById(id);
     if (!document) throw new NotFoundException('Document not found');
+
+    // If a new document type is provided, update it
+    if (newDocumentTypeId) {
+      const newDocType = await this.documentTypeModel.findById(newDocumentTypeId);
+      if (!newDocType) throw new NotFoundException('Document type not found');
+      
+      document.documentTypeId = newDocType._id;
+      document.documentTypeName = newDocType.name;
+      document.category = newDocType.category;
+    }
 
     document.status = 'processing';
     document.extractedData = [];

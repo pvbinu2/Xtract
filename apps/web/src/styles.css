@@ -468,6 +468,10 @@ textarea {
 }
 
 .score-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 68px;
   border-radius: 8px;
   padding: 6px 10px;
@@ -476,6 +480,49 @@ textarea {
   font-size: 12px;
   font-weight: 800;
   text-align: center;
+}
+
+.method-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+.score-badge .method-icon {
+  margin-left: 0;
+}
+
+.method-icon.vector {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.method-icon.llm {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.classification-score-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.classification-score-line strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.classification-score-line .method-icon {
+  margin-left: 2px;
 }
 
 .file-count,
@@ -791,6 +838,7 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  height: 30px
 }
 
 .extraction-form .field-label > button,

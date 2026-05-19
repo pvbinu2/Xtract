@@ -18,6 +18,57 @@ function modelName() {
   return process.env.OPENAI_MODEL || 'gpt-4o-mini';
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function headerValue(error: unknown, key: string) {
+  const headers = (error as { headers?: Headers | Record<string, string> })?.headers;
+  if (!headers) return undefined;
+  if (typeof (headers as Headers).get === 'function') return (headers as Headers).get(key) ?? undefined;
+  return (headers as Record<string, string>)[key];
+}
+
+function retryDelayFromError(error: unknown, attempt: number) {
+  const retryAfterMs = headerValue(error, 'retry-after-ms');
+  if (retryAfterMs && Number.isFinite(Number(retryAfterMs))) return Number(retryAfterMs);
+
+  const retryAfter = headerValue(error, 'retry-after');
+  if (retryAfter && Number.isFinite(Number(retryAfter))) return Number(retryAfter) * 1000;
+
+  const message = (error as Error)?.message || String(error);
+  const msMatch = message.match(/try again in\s+(\d+)ms/i);
+  if (msMatch) return Number(msMatch[1]);
+
+  const secondMatch = message.match(/try again in\s+([\d.]+)s/i);
+  if (secondMatch) return Number(secondMatch[1]) * 1000;
+
+  return Math.min(30000, 1000 * 2 ** attempt);
+}
+
+function isRetryableOpenAIError(error: unknown) {
+  const status = (error as { status?: number; code?: number })?.status || (error as { status?: number; code?: number })?.code;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+async function withOpenAIRetry<T>(operation: () => Promise<T>): Promise<T> {
+  const maxAttempts = Number(process.env.OPENAI_MAX_RETRIES || 8);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableOpenAIError(error) || attempt === maxAttempts - 1) throw error;
+      const jitter = Math.floor(Math.random() * 250);
+      await sleep(retryDelayFromError(error, attempt) + jitter);
+    }
+  }
+
+  throw lastError;
+}
+
 function pdfInput(filePath: string) {
   const data = readFileSync(filePath).toString('base64');
   return {
@@ -85,7 +136,7 @@ export async function inferTemplateWithOpenAI(filePath: string, prompt: string):
   const openai = getClient();
   if (!openai) return undefined;
 
-  const response = await openai.responses.create({
+  const response = await withOpenAIRetry(() => openai.responses.create({
     model: modelName(),
     input: [
       {
@@ -110,7 +161,7 @@ export async function inferTemplateWithOpenAI(filePath: string, prompt: string):
       },
     ],
     text: { format: { type: 'json_object' } },
-  });
+  }));
 
   const parsed = parseJsonObject(response.output_text) as { fields?: SchemaField[] };
   return (parsed.fields || []).map((field) => normalizeSchemaField(field, prompt));
@@ -125,7 +176,7 @@ export async function extractValuesWithOpenAI(
   if (!openai) return undefined;
 
   const selectedFields = fields.filter((field) => field.selected);
-  const response = await openai.responses.create({
+  const response = await withOpenAIRetry(() => openai.responses.create({
     model: modelName(),
     input: [
       {
@@ -156,7 +207,7 @@ export async function extractValuesWithOpenAI(
       },
     ],
     text: { format: { type: 'json_object' } },
-  });
+  }));
 
   const parsed = parseJsonObject(response.output_text) as {
     fields?: Array<{ key: string; value: unknown; confidence?: number }>;
