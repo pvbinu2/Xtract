@@ -40,6 +40,11 @@ export class DocumentTypesController {
     return this.service.addSample(id, file.filename);
   }
 
+  @Post(':id/train-classifier')
+  trainClassifier(@Param('id') id: string) {
+    return this.service.trainClassifier(id);
+  }
+
   @Post(':id/generate-template')
   generateTemplate(@Param('id') id: string, @Body() body: { prompt: string }) {
     return this.service.generateTemplate(id, body.prompt);

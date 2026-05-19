@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
 export type IncomingDocumentDocument = HydratedDocument<IncomingDocument>;
-export type DocumentStatus = 'uploaded' | 'processing' | 'extracted' | 'validated' | 'failed';
+export type DocumentStatus = 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
 
 @Schema({ _id: false })
 export class BoundingBox {
@@ -58,14 +58,20 @@ export class IncomingDocument {
   @Prop({ required: true })
   filePath!: string;
 
-  @Prop({ required: true })
+  @Prop({ default: 'Unclassified' })
   category!: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'DocumentType', required: true })
-  documentTypeId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'DocumentType' })
+  documentTypeId?: Types.ObjectId;
 
-  @Prop({ required: true })
+  @Prop({ default: 'Pending classification' })
   documentTypeName!: string;
+
+  @Prop()
+  classificationScore?: number;
+
+  @Prop({ default: 'manual' })
+  classificationMethod!: 'manual' | 'rag';
 
   @Prop({ default: 'uploaded' })
   status!: DocumentStatus;

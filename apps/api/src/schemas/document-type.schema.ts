@@ -47,6 +47,18 @@ export class DocumentType {
   @Prop({ type: [String], default: [] })
   sampleFiles!: string[];
 
+  @Prop({ default: 'untrained' })
+  classifierTrainingStatus!: 'untrained' | 'training' | 'trained' | 'failed';
+
+  @Prop({ default: '' })
+  classifierProfile!: string;
+
+  @Prop()
+  classifierTrainedAt?: Date;
+
+  @Prop()
+  classifierTrainingError?: string;
+
   @Prop({ type: [ExtractionFieldSchema], default: [] })
   fields!: ExtractionField[];
 

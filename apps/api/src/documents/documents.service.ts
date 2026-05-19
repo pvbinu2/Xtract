@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
@@ -75,24 +75,32 @@ export class DocumentsService {
     fileName: string;
     originalName: string;
     filePath: string;
-    category: string;
-    documentTypeId: string;
+    category?: string;
+    documentTypeId?: string;
   }[]) {
     const documents = [] as IncomingDocumentDocument[];
 
     for (const item of payload) {
-      const docType = await this.documentTypeModel.findById(item.documentTypeId);
-      if (!docType) throw new NotFoundException('Document type not found');
+      const docType = item.documentTypeId ? await this.documentTypeModel.findById(item.documentTypeId) : undefined;
+      if (item.documentTypeId && !docType) throw new NotFoundException('Document type not found');
+      const autoClassify = !docType;
+      if (autoClassify && !this.hasQueueConnection()) {
+        throw new BadRequestException('Automatic classification requires Azure queue storage and the function worker.');
+      }
 
       const document = await this.documentModel.create({
         ...item,
-        documentTypeName: docType.name,
+        category: docType?.category ?? 'Unclassified',
+        documentTypeId: docType?._id,
+        documentTypeName: docType?.name ?? 'Pending classification',
+        classificationScore: docType ? 1 : undefined,
+        classificationMethod: docType ? 'manual' : 'rag',
         status: 'processing',
         extractedData: [],
       });
 
       documents.push(document);
-      if (process.env.PROCESSING_MODE === 'queue') {
+      if (autoClassify || process.env.PROCESSING_MODE === 'queue') {
         await this.enqueueProcessing(document.id);
       } else {
         await this.processDocument(document.id);
@@ -100,6 +108,10 @@ export class DocumentsService {
     }
 
     return Promise.all(documents.map((document) => this.findById(document.id)));
+  }
+
+  private hasQueueConnection() {
+    return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
   }
 
   private async enqueueProcessing(documentId: string) {
@@ -156,6 +168,16 @@ export class DocumentsService {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { extractedData, status: 'validated' },
+      { new: true },
+    );
+    if (!updated) throw new NotFoundException('Document not found');
+    return updated;
+  }
+
+  async reject(id: string) {
+    const updated = await this.documentModel.findByIdAndUpdate(
+      id,
+      { status: 'rejected' },
       { new: true },
     );
     if (!updated) throw new NotFoundException('Document not found');

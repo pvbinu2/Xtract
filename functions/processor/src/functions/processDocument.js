@@ -4,6 +4,7 @@ const path = require('path');
 const { MongoClient, ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
+const { classifyDocument, normalizeObjectId } = require('../classifier');
 
 let clientPromise;
 let openai;
@@ -141,17 +142,9 @@ async function processDocument(message, context) {
   const documentTypeId =
     document.documentTypeId instanceof ObjectId
       ? document.documentTypeId
-      : ObjectId.isValid(document.documentTypeId)
+      : document.documentTypeId && ObjectId.isValid(document.documentTypeId)
         ? new ObjectId(document.documentTypeId)
         : document.documentTypeId;
-  const documentType = await documentTypes.findOne({ _id: documentTypeId });
-  if (!documentType) {
-    await documents.updateOne(
-      { _id: document._id },
-      { $set: { status: 'failed', error: 'Document type not found', updatedAt: new Date() } },
-    );
-    return;
-  }
 
   if (!document.filePath || !fileExists(document.filePath)) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
@@ -161,6 +154,34 @@ async function processDocument(message, context) {
   }
 
   try {
+    let documentType = documentTypeId ? await documentTypes.findOne({ _id: documentTypeId }) : null;
+    if (documentTypeId && !documentType) {
+      await documents.updateOne(
+        { _id: document._id },
+        { $set: { status: 'failed', error: 'Document type not found', updatedAt: new Date() } },
+      );
+      return;
+    }
+
+    if (!documentType) {
+      const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
+      const classification = await classifyDocument(document, allDocumentTypes);
+      documentType = classification.documentType;
+      await documents.updateOne(
+        { _id: document._id },
+        {
+          $set: {
+            category: documentType.category,
+            documentTypeId: normalizeObjectId(documentType._id),
+            documentTypeName: documentType.name,
+            classificationScore: classification.score,
+            classificationMethod: 'rag',
+            updatedAt: new Date(),
+          },
+        },
+      );
+    }
+
     const extractedData = await attachBoundingBoxes(
       document.filePath,
       (await extractValuesWithOpenAI(document, documentType)) ||

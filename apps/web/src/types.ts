@@ -19,6 +19,10 @@ export type DocumentType = {
   name: string;
   prompt: string;
   sampleFiles: string[];
+  classifierTrainingStatus?: 'untrained' | 'training' | 'trained' | 'failed';
+  classifierProfile?: string;
+  classifierTrainedAt?: string;
+  classifierTrainingError?: string;
   fields: ExtractionField[];
   finalized: boolean;
 };
@@ -45,7 +49,9 @@ export type IncomingDocument = {
   category: string;
   documentTypeId: string;
   documentTypeName: string;
-  status: 'uploaded' | 'processing' | 'extracted' | 'validated' | 'failed';
+  classificationScore?: number;
+  classificationMethod?: 'manual' | 'rag';
+  status: 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
   extractedData: ExtractedValue[];
   createdAt: string;
   updatedAt: string;

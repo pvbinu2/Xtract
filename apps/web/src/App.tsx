@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState, useRef } from 're
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   CheckCircle2,
+  BrainCircuit,
   ChevronRight,
   ChevronUp,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   FilePlus2,
   FileSearch,
   Files,
+  Gauge,
   Loader2,
   Pencil,
   Plus,
@@ -27,7 +29,7 @@ import { DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocum
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'upload' | 'documents' | 'validation';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation';
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 
@@ -60,6 +62,10 @@ function toKey(label: string) {
 function coerceValue(value: unknown) {
   if (typeof value === 'string') return value;
   return JSON.stringify(value, null, 2);
+}
+
+function formatScore(score?: number) {
+  return typeof score === 'number' ? `${Math.round(score * 100)}%` : 'N/A';
 }
 
 function asTableRows(value: unknown): Record<string, unknown>[] {
@@ -98,7 +104,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
 
-  const activeType = documentTypes.find((item) => item._id === activeTypeId) ?? documentTypes[0];
+  const activeType = activeTypeId ? documentTypes.find((item) => item._id === activeTypeId) : undefined;
   const categories = useMemo(
     () => Array.from(new Set(documentTypes.map((item) => item.category))).sort(),
     [documentTypes],
@@ -112,7 +118,6 @@ export function App() {
     setDocumentTypes(types);
     setDocumentPage(docs);
     setDocuments(docs.items);
-    if (!activeTypeId && types[0]) setActiveTypeId(types[0]._id);
   }
 
   useEffect(() => {
@@ -144,6 +149,7 @@ export function App() {
 
   const navigation = [
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
+    { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
     { id: 'documents' as View, label: 'Documents', icon: Files },
   ];
@@ -191,6 +197,7 @@ export function App() {
               <StatusMetric label="Processing" value={documents.filter((doc) => doc.status === 'processing').length} />
               <StatusMetric label="Ready" value={documents.filter((doc) => doc.status === 'extracted').length} />
               <StatusMetric label="Validated" value={documents.filter((doc) => doc.status === 'validated').length} />
+              <StatusMetric label="Rejected" value={documents.filter((doc) => doc.status === 'rejected').length} />
             </div>
             <button
               type="button"
@@ -216,6 +223,14 @@ export function App() {
             documentTypes={documentTypes}
             activeType={activeType}
             setActiveTypeId={setActiveTypeId}
+            categories={categories}
+            onRun={run}
+            onRefresh={refresh}
+          />
+        )}
+        {view === 'classification' && (
+          <ClassificationScreen
+            documentTypes={documentTypes}
             onRun={run}
             onRefresh={refresh}
           />
@@ -267,26 +282,115 @@ function StatusMetric({ label, value }: { label: string; value: number }) {
   );
 }
 
+function classifierStatus(type: DocumentType) {
+  if (!type.finalized) return 'draft';
+  if (!type.sampleFiles.length) return 'needs sample';
+  return type.classifierTrainingStatus || 'untrained';
+}
+
+function ClassificationScreen({
+  documentTypes,
+  onRun,
+  onRefresh,
+}: {
+  documentTypes: DocumentType[];
+  onRun: (action: () => Promise<void>, success: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  const includedTypes = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0);
+  const trainedCount = documentTypes.filter((type) => type.classifierTrainingStatus === 'trained').length;
+  const trainingCount = documentTypes.filter((type) => type.classifierTrainingStatus === 'training').length;
+  const fileCount = documentTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
+
+  async function trainType(type: DocumentType) {
+    await api.trainClassifier(type._id);
+  }
+
+  return (
+    <div className="classification-layout">
+      <section className="panel classification-summary">
+        <StatusMetric label="Included Types" value={includedTypes.length} />
+        <StatusMetric label="Training" value={trainingCount} />
+        <StatusMetric label="Trained" value={trainedCount} />
+        <StatusMetric label="Sample Files" value={fileCount} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Classifier Training</h2>
+            <p>Finalized document types with at least one sample are included.</p>
+          </div>
+          <button
+            className="primary-button"
+            disabled={!includedTypes.length}
+            onClick={() =>
+              onRun(async () => {
+                await Promise.all(includedTypes.map((type) => trainType(type)));
+                await onRefresh();
+              }, 'Classifier training queued')
+            }
+          >
+            <BrainCircuit size={16} />
+            Train All
+          </button>
+        </div>
+
+        <div className="classification-table">
+          {documentTypes.map((type) => {
+            const status = classifierStatus(type);
+            const canTrain = type.finalized && type.sampleFiles.length > 0;
+            return (
+              <div className="classification-row" key={type._id}>
+                <div>
+                  <strong>{type.name}</strong>
+                  <small>{type.category}</small>
+                </div>
+                <span className="file-count">{type.sampleFiles.length} file{type.sampleFiles.length === 1 ? '' : 's'}</span>
+                <span className={`classifier-pill ${status.replace(/\s+/g, '-')}`}>{status}</span>
+                <button
+                  className="secondary-button compact"
+                  disabled={!canTrain}
+                  onClick={() =>
+                    onRun(async () => {
+                      await trainType(type);
+                      await onRefresh();
+                    }, `${type.name} training queued`)
+                  }
+                >
+                  <BrainCircuit size={14} />
+                  Train
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function DocumentTypeManagement({
   documentTypes,
   activeType,
   setActiveTypeId,
+  categories,
   onRun,
   onRefresh,
 }: {
   documentTypes: DocumentType[];
   activeType?: DocumentType;
   setActiveTypeId: (id: string) => void;
+  categories: string[];
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
-  const [category, setCategory] = useState('Finance');
-  const [name, setName] = useState('Invoice');
   const [prompt, setPrompt] = useState('Invoice number, invoice date, supplier name, subtotal, tax amount, total amount');
   const [sample, setSample] = useState<File | null>(null);
   const [fields, setFields] = useState<ExtractionField[]>([]);
   const [schemaEditing, setSchemaEditing] = useState(false);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
@@ -319,37 +423,11 @@ function DocumentTypeManagement({
     <div className="two-column">
       <section className="panel">
         <div className="panel-heading">
-          <h2>Create Type</h2>
-          <Plus size={18} />
-        </div>
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onRun(async () => {
-              const created = await api.createDocumentType({ category, name, prompt });
-              setActiveTypeId(created._id);
-              await onRefresh();
-            }, 'Document type created');
-          }}
-        >
-          <label>
-            Category
-            <input value={category} onChange={(event) => setCategory(event.target.value)} />
-          </label>
-          <label>
-            Document type
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label className="span-2">
-            Extraction prompt
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
-          </label>
-          <button className="primary-button" type="submit">
-            <Plus size={16} />
-            Create
+          <h2>Document Types</h2>
+          <button className="icon-button" title="Create document type" onClick={() => setShowCreateModal(true)}>
+            <Plus size={18} />
           </button>
-        </form>
+        </div>
 
         <div className="type-list">
           {documentTypes.map((type) => (
@@ -362,7 +440,15 @@ function DocumentTypeManagement({
                 <strong>{type.name}</strong>
                 <small>{type.category}</small>
               </span>
-              <em>{type.finalized ? 'Saved' : 'Draft'}</em>
+              <em>
+                {!type.finalized
+                  ? 'Draft'
+                  : type.classifierTrainingStatus === 'trained'
+                    ? 'Trained'
+                    : type.sampleFiles.length
+                      ? 'Training'
+                      : 'Needs sample'}
+              </em>
             </button>
           ))}
         </div>
@@ -390,6 +476,14 @@ function DocumentTypeManagement({
               </button>
             </div>
 
+            <div className={activeType.classifierTrainingStatus === 'trained' ? 'training-status ready' : 'training-status'}>
+              <Gauge size={16} />
+              <span>
+                Classifier training: {activeType.classifierTrainingStatus || 'untrained'} with {activeType.sampleFiles.length} sample
+                {activeType.sampleFiles.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
             <div className="sample-row">
               <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
               <button
@@ -399,6 +493,7 @@ function DocumentTypeManagement({
                   sample &&
                   onRun(async () => {
                     await api.uploadSample(activeType._id, sample);
+                    setSample(null);
                     await onRefresh();
                   }, 'Sample uploaded')
                 }
@@ -408,24 +503,30 @@ function DocumentTypeManagement({
               </button>
             </div>
 
-            <label className="full-label">
-              Prompt
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
-            </label>
-            <button
-              className="primary-button"
-              onClick={() =>
-                onRun(async () => {
-                  const updated = await api.generateTemplate(activeType._id, prompt);
-                  setFields(withUiIds(updated.fields));
-                  setSchemaEditing(false);
-                  await onRefresh();
-                }, 'Template generated')
-              }
-            >
-              <FileSearch size={16} />
-              Generate Template
-            </button>
+            {!fields.length && (
+              <>
+                <label className="full-label">
+                  Prompt
+                  <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} />
+                </label>
+              </>
+            )}
+            {!fields.length && (
+              <button
+                className="primary-button"
+                onClick={() =>
+                  onRun(async () => {
+                    const updated = await api.generateTemplate(activeType._id, prompt);
+                    setFields(withUiIds(updated.fields));
+                    setSchemaEditing(false);
+                    await onRefresh();
+                  }, 'Template generated')
+                }
+              >
+                <FileSearch size={16} />
+                Generate Template
+              </button>
+            )}
 
             {!!fields.length && (
               <div className="schema-toolbar">
@@ -649,8 +750,216 @@ function DocumentTypeManagement({
             </div>
           </>
         ) : (
-          <EmptyState text="Create a document type to begin." />
+          <EmptyState text="Select a document type to view details." />
         )}
+      </section>
+      {showCreateModal && (
+        <CreateDocumentTypeModal
+          documentTypes={documentTypes}
+          categories={categories}
+          onCancel={() => setShowCreateModal(false)}
+          onCreate={(created) => {
+            setActiveTypeId(created._id);
+            setShowCreateModal(false);
+            onRefresh();
+          }}
+          onRun={onRun}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateDocumentTypeModal({
+  documentTypes,
+  categories,
+  onCancel,
+  onCreate,
+  onRun,
+}: {
+  documentTypes: DocumentType[];
+  categories: string[];
+  onCancel: () => void;
+  onCreate: (created: DocumentType) => void;
+  onRun: (action: () => Promise<void>, success: string) => Promise<void>;
+}) {
+  const [isNewCategory, setIsNewCategory] = useState(false);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [category, setCategory] = useState('');
+  const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [errors, setErrors] = useState<{ name?: string; category?: string; prompt?: string }>({});
+
+  const validate = () => {
+    const trimmedName = name.trim();
+    const trimmedCategory = category.trim();
+    const trimmedPrompt = prompt.trim();
+    const nextErrors: typeof errors = {};
+
+    if (!trimmedName) {
+      nextErrors.name = 'Document type name is required.';
+    } else if (documentTypes.some((type) => type.name.toLowerCase() === trimmedName.toLowerCase())) {
+      nextErrors.name = 'A document type with this name already exists.';
+    }
+
+    if (!trimmedCategory) {
+      nextErrors.category = 'Category is required.';
+    }
+
+    if (!trimmedPrompt) {
+      nextErrors.prompt = 'Extraction prompt is required.';
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="modal">
+        <div className="modal-heading">
+          <div>
+            <h2>Create Document Type</h2>
+            <p>Define a new document type for extraction.</p>
+          </div>
+          <button className="icon-button" title="Close" onClick={onCancel}>
+            <X size={17} />
+          </button>
+        </div>
+        <form
+          className="form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!validate()) {
+              return;
+            }
+            onRun(async () => {
+              const created = await api.createDocumentType({ category, name: name.trim(), prompt: prompt.trim() });
+              onCreate(created);
+            }, 'Document type created');
+          }}
+        >
+          <div>
+            {!isNewCategory ? (
+              <label>
+                Category
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select
+                    value={category}
+                    onChange={(event) => {
+                      setCategory(event.target.value);
+                      if (errors.category && event.target.value.trim()) {
+                        setErrors((current) => ({ ...current, category: undefined }));
+                      }
+                    }}
+                    className={errors.category ? 'input-error' : ''}
+                  >
+                    <option value="">Select a category</option>
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.category ? <div className="field-error">{errors.category}</div> : null}
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    title="Add new category"
+                    onClick={() => {
+                      setIsNewCategory(true);
+                      setNewCategoryInput('');
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+              </label>
+            ) : (
+              <label>
+                New Category
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    value={newCategoryInput}
+                    onChange={(event) => setNewCategoryInput(event.target.value)}
+                    placeholder="Enter new category"
+                    autoFocus
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    title="Use this category"
+                    onClick={() => {
+                      if (newCategoryInput.trim()) {
+                        setCategory(newCategoryInput.trim());
+                        setIsNewCategory(false);
+                        setNewCategoryInput('');
+                        if (errors.category) {
+                          setErrors((current) => ({ ...current, category: undefined }));
+                        }
+                      }
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    title="Cancel"
+                    onClick={() => {
+                      setIsNewCategory(false);
+                      setNewCategoryInput('');
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </label>
+            )}
+          </div>
+          <label>
+            Document type
+            <input
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                if (errors.name && event.target.value.trim()) {
+                  setErrors((current) => ({ ...current, name: undefined }));
+                }
+              }}
+              className={errors.name ? 'input-error' : ''}
+            />
+            {errors.name ? <div className="field-error">{errors.name}</div> : null}
+          </label>
+          <label className="span-2">
+            Extraction prompt
+            <textarea
+              value={prompt}
+              onChange={(event) => {
+                setPrompt(event.target.value);
+                if (errors.prompt && event.target.value.trim()) {
+                  setErrors((current) => ({ ...current, prompt: undefined }));
+                }
+              }}
+              rows={4}
+              className={errors.prompt ? 'input-error' : ''}
+            />
+            {errors.prompt ? <div className="field-error">{errors.prompt}</div> : null}
+          </label>
+          <div className="modal-footer">
+            <button className="secondary-button" type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button className="primary-button" type="submit">
+              <Plus size={16} />
+              Create
+            </button>
+          </div>
+        </form>
       </section>
     </div>
   );
@@ -672,7 +981,9 @@ function UploadScreen({
   const [category, setCategory] = useState(categories[0] ?? '');
   const availableTypes = documentTypes.filter((type) => type.category === category);
   const [documentTypeId, setDocumentTypeId] = useState(availableTypes[0]?._id ?? '');
+  const [autoClassify, setAutoClassify] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
+  const trainedTypeCount = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0).length;
 
   useEffect(() => {
     setCategory((current) => current || categories[0] || '');
@@ -691,15 +1002,26 @@ function UploadScreen({
           event.preventDefault();
           if (!files.length) return;
           onRun(async () => {
-            await api.uploadDocuments({ category, documentTypeId, files });
+            await api.uploadDocuments(autoClassify ? { files } : { category, documentTypeId, files });
             await onRefresh();
             openDocuments();
-          }, 'Documents uploaded and processed');
+          }, autoClassify ? 'Documents classified and processed' : 'Documents uploaded and processed');
         }}
       >
+        <label className="span-2 checkbox-row">
+          <input
+            type="checkbox"
+            checked={autoClassify}
+            onChange={(event) => setAutoClassify(event.target.checked)}
+          />
+          <span>
+            Auto classify with trained samples
+            <small>{trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} available</small>
+          </span>
+        </label>
         <label>
           Category
-          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+          <select value={category} disabled={autoClassify} onChange={(event) => setCategory(event.target.value)}>
             {categories.map((item) => (
               <option key={item}>{item}</option>
             ))}
@@ -707,7 +1029,7 @@ function UploadScreen({
         </label>
         <label>
           Document type
-          <select value={documentTypeId} onChange={(event) => setDocumentTypeId(event.target.value)}>
+          <select value={documentTypeId} disabled={autoClassify} onChange={(event) => setDocumentTypeId(event.target.value)}>
             {availableTypes.map((type) => (
               <option key={type._id} value={type._id}>
                 {type.name}
@@ -729,9 +1051,12 @@ function UploadScreen({
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
         </label>
-        <button className="primary-button" disabled={!documentTypeId || files.length === 0}>
+        <button
+          className="primary-button"
+          disabled={(!autoClassify && !documentTypeId) || (autoClassify && trainedTypeCount === 0) || files.length === 0}
+        >
           <Upload size={16} />
-          Upload Document{files.length === 1 ? '' : 's'}
+          {autoClassify ? 'Classify & Process' : `Upload Document${files.length === 1 ? '' : 's'}`}
         </button>
       </form>
     </section>
@@ -796,6 +1121,7 @@ function DocumentList({
             <option value="processing">Processing</option>
             <option value="extracted">Extracted</option>
             <option value="validated">Validated</option>
+            <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
           </select>
         </label>
@@ -839,8 +1165,13 @@ function DocumentList({
                 <small>
                   {doc.category} / {doc.documentTypeName}
                 </small>
+                <small>
+                  Classification score {formatScore(doc.classificationScore)}
+                  {doc.classificationMethod === 'rag' ? ' auto' : ' manual'}
+                </small>
               </span>
               <span className={`pill ${doc.status}`}>{doc.status}</span>
+              <span className="score-badge">{formatScore(doc.classificationScore)}</span>
               <time>{new Date(doc.createdAt).toLocaleString()}</time>
             </button>
             <div className="row-actions">
@@ -964,6 +1295,18 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
+  const fieldStyles = useMemo(() => {
+    return values.reduce<Record<string, { border: string; fill: string; activeFill: string }>>((acc, item, index) => {
+      const hue = (index * 47 + 12) % 360;
+      acc[item.key] = {
+        border: `hsl(${hue}, 88%, 47%)`,
+        fill: `hsla(${hue}, 95%, 80%, 0.32)`,
+        activeFill: `hsla(${hue}, 95%, 70%, 0.42)`,
+      };
+      return acc;
+    }, {});
+  }, [values]);
+
   useEffect(() => {
     if (!documentId) return;
     api.getDocument(documentId).then((doc) => {
@@ -1000,17 +1343,33 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
     await onValidated();
   }
 
+  async function reject() {
+    if (!document) return;
+    await api.rejectDocument(document._id);
+    setMessage('Document rejected');
+    await onValidated();
+  }
+
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
-  const isValidated = document.status === 'validated';
+  const isLocked = document.status === 'validated' || document.status === 'rejected';
 
   return (
     <div className="validation-layout">
       <section className="pdf-pane">
         <PdfViewer
           url={api.documentFileUrl(document._id)}
-          highlights={values.find((item) => item.key === activeFieldKey)?.boundingBoxes || []}
+          highlights={values.flatMap((item, index) => {
+            const styles = fieldStyles[item.key];
+            return (item.boundingBoxes || []).map((box) => ({
+              ...box,
+              fieldKey: item.key,
+              color: styles?.border || 'rgba(59, 130, 246, 0.8)',
+              activeFill: styles?.activeFill || 'rgba(59, 130, 246, 0.25)',
+            }));
+          })}
+          activeFieldKey={activeFieldKey}
         />
       </section>
       <section className="panel extraction-pane">
@@ -1018,49 +1377,74 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
           <div>
             <h2>{document.originalName}</h2>
             <p>{document.category} / {document.documentTypeName}</p>
+            <p>
+              Classification score {formatScore(document.classificationScore)}
+              {document.classificationMethod === 'rag' ? ' auto' : ' manual'}
+            </p>
           </div>
           <span className={`pill ${document.status}`}>{document.status}</span>
         </div>
         {message && <div className="toast inline">{message}</div>}
         <div className="extraction-form">
-          {values.map((item, index) =>
-            item.type === 'table' ? (
-              <div className="extraction-field" key={item.key}>
+          {values.map((item, index) => {
+            const styles = fieldStyles[item.key];
+            const isActive = item.key === activeFieldKey;
+            const wrapperStyle = {
+              borderColor: styles?.border,
+              backgroundColor: isActive ? styles?.activeFill : styles?.fill,
+            } as const;
+
+            return item.type === 'table' ? (
+              <div
+                className={`extraction-field${isActive ? ' active' : ''}`}
+                key={item.key}
+                style={wrapperStyle}
+              >
                 <div className="field-label">
                   <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
                     {item.label}
                   </button>
                   {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
                 </div>
-                <TableValuePreview item={item} canEdit={!isValidated} onEdit={() => setTableEditIndex(index)} />
+                <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
               </div>
             ) : (
-              <label key={item.key}>
-                <span>
+              <label
+                key={item.key}
+                className={`extraction-field${isActive ? ' active' : ''}`}
+                style={wrapperStyle}
+              >
+                <div className="field-label">
                   <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
                     {item.label}
                   </button>
                   {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
-                </span>
+                </div>
                 <input
                   value={coerceValue(item.value)}
-                  disabled={isValidated}
+                  disabled={isLocked}
                   onChange={(event) => updateValue(index, event.target.value)}
                 />
               </label>
-            ),
-          )}
+            );
+          })}
         </div>
-        {isValidated ? (
-          <div className="locked-state">
-            <CheckCircle2 size={16} />
-            Validated documents are locked.
+        {isLocked ? (
+          <div className={`locked-state ${document.status}`}>
+            {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}
+            {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
           </div>
         ) : (
-          <button className="primary-button" type="button" onClick={submit}>
-            <CheckCircle2 size={16} />
-            Submit Validation
-          </button>
+          <div className="validation-actions">
+            <button className="secondary-button danger-outline" type="button" onClick={reject}>
+              <X size={16} />
+              Reject
+            </button>
+            <button className="primary-button" type="button" onClick={submit}>
+              <CheckCircle2 size={16} />
+              Submit Validation
+            </button>
+          </div>
         )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (
@@ -1080,9 +1464,20 @@ function ValidationScreen({ documentId, onValidated }: { documentId: string; onV
 function PdfViewer({
   url,
   highlights,
+  activeFieldKey,
 }: {
   url: string;
-  highlights: Array<{ page: number; x: number; y: number; width: number; height: number }>;
+  highlights: Array<{
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    fieldKey: string;
+    color: string;
+    activeFill: string;
+  }>;
+  activeFieldKey: string | null;
 }) {
   const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
@@ -1111,29 +1506,26 @@ function PdfViewer({
   }, [url]);
 
   useEffect(() => {
-    if (highlights.length === 0 || !pdfContainerRef.current) return;
+    if (!pdfContainerRef.current) return;
+    const selectedHighlights = highlights.filter((box) => box.fieldKey === activeFieldKey);
+    if (selectedHighlights.length === 0) return;
 
-    // Get the first highlight's page
-    const firstHighlight = highlights[0];
+    const firstHighlight = selectedHighlights[0];
     const targetPageIndex = firstHighlight.page;
 
-    // Find the page element corresponding to the target page
     const pageElements = pdfContainerRef.current.querySelectorAll('.pdf-page');
     if (targetPageIndex >= 0 && targetPageIndex < pageElements.length) {
       const targetPageElement = pageElements[targetPageIndex];
-      
-      // Scroll the page into view with smooth behavior
       targetPageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-      // Focus on the highlight by finding and highlighting it
       setTimeout(() => {
-        const highlights = targetPageElement.querySelectorAll('.pdf-highlight');
-        if (highlights.length > 0) {
-          (highlights[0] as HTMLElement).focus({ preventScroll: true });
+        const activeHighlights = targetPageElement.querySelectorAll('.pdf-highlight.active');
+        if (activeHighlights.length > 0) {
+          (activeHighlights[0] as HTMLElement).focus({ preventScroll: true });
         }
       }, 100);
     }
-  }, [highlights]);
+  }, [highlights, activeFieldKey]);
 
   return (
     <div className="pdf-pages" ref={pdfContainerRef}>
@@ -1142,19 +1534,25 @@ function PdfViewer({
           <img alt={`PDF page ${index + 1}`} src={page.dataUrl} />
           {highlights
             .filter((box) => box.page === index)
-            .map((box, boxIndex) => (
-              <div
-                className="pdf-highlight"
-                key={`${index}-${boxIndex}`}
-                style={{
-                  left: `${box.x * 100}%`,
-                  top: `${box.y * 100}%`,
-                  width: `${box.width * 100}%`,
-                  height: `${box.height * 100}%`,
-                }}
-                tabIndex={0}
-              />
-            ))}
+            .map((box, boxIndex) => {
+              const isActive = box.fieldKey === activeFieldKey;
+              return (
+                <div
+                  className={`pdf-highlight${isActive ? ' active' : ''}`}
+                  key={`${index}-${boxIndex}`}
+                  style={{
+                    left: `${box.x * 100}%`,
+                    top: `${box.y * 100}%`,
+                    width: `${box.width * 100}%`,
+                    height: `${box.height * 100}%`,
+                    borderColor: box.color,
+                    backgroundColor: isActive ? box.activeFill : 'transparent',
+                    boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
+                  }}
+                  tabIndex={isActive ? 0 : -1}
+                />
+              );
+            })}
         </div>
       ))}
     </div>

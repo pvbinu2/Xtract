@@ -36,7 +36,7 @@ export class DocumentsController {
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
     @UploadedFiles() files: Express.Multer.File[],
-    @Body() body: { category: string; documentTypeId: string },
+    @Body() body: { category?: string; documentTypeId?: string },
   ) {
     return this.service.upload(
       files.map((file) => ({
@@ -63,6 +63,11 @@ export class DocumentsController {
   @Post(':id/validate')
   validate(@Param('id') id: string, @Body() body: { extractedData: any[] }) {
     return this.service.validate(id, body.extractedData);
+  }
+
+  @Post(':id/reject')
+  reject(@Param('id') id: string) {
+    return this.service.reject(id);
   }
 
   @Post(':id/reprocess')
