@@ -41,7 +41,7 @@ export class DocumentsService {
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
     private readonly configurationService: ConfigurationService,
-  ) {}
+  ) { }
 
   private escapeRegex(input: string) {
     return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -141,7 +141,7 @@ export class DocumentsService {
     document.extractedData = await attachBoundingBoxes(
       document.filePath,
       (await extractValuesWithOpenAI(document.filePath, docType.fields, docType.name)) ??
-        mockExtractionFromSchema(docType),
+      mockExtractionFromSchema(docType),
     );
     document.status = 'extracted';
     document.error = undefined;
@@ -156,7 +156,7 @@ export class DocumentsService {
     if (newDocumentTypeId) {
       const newDocType = await this.documentTypeModel.findById(newDocumentTypeId);
       if (!newDocType) throw new NotFoundException('Document type not found');
-      
+
       document.documentTypeId = newDocType._id;
       document.documentTypeName = newDocType.name;
       document.category = newDocType.category;
@@ -228,7 +228,8 @@ export class DocumentsService {
       documentTypeName: document.documentTypeName,
       classificationScore: document.classificationScore,
       classificationMethod: document.classificationMethod,
-      validatedAt: new Date().toISOString(),
+      status: document.status,
+      processedAt: new Date().toISOString(),
       extractedData: extractedData.map((item) => ({
         key: item.key,
         label: item.label,
@@ -284,13 +285,28 @@ export class DocumentsService {
     return updated;
   }
 
-  async reject(id: string) {
+  async reject(id: string, deleteAfterDownstream = false, downstreamUrl?: string) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { status: 'rejected' },
       { new: true },
     );
     if (!updated) throw new NotFoundException('Document not found');
+
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
+    if (downstreamConfig) {
+      try {
+        await this.sendToDownstream(updated, updated.extractedData || []);
+        if (deleteAfterDownstream) {
+          await this.remove(updated.id);
+          return { deleted: true };
+        }
+      } catch (error) {
+        // Log error but don't fail the reject operation
+        console.error('Failed to send rejected document to downstream:', error);
+      }
+    }
+
     return updated;
   }
 

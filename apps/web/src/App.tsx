@@ -112,7 +112,7 @@ function tableColumns(rows: Record<string, unknown>[]) {
 }
 
 export function App() {
-  const [view, setView] = useState<View>('types');
+  const [view, setView] = useState<View>('documents');
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documents, setDocuments] = useState<IncomingDocument[]>([]);
   const [documentPage, setDocumentPage] = useState<PagedResult<IncomingDocument>>({
@@ -214,10 +214,10 @@ export function App() {
   }
 
   const navigation = [
+    { id: 'documents' as View, label: 'Documents', icon: Files },
+    { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
-    { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
-    { id: 'documents' as View, label: 'Documents', icon: Files },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
   ];
 
@@ -1670,7 +1670,7 @@ function ValidationScreen({
 
   async function reject() {
     if (!document) return;
-    await api.rejectDocument(document._id);
+    await api.rejectDocument(document._id, deleteAfterDownstream, downstreamUrl);
     setMessage('Document rejected');
     await onValidated();
   }
@@ -1706,80 +1706,83 @@ function ValidationScreen({
         />
       </section>
       <section className="panel extraction-pane">
-        <div className="panel-heading">
-          <div>
-            <h2>{document.originalName}</h2>
-            <p>{document.category} / {document.documentTypeName}</p>
-            <div className="classification-score-line">
-              <span>Classification score</span>
-              <strong>{formatScore(document.classificationScore)}</strong>
-              <ClassificationMethodIcon method={document.classificationMethod} />
+        <div className="extraction-pane-content">
+          <div className="panel-heading">
+            <div>
+              <h2>{document.originalName}</h2>
+              <p>{document.category} / {document.documentTypeName}</p>
+              <div className="classification-score-line">
+                <span>Classification score</span>
+                <strong>{formatScore(document.classificationScore)}</strong>
+                <ClassificationMethodIcon method={document.classificationMethod} />
+              </div>
+            </div>
+            <div className="panel-heading-actions">
+              <button className="icon-button" title="Refresh validation page" onClick={refreshPage}>
+                <RefreshCw size={16} />
+              </button>
+              <span className={`pill ${document.status}`}>{document.status}</span>
             </div>
           </div>
-          <div className="panel-heading-actions">
-            <button className="icon-button" title="Refresh validation page" onClick={refreshPage}>
-              <RefreshCw size={16} />
-            </button>
-            <span className={`pill ${document.status}`}>{document.status}</span>
-          </div>
-        </div>
-        {message && <div className="toast inline">{message}</div>}
-        {!downstreamUrl && (
-          <div className="toast inline">
-            Downstream URL is not configured. Document validation will complete locally only.
-          </div>
-        )}
-        <div className="extraction-form">
-          {values.map((item, index) => {
-            const styles = fieldStyles[item.key];
-            const isActive = item.key === activeFieldKey;
-            const wrapperStyle = {
-              borderColor: styles?.border,
-              backgroundColor: isActive ? styles?.activeFill : styles?.fill,
-            } as const;
+          {message && <div className="toast inline">{message}</div>}
+          {!downstreamUrl && (
+            <div className="toast inline">
+              Downstream URL is not configured. Document validation will complete locally only.
+            </div>
+          )}
+          <div className="extraction-form">
+            {values.map((item, index) => {
+              const styles = fieldStyles[item.key];
+              const isActive = item.key === activeFieldKey;
+              const wrapperStyle = {
+                borderColor: styles?.border,
+                backgroundColor: isActive ? styles?.activeFill : styles?.fill,
+              } as const;
 
-            return item.type === 'table' ? (
-              <div
-                className={`extraction-field${isActive ? ' active' : ''}`}
-                key={item.key}
-                style={wrapperStyle}
-              >
-                <div className="field-label">
-                  <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
-                    {item.label}
-                  </button>
-                  {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
+              return item.type === 'table' ? (
+                <div
+                  className={`extraction-field${isActive ? ' active' : ''}`}
+                  key={item.key}
+                  style={wrapperStyle}
+                >
+                  <div className="field-label">
+                    <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
+                      {item.label}
+                    </button>
+                    {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
+                  </div>
+                  <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
                 </div>
-                <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
-              </div>
-            ) : (
-              <label
-                key={item.key}
-                className={`extraction-field${isActive ? ' active' : ''}`}
-                style={wrapperStyle}
-              >
-                <div className="field-label">
-                  <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
-                    {item.label}
-                  </button>
-                  {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
-                </div>
-                <input
-                  value={coerceValue(item.value)}
-                  disabled={isLocked}
-                  onChange={(event) => updateValue(index, event.target.value)}
-                />
-              </label>
-            );
-          })}
-        </div>
-        {isLocked ? (
-          <div className={`locked-state ${document.status}`}>
-            {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}
-            {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
+              ) : (
+                <label
+                  key={item.key}
+                  className={`extraction-field${isActive ? ' active' : ''}`}
+                  style={wrapperStyle}
+                >
+                  <div className="field-label">
+                    <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
+                      {item.label}
+                    </button>
+                    {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
+                  </div>
+                  <input
+                    value={coerceValue(item.value)}
+                    disabled={isLocked}
+                    onChange={(event) => updateValue(index, event.target.value)}
+                  />
+                </label>
+              );
+            })}
           </div>
-        ) : (
-          <>
+          {isLocked && (
+            <div className={`locked-state ${document.status}`}>
+              {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}
+              {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
+            </div>
+          )}
+        </div>
+        {!isLocked && (
+          <div className="extraction-pane-footer">
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -1802,7 +1805,7 @@ function ValidationScreen({
                 Submit Validation
               </button>
             </div>
-          </>
+          </div>
         )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (

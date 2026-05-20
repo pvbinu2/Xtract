@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mock Downstream API</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 5px;
+    }
+
+    .header p {
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 20px auto;
+      padding: 0 20px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .controls button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-danger {
+      background: #f56565;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #e53e3e;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: white;
+      padding: 16px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+
+    .stat-card h3 {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-card .value {
+      font-size: 32px;
+      font-weight: bold;
+      color: #667eea;
+    }
+
+    .requests-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .request-card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+      transition: all 0.2s;
+    }
+
+    .request-card:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      transform: translateY(-2px);
+    }
+
+    .request-header {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .request-meta {
+      flex: 1;
+    }
+
+    .request-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .request-subtitle {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-right: 8px;
+    }
+
+    .status-validated {
+      background: rgba(76, 175, 80, 0.2);
+      color: #4caf50;
+    }
+
+    .status-rejected {
+      background: rgba(244, 67, 54, 0.2);
+      color: #f44336;
+    }
+
+    .request-content {
+      padding: 16px;
+    }
+
+    .request-content pre {
+      background: #f5f5f5;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 12px;
+      line-height: 1.4;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .request-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #666;
+    }
+
+    .delete-btn {
+      background: #f56565;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .delete-btn:hover {
+      background: #e53e3e;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      background: white;
+      border-radius: 8px;
+      color: #999;
+    }
+
+    .empty-state h3 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📥 Mock Downstream API</h1>
+    <p>Receiving and storing document validation requests</p>
+  </div>
+
+  <div class="container">
+    <div class="controls">
+      <button class="btn-primary" onclick="refreshRequests()">🔄 Refresh</button>
+      <button class="btn-danger" onclick="clearAllRequests()">🗑️ Clear All</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <h3>Total Requests</h3>
+        <div class="value" id="totalCount">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Validated</h3>
+        <div class="value" id="validatedCount">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Rejected</h3>
+        <div class="value" id="rejectedCount">0</div>
+      </div>
+    </div>
+
+    <div id="requestsList" class="requests-grid"></div>
+  </div>
+
+  <script>
+    async function refreshRequests() {
+      try {
+        const response = await fetch('/api/requests');
+        const data = await response.json();
+        const requests = data.requests || [];
+
+        document.getElementById('totalCount').textContent = data.count || 0;
+        
+        const validatedCount = requests.filter(r => r.status === 'validated').length;
+        const rejectedCount = requests.filter(r => r.status === 'rejected').length;
+        document.getElementById('validatedCount').textContent = validatedCount;
+        document.getElementById('rejectedCount').textContent = rejectedCount;
+
+        const requestsList = document.getElementById('requestsList');
+        if (requests.length === 0) {
+          requestsList.innerHTML = '<div class="empty-state"><h3>No requests yet</h3><p>Incoming documents will appear here</p></div>';
+          return;
+        }
+
+        requestsList.innerHTML = requests.map(request => `
+          <div class="request-card">
+            <div class="request-header">
+              <div class="request-meta">
+                <div class="request-title">📄 ${escapeHtml(request.fileName || 'Unknown')}</div>
+                <div class="request-subtitle">
+                  ${request.category ? `<span>${escapeHtml(request.category)}</span>` : ''}
+                  ${request.status ? `<span class="status-badge status-${request.status}">${request.status}</span>` : ''}
+                </div>
+              </div>
+            </div>
+            <div class="request-content">
+              <pre>${escapeHtml(JSON.stringify(request.payload, null, 2))}</pre>
+            </div>
+            <div class="request-footer">
+              <span>📅 ${new Date(request.receivedAt).toLocaleString()}</span>
+              <button class="delete-btn" onclick="deleteRequest('${request._id}')">Delete</button>
+            </div>
+          </div>
+        `).join('');
+      } catch (error) {
+        console.error('Error fetching requests:', error);
+        document.getElementById('requestsList').innerHTML = `<div class="empty-state"><h3>Error loading requests</h3><p>${error.message}</p></div>`;
+      }
+    }
+
+    async function deleteRequest(id) {
+      if (!confirm('Delete this request?')) return;
+      try {
+        await fetch(`/api/requests/${id}`, { method: 'DELETE' });
+        refreshRequests();
+      } catch (error) {
+        console.error('Error deleting request:', error);
+        alert('Failed to delete request');
+      }
+    }
+
+    async function clearAllRequests() {
+      if (!confirm('Clear ALL requests? This cannot be undone.')) return;
+      try {
+        await fetch('/api/requests/clear', { method: 'POST' });
+        refreshRequests();
+      } catch (error) {
+        console.error('Error clearing requests:', error);
+        alert('Failed to clear requests');
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
