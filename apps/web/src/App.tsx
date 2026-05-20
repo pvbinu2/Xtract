@@ -1670,7 +1670,7 @@ function ValidationScreen({
 
   async function reject() {
     if (!document) return;
-    await api.rejectDocument(document._id);
+    await api.rejectDocument(document._id, deleteAfterDownstream, downstreamUrl);
     setMessage('Document rejected');
     await onValidated();
   }

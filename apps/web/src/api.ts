@@ -77,5 +77,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  rejectDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reject`, { method: 'POST' }),
+  rejectDocument: (id: string, deleteAfterDownstream = false, downstreamUrl?: string) => request<IncomingDocument>(`/documents/${id}/reject`, { 
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deleteAfterDownstream, downstreamUrl }),
+  }),
 };

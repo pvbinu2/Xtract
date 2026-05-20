@@ -70,8 +70,8 @@ export class DocumentsController {
   }
 
   @Post(':id/reject')
-  reject(@Param('id') id: string) {
-    return this.service.reject(id);
+  reject(@Param('id') id: string, @Body() body: { deleteAfterDownstream?: boolean; downstreamUrl?: string }) {
+    return this.service.reject(id, body.deleteAfterDownstream, body.downstreamUrl);
   }
 
   @Post(':id/reprocess')
