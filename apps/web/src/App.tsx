@@ -112,7 +112,7 @@ function tableColumns(rows: Record<string, unknown>[]) {
 }
 
 export function App() {
-  const [view, setView] = useState<View>('types');
+  const [view, setView] = useState<View>('documents');
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documents, setDocuments] = useState<IncomingDocument[]>([]);
   const [documentPage, setDocumentPage] = useState<PagedResult<IncomingDocument>>({
@@ -214,10 +214,10 @@ export function App() {
   }
 
   const navigation = [
+    { id: 'documents' as View, label: 'Documents', icon: Files },
+    { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
-    { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
-    { id: 'documents' as View, label: 'Documents', icon: Files },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
   ];
 
