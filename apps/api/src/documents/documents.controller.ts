@@ -24,6 +24,7 @@ export class DocumentsController {
   list(@Query() query: {
     status?: string;
     category?: string;
+    name?: string;
     documentTypeId?: string;
     sort?: string;
     page?: string;
@@ -61,8 +62,11 @@ export class DocumentsController {
   }
 
   @Post(':id/validate')
-  validate(@Param('id') id: string, @Body() body: { extractedData: any[] }) {
-    return this.service.validate(id, body.extractedData);
+  validate(
+    @Param('id') id: string,
+    @Body() body: { extractedData: any[]; deleteAfterDownstream?: boolean; downstreamUrl?: string },
+  ) {
+    return this.service.validate(id, body.extractedData, body.deleteAfterDownstream, body.downstreamUrl);
   }
 
   @Post(':id/reject')

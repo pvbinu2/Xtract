@@ -11,6 +11,7 @@ import {
   IncomingDocument,
   IncomingDocumentDocument,
 } from '../schemas/incoming-document.schema';
+import { ConfigurationService } from '../configuration/configuration.service';
 
 function mockValue(label: string, type: string, index: number) {
   if (type === 'date') return new Date().toISOString().slice(0, 10);
@@ -39,11 +40,17 @@ export class DocumentsService {
   constructor(
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
+    private readonly configurationService: ConfigurationService,
   ) {}
+
+  private escapeRegex(input: string) {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
 
   async list(query: {
     status?: string;
     category?: string;
+    name?: string;
     documentTypeId?: string;
     sort?: string;
     page?: string;
@@ -52,6 +59,7 @@ export class DocumentsService {
     const filter: Record<string, unknown> = {};
     if (query.status) filter.status = query.status;
     if (query.category) filter.category = query.category;
+    if (query.name) filter.originalName = new RegExp(this.escapeRegex(query.name), 'i');
     if (query.documentTypeId) filter.documentTypeId = query.documentTypeId;
     const sort = query.sort === 'oldest' ? ({ createdAt: 1 } as const) : ({ createdAt: -1 } as const);
     const page = Math.max(Number(query.page) || 1, 1);
@@ -159,7 +167,12 @@ export class DocumentsService {
     document.error = undefined;
     await document.save();
 
-    if (process.env.PROCESSING_MODE === 'queue') {
+    const documentWasAutoClassified = document.classificationMethod !== 'manual';
+    const shouldQueue = process.env.PROCESSING_MODE === 'queue' || documentWasAutoClassified;
+    if (shouldQueue) {
+      if (!this.hasQueueConnection()) {
+        throw new BadRequestException('Automatic classification requires Azure queue storage and the function worker.');
+      }
       await this.enqueueProcessing(document.id);
     } else {
       await this.processDocument(document.id);
@@ -174,13 +187,100 @@ export class DocumentsService {
     return document;
   }
 
-  async validate(id: string, extractedData: ExtractedValue[]) {
+  private async getDownstreamConfig(overrideUrl?: string) {
+    const resolvedUrl = overrideUrl?.trim();
+    let url = resolvedUrl || process.env.DOWNSTREAM_API_URL?.trim();
+    let useEnv = Boolean(resolvedUrl);
+
+    if (!resolvedUrl) {
+      const configuration = await this.configurationService.get();
+      url = configuration.downstreamUrl?.trim() || url;
+      useEnv = !configuration.downstreamUrl?.trim();
+    }
+
+    if (!url) return null;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (process.env.DOWNSTREAM_API_KEY) {
+      headers.Authorization = `Bearer ${process.env.DOWNSTREAM_API_KEY}`;
+    }
+
+    if (process.env.DOWNSTREAM_API_AUTH_HEADER) {
+      const [headerName, ...headerValueParts] = process.env.DOWNSTREAM_API_AUTH_HEADER.split(':');
+      const headerValue = headerValueParts.join(':').trim();
+      if (headerName && headerValue) {
+        headers[headerName.trim()] = headerValue;
+      }
+    }
+
+    return { url, headers, source: useEnv ? 'environment' : 'database' };
+  }
+
+  private buildDownstreamPayload(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
+    return {
+      documentId: document.id,
+      fileName: document.originalName,
+      category: document.category,
+      documentTypeId: document.documentTypeId?.toString(),
+      documentTypeName: document.documentTypeName,
+      classificationScore: document.classificationScore,
+      classificationMethod: document.classificationMethod,
+      validatedAt: new Date().toISOString(),
+      extractedData: extractedData.map((item) => ({
+        key: item.key,
+        label: item.label,
+        type: item.type,
+        value: item.value,
+        confidence: item.confidence,
+      })),
+    };
+  }
+
+  private async sendToDownstream(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
+    const config = await this.getDownstreamConfig();
+    if (!config) return;
+
+    const payload = this.buildDownstreamPayload(document, extractedData);
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers: config.headers,
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new BadRequestException(
+        `Downstream API request failed (${response.status}): ${errorText || response.statusText}`,
+      );
+    }
+  }
+
+  async validate(id: string, extractedData: ExtractedValue[], deleteAfterDownstream = false, downstreamUrl?: string) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { extractedData, status: 'validated' },
       { new: true },
     );
     if (!updated) throw new NotFoundException('Document not found');
+
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
+    if (downstreamConfig) {
+      try {
+        await this.sendToDownstream(updated, extractedData);
+        // Only delete after successful downstream send
+        if (deleteAfterDownstream) {
+          await this.remove(updated.id);
+          return { deleted: true };
+        }
+      } catch (error) {
+        // If downstream send fails, don't delete the document
+        throw error;
+      }
+    }
+
     return updated;
   }
 

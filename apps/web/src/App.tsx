@@ -30,7 +30,12 @@ import { DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocum
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration';
+
+type AppConfig = {
+  downstreamUrl: string;
+  deleteAfterDownstream: boolean;
+};
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 
@@ -122,6 +127,30 @@ export function App() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [config, setConfig] = useState<AppConfig>({ downstreamUrl: '', deleteAfterDownstream: false });
+
+  async function loadConfiguration() {
+    try {
+      const saved = await api.getConfiguration();
+      setConfig(saved);
+    } catch {
+      const storedConfig = localStorage.getItem('xtract-config');
+      if (storedConfig) {
+        try {
+          setConfig(JSON.parse(storedConfig));
+        } catch {
+          // ignore invalid saved config
+        }
+      }
+    }
+  }
+
+  async function saveConfiguration(newConfig: AppConfig): Promise<AppConfig> {
+    const saved = await api.saveConfiguration(newConfig);
+    setConfig(saved);
+    setMessage('Configuration saved successfully');
+    return saved;
+  }
 
   const activeType = activeTypeId ? documentTypes.find((item) => item._id === activeTypeId) : undefined;
   const categories = useMemo(
@@ -129,14 +158,25 @@ export function App() {
     [documentTypes],
   );
 
-  async function refresh() {
-    const [types, docs] = await Promise.all([
-      api.listDocumentTypes(),
-      api.listDocuments(new URLSearchParams({ sort: 'latest', page: '1', pageSize: '10' })),
-    ]);
+  async function refreshDocumentTypes() {
+    const types = await api.listDocumentTypes();
     setDocumentTypes(types);
+  }
+
+  async function refreshDocuments() {
+    const docs = await api.listDocuments(
+      new URLSearchParams({
+        sort: 'latest',
+        page: String(documentPage.page),
+        pageSize: String(documentPage.pageSize),
+      }),
+    );
     setDocumentPage(docs);
     setDocuments(docs.items);
+  }
+
+  async function refresh() {
+    await Promise.all([refreshDocumentTypes(), refreshDocuments()]);
   }
 
   useEffect(() => {
@@ -146,12 +186,19 @@ export function App() {
   useEffect(() => {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
+    loadConfiguration().catch(() => {
+      // fallback to local storage if remote config is unavailable
+    });
   }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
     localStorage.setItem('xtract-dark-mode', String(darkMode));
   }, [darkMode]);
+
+  useEffect(() => {
+    localStorage.setItem('xtract-config', JSON.stringify(config));
+  }, [config]);
 
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true);
@@ -171,6 +218,7 @@ export function App() {
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
     { id: 'documents' as View, label: 'Documents', icon: Files },
+    { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
   ];
 
   return (
@@ -199,10 +247,6 @@ export function App() {
             );
           })}
         </nav>
-        <button className="ghost-button" onClick={() => refresh()} title="Refresh">
-          <RefreshCw size={16} />
-          Refresh
-        </button>
       </aside>
 
       <section className="workspace">
@@ -244,14 +288,14 @@ export function App() {
             setActiveTypeId={setActiveTypeId}
             categories={categories}
             onRun={run}
-            onRefresh={refresh}
+            onRefresh={refreshDocumentTypes}
           />
         )}
         {view === 'classification' && (
           <ClassificationScreen
             documentTypes={documentTypes}
             onRun={run}
-            onRefresh={refresh}
+            onRefresh={refreshDocumentTypes}
           />
         )}
         {view === 'upload' && (
@@ -259,7 +303,7 @@ export function App() {
             categories={categories}
             documentTypes={documentTypes}
             onRun={run}
-            onRefresh={refresh}
+            onRefresh={refreshDocumentTypes}
             openDocuments={() => setView('documents')}
           />
         )}
@@ -282,10 +326,21 @@ export function App() {
           <ValidationScreen
             documentId={activeDocumentId || documents[0]?._id || ''}
             documentTypes={documentTypes}
+            downstreamUrl={config.downstreamUrl}
+            defaultDeleteAfterDownstream={config.deleteAfterDownstream}
+            onRefresh={refreshDocumentTypes}
             onValidated={async () => {
               await refresh();
               setView('documents');
             }}
+          />
+        )}
+        {view === 'configuration' && (
+          <ConfigurationScreen
+            config={config}
+            onConfigChange={setConfig}
+            onSave={saveConfiguration}
+            onRefresh={loadConfiguration}
           />
         )}
       </section>
@@ -298,6 +353,72 @@ function StatusMetric({ label, value }: { label: string; value: number }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ConfigurationScreen({
+  config,
+  onConfigChange,
+  onSave,
+  onRefresh,
+}: {
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+  onSave: (config: AppConfig) => Promise<AppConfig>;
+  onRefresh: () => Promise<void>;
+}) {
+  async function refreshConfig() {
+    await onRefresh();
+  }
+
+  async function saveConfig() {
+    await onSave(config);
+  }
+
+  return (
+    <div className="panel configuration-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Downstream Configuration</h2>
+          <p>Configure where validated document data is sent and whether the document should be deleted afterward.</p>
+        </div>
+        <button className="icon-button" title="Refresh configuration" onClick={refreshConfig}>
+          <RefreshCw size={16} />
+        </button>
+      </div>
+      <div className="configuration-form">
+        <label>
+          Downstream API URL
+          <input
+            type="url"
+            placeholder="https://example.com/api/documents"
+            value={config.downstreamUrl}
+            onChange={(event) => onConfigChange({ ...config, downstreamUrl: event.target.value })}
+          />
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={config.deleteAfterDownstream}
+            onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
+          />
+          <span>Delete document after sending to downstream</span>
+        </label>
+        <div className="configuration-actions">
+          <button className="secondary-button compact" type="button" onClick={refreshConfig}>
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+          <button className="primary-button" type="button" onClick={saveConfig}>
+            <Save size={16} />
+            Save
+          </button>
+        </div>
+        <p className="help-text">
+          When saved, validation submits will forward clean JSON data to the downstream system using this URL.
+        </p>
+      </div>
     </div>
   );
 }
@@ -341,19 +462,24 @@ function ClassificationScreen({
             <h2>Classifier Training</h2>
             <p>Finalized document types with at least one sample are included.</p>
           </div>
-          <button
-            className="primary-button"
-            disabled={!includedTypes.length}
-            onClick={() =>
-              onRun(async () => {
-                await Promise.all(includedTypes.map((type) => trainType(type)));
-                await onRefresh();
-              }, 'Classifier training queued')
-            }
-          >
-            <BrainCircuit size={16} />
-            Train All
-          </button>
+          <div className="panel-heading-actions">
+            <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
+              <RefreshCw size={16} />
+            </button>
+            <button
+              className="primary-button"
+              disabled={!includedTypes.length}
+              onClick={() =>
+                onRun(async () => {
+                  await Promise.all(includedTypes.map((type) => trainType(type)));
+                  await onRefresh();
+                }, 'Classifier training queued')
+              }
+            >
+              <BrainCircuit size={16} />
+              Train All
+            </button>
+          </div>
         </div>
 
         <div className="classification-table">
@@ -443,12 +569,18 @@ function DocumentTypeManagement({
     <div className="two-column">
       <section className="panel">
         <div className="panel-heading">
-          <h2>Document Types</h2>
-          <button className="icon-button" title="Create document type" onClick={() => setShowCreateModal(true)}>
-            <Plus size={18} />
-          </button>
+          <div>
+            <h2>Document Types</h2>
+          </div>
+          <div className="panel-heading-actions">
+            <button className="icon-button" title="Refresh document types" onClick={onRefresh}>
+              <RefreshCw size={16} />
+            </button>
+            <button className="icon-button" title="Create document type" onClick={() => setShowCreateModal(true)}>
+              <Plus size={18} />
+            </button>
+          </div>
         </div>
-
         <div className="type-list">
           {documentTypes.map((type) => (
             <button
@@ -1016,6 +1148,15 @@ function UploadScreen({
 
   return (
     <section className="panel upload-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Upload Documents</h2>
+          <p>Send new files into the extraction workflow.</p>
+        </div>
+        <button className="icon-button" title="Refresh upload page" onClick={onRefresh}>
+          <RefreshCw size={16} />
+        </button>
+      </div>
       <form
         className="form-grid"
         onSubmit={(event: FormEvent) => {
@@ -1102,6 +1243,7 @@ function DocumentList({
 }) {
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
+  const [nameFilter, setNameFilter] = useState('');
   const [sort, setSort] = useState('latest');
   const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
@@ -1121,6 +1263,7 @@ function DocumentList({
     });
     if (status) params.set('status', status);
     if (category) params.set('category', category);
+    if (nameFilter) params.set('name', nameFilter);
     onPage(await api.listDocuments(params));
   }
 
@@ -1148,8 +1291,40 @@ function DocumentList({
     await loadPage(pagination.page);
   }
 
+  async function resetFilters() {
+    const nextStatus = '';
+    const nextCategory = '';
+    const nextNameFilter = '';
+    const nextSort = 'latest';
+    const nextPageSize = 10;
+
+    setStatus(nextStatus);
+    setCategory(nextCategory);
+    setNameFilter(nextNameFilter);
+    setSort(nextSort);
+    setPageSize(nextPageSize);
+
+    const params = new URLSearchParams({
+      sort: nextSort,
+      page: String(1),
+      pageSize: String(nextPageSize),
+    });
+    onPage(await api.listDocuments(params));
+  }
+
   return (
     <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Documents</h2>
+          <p>Browse uploaded files and manage document state.</p>
+        </div>
+        <div className="panel-heading-actions">
+          <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
+            <RefreshCw size={16} />
+          </button>
+        </div>
+      </div>
       <div className="filters">
         <label>
           Status
@@ -1161,6 +1336,15 @@ function DocumentList({
             <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
           </select>
+        </label>
+        <label>
+          Document name
+          <input
+            type="text"
+            placeholder="Search by name"
+            value={nameFilter}
+            onChange={(event) => setNameFilter(event.target.value)}
+          />
         </label>
         <label>
           Category
@@ -1187,9 +1371,11 @@ function DocumentList({
             <option value={100}>100</option>
           </select>
         </label>
-        <button className="secondary-button" onClick={applyFilters}>
-          <ChevronDown size={16} />
+        <button className="secondary-button compact" onClick={applyFilters}>
           Apply
+        </button>
+        <button className="secondary-button compact" onClick={resetFilters}>
+          Reset
         </button>
       </div>
 
@@ -1389,7 +1575,21 @@ function ConfirmDialog({
   );
 }
 
-function ValidationScreen({ documentId, documentTypes, onValidated }: { documentId: string; documentTypes: DocumentType[]; onValidated: () => Promise<void> }) {
+function ValidationScreen({
+  documentId,
+  documentTypes,
+  downstreamUrl,
+  defaultDeleteAfterDownstream = false,
+  onRefresh,
+  onValidated,
+}: {
+  documentId: string;
+  documentTypes: DocumentType[];
+  downstreamUrl: string;
+  defaultDeleteAfterDownstream?: boolean;
+  onRefresh: () => Promise<void>;
+  onValidated: () => Promise<void>;
+}) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
@@ -1398,6 +1598,22 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
+  const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
+
+  async function refreshPage() {
+    if (!documentId) return;
+    const refreshed = await api.getDocument(documentId);
+    setDocument(refreshed);
+    setValues(refreshed.extractedData);
+    setReclassifyCategory(refreshed.category);
+    setReclassifyDocumentType(refreshed.documentTypeId || '');
+    await onRefresh();
+    setMessage('Validation page refreshed');
+  }
+
+  useEffect(() => {
+    setDeleteAfterDownstream(defaultDeleteAfterDownstream);
+  }, [defaultDeleteAfterDownstream]);
 
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
@@ -1447,7 +1663,7 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
         return item;
       }
     });
-    await api.validateDocument(document._id, normalized);
+    await api.validateDocument(document._id, normalized, deleteAfterDownstream, downstreamUrl);
     setMessage('Document validated');
     await onValidated();
   }
@@ -1500,9 +1716,19 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
               <ClassificationMethodIcon method={document.classificationMethod} />
             </div>
           </div>
-          <span className={`pill ${document.status}`}>{document.status}</span>
+          <div className="panel-heading-actions">
+            <button className="icon-button" title="Refresh validation page" onClick={refreshPage}>
+              <RefreshCw size={16} />
+            </button>
+            <span className={`pill ${document.status}`}>{document.status}</span>
+          </div>
         </div>
         {message && <div className="toast inline">{message}</div>}
+        {!downstreamUrl && (
+          <div className="toast inline">
+            Downstream URL is not configured. Document validation will complete locally only.
+          </div>
+        )}
         <div className="extraction-form">
           {values.map((item, index) => {
             const styles = fieldStyles[item.key];
@@ -1553,20 +1779,30 @@ function ValidationScreen({ documentId, documentTypes, onValidated }: { document
             {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
           </div>
         ) : (
-          <div className="validation-actions">
-            <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
-              <BrainCircuit size={16} />
-              Reclassify
-            </button>
-            <button className="secondary-button danger-outline" type="button" onClick={reject}>
-              <X size={16} />
-              Reject
-            </button>
-            <button className="primary-button" type="button" onClick={submit}>
-              <CheckCircle2 size={16} />
-              Submit Validation
-            </button>
-          </div>
+          <>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={deleteAfterDownstream}
+                onChange={(event) => setDeleteAfterDownstream(event.target.checked)}
+              />
+              <span>Delete document after sending to downstream</span>
+            </label>
+            <div className="validation-actions">
+              <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
+                <BrainCircuit size={16} />
+                Reclassify
+              </button>
+              <button className="secondary-button danger-outline" type="button" onClick={reject}>
+                <X size={16} />
+                Reject
+              </button>
+              <button className="primary-button" type="button" onClick={submit}>
+                <CheckCircle2 size={16} />
+                Submit Validation
+              </button>
+            </div>
+          </>
         )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (
