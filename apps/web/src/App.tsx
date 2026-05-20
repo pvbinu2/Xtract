@@ -129,6 +129,29 @@ export function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [config, setConfig] = useState<AppConfig>({ downstreamUrl: '', deleteAfterDownstream: false });
 
+  async function loadConfiguration() {
+    try {
+      const saved = await api.getConfiguration();
+      setConfig(saved);
+    } catch {
+      const storedConfig = localStorage.getItem('xtract-config');
+      if (storedConfig) {
+        try {
+          setConfig(JSON.parse(storedConfig));
+        } catch {
+          // ignore invalid saved config
+        }
+      }
+    }
+  }
+
+  async function saveConfiguration(newConfig: AppConfig): Promise<AppConfig> {
+    const saved = await api.saveConfiguration(newConfig);
+    setConfig(saved);
+    setMessage('Configuration saved successfully');
+    return saved;
+  }
+
   const activeType = activeTypeId ? documentTypes.find((item) => item._id === activeTypeId) : undefined;
   const categories = useMemo(
     () => Array.from(new Set(documentTypes.map((item) => item.category))).sort(),
@@ -163,14 +186,9 @@ export function App() {
   useEffect(() => {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
-    const storedConfig = localStorage.getItem('xtract-config');
-    if (storedConfig) {
-      try {
-        setConfig(JSON.parse(storedConfig));
-      } catch {
-        // ignore invalid saved config
-      }
-    }
+    loadConfiguration().catch(() => {
+      // fallback to local storage if remote config is unavailable
+    });
   }, []);
 
   useEffect(() => {
@@ -321,6 +339,8 @@ export function App() {
           <ConfigurationScreen
             config={config}
             onConfigChange={setConfig}
+            onSave={saveConfiguration}
+            onRefresh={loadConfiguration}
           />
         )}
       </section>
@@ -340,18 +360,20 @@ function StatusMetric({ label, value }: { label: string; value: number }) {
 function ConfigurationScreen({
   config,
   onConfigChange,
+  onSave,
+  onRefresh,
 }: {
   config: AppConfig;
   onConfigChange: (config: AppConfig) => void;
+  onSave: (config: AppConfig) => Promise<AppConfig>;
+  onRefresh: () => Promise<void>;
 }) {
-  function refreshConfig() {
-    const storedConfig = localStorage.getItem('xtract-config');
-    if (!storedConfig) return;
-    try {
-      onConfigChange(JSON.parse(storedConfig));
-    } catch {
-      // ignore malformed stored configuration
-    }
+  async function refreshConfig() {
+    await onRefresh();
+  }
+
+  async function saveConfig() {
+    await onSave(config);
   }
 
   return (
@@ -383,8 +405,18 @@ function ConfigurationScreen({
           />
           <span>Delete document after sending to downstream</span>
         </label>
+        <div className="configuration-actions">
+          <button className="secondary-button compact" type="button" onClick={refreshConfig}>
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+          <button className="primary-button" type="button" onClick={saveConfig}>
+            <Save size={16} />
+            Save
+          </button>
+        </div>
         <p className="help-text">
-          When configured, validation submits will forward clean JSON data to the downstream system using this URL.
+          When saved, validation submits will forward clean JSON data to the downstream system using this URL.
         </p>
       </div>
     </div>

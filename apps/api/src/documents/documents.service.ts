@@ -11,6 +11,7 @@ import {
   IncomingDocument,
   IncomingDocumentDocument,
 } from '../schemas/incoming-document.schema';
+import { ConfigurationService } from '../configuration/configuration.service';
 
 function mockValue(label: string, type: string, index: number) {
   if (type === 'date') return new Date().toISOString().slice(0, 10);
@@ -39,6 +40,7 @@ export class DocumentsService {
   constructor(
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
+    private readonly configurationService: ConfigurationService,
   ) {}
 
   private escapeRegex(input: string) {
@@ -185,8 +187,17 @@ export class DocumentsService {
     return document;
   }
 
-  private getDownstreamConfig(overrideUrl?: string) {
-    const url = overrideUrl?.trim() || process.env.DOWNSTREAM_API_URL?.trim();
+  private async getDownstreamConfig(overrideUrl?: string) {
+    const resolvedUrl = overrideUrl?.trim();
+    let url = resolvedUrl || process.env.DOWNSTREAM_API_URL?.trim();
+    let useEnv = Boolean(resolvedUrl);
+
+    if (!resolvedUrl) {
+      const configuration = await this.configurationService.get();
+      url = configuration.downstreamUrl?.trim() || url;
+      useEnv = !configuration.downstreamUrl?.trim();
+    }
+
     if (!url) return null;
 
     const headers: Record<string, string> = {
@@ -205,7 +216,7 @@ export class DocumentsService {
       }
     }
 
-    return { url, headers };
+    return { url, headers, source: useEnv ? 'environment' : 'database' };
   }
 
   private buildDownstreamPayload(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
@@ -229,7 +240,7 @@ export class DocumentsService {
   }
 
   private async sendToDownstream(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
-    const config = this.getDownstreamConfig();
+    const config = await this.getDownstreamConfig();
     if (!config) return;
 
     const payload = this.buildDownstreamPayload(document, extractedData);
@@ -255,12 +266,18 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = this.getDownstreamConfig(downstreamUrl);
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
     if (downstreamConfig) {
-      await this.sendToDownstream(updated, extractedData);
-      if (deleteAfterDownstream) {
-        await this.remove(updated.id);
-        return { deleted: true };
+      try {
+        await this.sendToDownstream(updated, extractedData);
+        // Only delete after successful downstream send
+        if (deleteAfterDownstream) {
+          await this.remove(updated.id);
+          return { deleted: true };
+        }
+      } catch (error) {
+        // If downstream send fails, don't delete the document
+        throw error;
       }
     }
 

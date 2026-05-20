@@ -70,5 +70,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl }),
     }),
+  getConfiguration: () => request<{ downstreamUrl: string; deleteAfterDownstream: boolean }>('/configuration'),
+  saveConfiguration: (payload: { downstreamUrl: string; deleteAfterDownstream: boolean }) =>
+    request<{ downstreamUrl: string; deleteAfterDownstream: boolean }>('/configuration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   rejectDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reject`, { method: 'POST' }),
 };

@@ -4,6 +4,7 @@ import { DocumentType, DocumentTypeSchema } from '../schemas/document-type.schem
 import { IncomingDocument, IncomingDocumentSchema } from '../schemas/incoming-document.schema';
 import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
+import { ConfigurationModule } from '../configuration/configuration.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { DocumentsService } from './documents.service';
       { name: IncomingDocument.name, schema: IncomingDocumentSchema },
       { name: DocumentType.name, schema: DocumentTypeSchema },
     ]),
+    ConfigurationModule,
   ],
   controllers: [DocumentsController],
   providers: [DocumentsService],
