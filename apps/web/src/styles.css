@@ -801,7 +801,40 @@ textarea {
 }
 
 .extraction-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.extraction-pane-content {
+  flex: 1;
   overflow: auto;
+  padding-right: 8px;
+}
+
+.extraction-pane-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.extraction-pane-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.extraction-pane-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.extraction-pane-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 8px;
+  background: var(--background);
+}
+
+.extraction-pane-footer .checkbox-row {
+  margin-bottom: 14px;
 }
 
 .extraction-form .extraction-field,

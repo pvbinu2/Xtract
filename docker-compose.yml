@@ -24,6 +24,20 @@ services:
       - "6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
+  mock-downstream-api:
+    image: node:20
+    container_name: xtract-mock-downstream
+    working_dir: /app/apps/mock-downstream-api
+    volumes:
+      - .:/app
+    ports:
+      - "3001:3001"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/xtract-downstream
+      - NODE_ENV=development
+    command: npm run dev
+    depends_on:
+      - mongo
 
 volumes:
   mongo-data:

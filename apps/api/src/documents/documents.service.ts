@@ -228,7 +228,8 @@ export class DocumentsService {
       documentTypeName: document.documentTypeName,
       classificationScore: document.classificationScore,
       classificationMethod: document.classificationMethod,
-      validatedAt: new Date().toISOString(),
+      status: document.status,
+      processedAt: new Date().toISOString(),
       extractedData: extractedData.map((item) => ({
         key: item.key,
         label: item.label,
@@ -291,6 +292,17 @@ export class DocumentsService {
       { new: true },
     );
     if (!updated) throw new NotFoundException('Document not found');
+
+    const downstreamConfig = await this.getDownstreamConfig();
+    if (downstreamConfig) {
+      try {
+        await this.sendToDownstream(updated, updated.extractedData || []);
+      } catch (error) {
+        // Log error but don't fail the reject operation
+        console.error('Failed to send rejected document to downstream:', error);
+      }
+    }
+
     return updated;
   }
 
