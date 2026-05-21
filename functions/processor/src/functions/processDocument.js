@@ -6,6 +6,7 @@ const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
 const { withOpenAIRetry } = require('../openaiRetry');
+const { downloadToTemp, removeTempFile } = require('../blobStorage');
 
 let clientPromise;
 let openai;
@@ -115,6 +116,13 @@ function fileExists(filePath) {
   }
 }
 
+async function resolveDocumentFile(document) {
+  if (document.storageContainer && document.storageBlobName) {
+    return downloadToTemp(document.storageContainer, document.storageBlobName);
+  }
+  return document.filePath;
+}
+
 async function markDocumentFailed(documents, documentId, error) {
   await documents.updateOne(
     { _id: documentId },
@@ -147,7 +155,7 @@ async function processDocument(message, context) {
         ? new ObjectId(document.documentTypeId)
         : document.documentTypeId;
 
-  if (!document.filePath || !fileExists(document.filePath)) {
+  if (!(document.storageContainer && document.storageBlobName) && (!document.filePath || !fileExists(document.filePath))) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
@@ -164,9 +172,13 @@ async function processDocument(message, context) {
       return;
     }
 
-    if (!documentType) {
+    const localFilePath = await resolveDocumentFile(document);
+    const localDocument = { ...document, filePath: localFilePath };
+
+    try {
+      if (!documentType) {
       const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
-      const classification = await classifyDocument(document, allDocumentTypes);
+      const classification = await classifyDocument(localDocument, allDocumentTypes);
       documentType = classification.documentType;
       await documents.updateOne(
         { _id: document._id },
@@ -181,11 +193,11 @@ async function processDocument(message, context) {
           },
         },
       );
-    }
+      }
 
-    const extractedData = await attachBoundingBoxes(
-      document.filePath,
-      (await extractValuesWithOpenAI(document, documentType)) ||
+      const extractedData = await attachBoundingBoxes(
+        localFilePath,
+        (await extractValuesWithOpenAI(localDocument, documentType)) ||
         (documentType.fields || [])
           .filter((field) => field.selected)
           .map((field, index) => ({
@@ -195,19 +207,22 @@ async function processDocument(message, context) {
             value: mockValue(field.label, field.type, index),
             confidence: Number((0.82 + Math.min(index, 8) * 0.015).toFixed(2)),
           })),
-    );
+      );
 
-    await documents.updateOne(
-      { _id: document._id },
-      {
-        $set: {
-          status: 'extracted',
-          extractedData,
-          error: null,
-          updatedAt: new Date(),
+      await documents.updateOne(
+        { _id: document._id },
+        {
+          $set: {
+            status: 'extracted',
+            extractedData,
+            error: null,
+            updatedAt: new Date(),
+          },
         },
-      },
-    );
+      );
+    } finally {
+      if (document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
+    }
   } catch (error) {
     const errorMessage = `Processing failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
