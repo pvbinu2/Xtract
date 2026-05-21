@@ -1956,6 +1956,27 @@ function PdfViewer({
   const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
 
+  function centerHighlightInPdfPane(highlightElement: HTMLElement) {
+    const pdfPane = pdfContainerRef.current?.closest('.pdf-pane') as HTMLElement | null;
+    if (!pdfPane) {
+      highlightElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      return;
+    }
+
+    const paneRect = pdfPane.getBoundingClientRect();
+    const highlightRect = highlightElement.getBoundingClientRect();
+    const scrollTop =
+      pdfPane.scrollTop + highlightRect.top - paneRect.top - pdfPane.clientHeight / 2 + highlightRect.height / 2;
+    const scrollLeft =
+      pdfPane.scrollLeft + highlightRect.left - paneRect.left - pdfPane.clientWidth / 2 + highlightRect.width / 2;
+
+    pdfPane.scrollTo({
+      top: Math.max(0, scrollTop),
+      left: Math.max(0, scrollLeft),
+      behavior: 'smooth',
+    });
+  }
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1990,12 +2011,18 @@ function PdfViewer({
     const pageElements = pdfContainerRef.current.querySelectorAll('.pdf-page');
     if (targetPageIndex >= 0 && targetPageIndex < pageElements.length) {
       const targetPageElement = pageElements[targetPageIndex];
-      targetPageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const activeHighlights = targetPageElement.querySelectorAll('.pdf-highlight.active');
+      const activeHighlight = activeHighlights[0] as HTMLElement | undefined;
+
+      if (activeHighlight) {
+        centerHighlightInPdfPane(activeHighlight);
+      } else {
+        targetPageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
 
       setTimeout(() => {
-        const activeHighlights = targetPageElement.querySelectorAll('.pdf-highlight.active');
-        if (activeHighlights.length > 0) {
-          (activeHighlights[0] as HTMLElement).focus({ preventScroll: true });
+        if (activeHighlight) {
+          activeHighlight.focus({ preventScroll: true });
         }
       }, 100);
     }
