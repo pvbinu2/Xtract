@@ -124,7 +124,7 @@ export function App() {
   });
   const [activeTypeId, setActiveTypeId] = useState('');
   const [activeDocumentId, setActiveDocumentId] = useState('');
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [config, setConfig] = useState<AppConfig>({ downstreamUrl: '', deleteAfterDownstream: false });
@@ -148,7 +148,7 @@ export function App() {
   async function saveConfiguration(newConfig: AppConfig): Promise<AppConfig> {
     const saved = await api.saveConfiguration(newConfig);
     setConfig(saved);
-    setMessage('Configuration saved successfully');
+    showToast('Configuration saved successfully', 'info');
     return saved;
   }
 
@@ -173,14 +173,65 @@ export function App() {
     );
     setDocumentPage(docs);
     setDocuments(docs.items);
+    return docs;
+  }
+
+  async function loadDocumentsPage(page: number) {
+    const docs = await api.listDocuments(
+      new URLSearchParams({
+        sort: 'latest',
+        page: String(page),
+        pageSize: String(documentPage.pageSize),
+      }),
+    );
+    setDocumentPage(docs);
+    setDocuments(docs.items);
+    return docs;
+  }
+
+  function showToast(text: string, type: 'success' | 'error' | 'info' = 'info') {
+    setToast({ text, type });
   }
 
   async function refresh() {
     await Promise.all([refreshDocumentTypes(), refreshDocuments()]);
   }
 
+  async function moveToNextDocument(currentId: string) {
+    if (!currentId) {
+      setView('documents');
+      return;
+    }
+
+    const currentIndex = documents.findIndex((item) => item._id === currentId);
+    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
+      setActiveDocumentId(documents[currentIndex + 1]._id);
+      setView('validation');
+      return;
+    }
+
+    if (documentPage.page < documentPage.totalPages) {
+      const nextPage = await loadDocumentsPage(documentPage.page + 1);
+      if (nextPage.items.length > 0) {
+        setActiveDocumentId(nextPage.items[0]._id);
+        setView('validation');
+        return;
+      }
+    }
+
+    const refreshed = await refreshDocuments();
+    const refreshedIndex = refreshed.items.findIndex((item) => item._id === currentId);
+    if (refreshedIndex >= 0 && refreshedIndex < refreshed.items.length - 1) {
+      setActiveDocumentId(refreshed.items[refreshedIndex + 1]._id);
+      setView('validation');
+      return;
+    }
+
+    setView('documents');
+  }
+
   useEffect(() => {
-    refresh().catch((error) => setMessage(error.message));
+    refresh().catch((error) => showToast(error.message, 'error'));
   }, []);
 
   useEffect(() => {
@@ -200,14 +251,20 @@ export function App() {
     localStorage.setItem('xtract-config', JSON.stringify(config));
   }, [config]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true);
-    setMessage('');
+    setToast(null);
     try {
       await action();
-      setMessage(success);
+      showToast(success, 'info');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Something went wrong');
+      showToast(error instanceof Error ? error.message : 'Something went wrong', 'error');
     } finally {
       setLoading(false);
     }
@@ -273,7 +330,9 @@ export function App() {
           </div>
         </header>
 
-        {message && <div className="toast">{message}</div>}
+        <div className="toast-container">
+          {toast && <div className={`toast ${toast.type}`}>{toast.text}</div>}
+        </div>
         {loading && (
           <div className="loading-line">
             <Loader2 size={16} />
@@ -329,10 +388,10 @@ export function App() {
             downstreamUrl={config.downstreamUrl}
             defaultDeleteAfterDownstream={config.deleteAfterDownstream}
             onRefresh={refreshDocumentTypes}
-            onValidated={async () => {
-              await refresh();
-              setView('documents');
+            onValidated={async (_notification: string) => {
+              await moveToNextDocument(activeDocumentId || '');
             }}
+            onNotify={showToast}
           />
         )}
         {view === 'configuration' && (
@@ -1582,19 +1641,20 @@ function ValidationScreen({
   defaultDeleteAfterDownstream = false,
   onRefresh,
   onValidated,
+  onNotify,
 }: {
   documentId: string;
   documentTypes: DocumentType[];
   downstreamUrl: string;
   defaultDeleteAfterDownstream?: boolean;
   onRefresh: () => Promise<void>;
-  onValidated: () => Promise<void>;
+  onValidated: (notification: string) => Promise<void>;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
 }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
-  const [message, setMessage] = useState('');
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
@@ -1608,7 +1668,7 @@ function ValidationScreen({
     setReclassifyCategory(refreshed.category);
     setReclassifyDocumentType(refreshed.documentTypeId || '');
     await onRefresh();
-    setMessage('Validation page refreshed');
+    onNotify('Validation page refreshed');
   }
 
   useEffect(() => {
@@ -1664,23 +1724,26 @@ function ValidationScreen({
       }
     });
     await api.validateDocument(document._id, normalized, deleteAfterDownstream, downstreamUrl);
-    setMessage('Document validated');
-    await onValidated();
+    const message = `Document validated: ${document.originalName}`;
+    onNotify(message, 'success');
+    await onValidated(message);
   }
 
   async function reject() {
     if (!document) return;
     await api.rejectDocument(document._id, deleteAfterDownstream, downstreamUrl);
-    setMessage('Document rejected');
-    await onValidated();
+    const message = `Document rejected: ${document.originalName}`;
+    onNotify(message, 'error');
+    await onValidated(message);
   }
 
   async function reclassify() {
     if (!document || !reclassifyDocumentType) return;
     await api.reclassifyDocument(document._id, reclassifyDocumentType);
     setShowReclassifyDialog(false);
-    setMessage('Document reclassified');
-    await onValidated();
+    const message = `Document reclassified: ${document.originalName}`;
+    onNotify(message, 'info');
+    await onValidated(message);
   }
 
   if (!documentId) return <EmptyState text="Select a document from the list." />;
@@ -1724,7 +1787,6 @@ function ValidationScreen({
               <span className={`pill ${document.status}`}>{document.status}</span>
             </div>
           </div>
-          {message && <div className="toast inline">{message}</div>}
           {!downstreamUrl && (
             <div className="toast inline">
               Downstream URL is not configured. Document validation will complete locally only.
