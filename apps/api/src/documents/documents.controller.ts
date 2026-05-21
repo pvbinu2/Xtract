@@ -1,20 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Res, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
-import { mkdirSync } from 'fs';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { memoryStorage } from 'multer';
 import { DocumentsService } from './documents.service';
 
-const uploadDir = join(__dirname, '..', '..', 'uploads');
-mkdirSync(uploadDir, { recursive: true });
-
-const storage = diskStorage({
-  destination: uploadDir,
-  filename: (_req, file, callback) => {
-    callback(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`);
-  },
-});
+const storage = memoryStorage();
 
 @Controller('documents')
 export class DocumentsController {
@@ -41,9 +31,10 @@ export class DocumentsController {
   ) {
     return this.service.upload(
       files.map((file) => ({
-        fileName: file.filename,
+        fileName: file.originalname,
         originalName: file.originalname,
-        filePath: file.path,
+        buffer: file.buffer,
+        mimeType: file.mimetype,
         category: body.category,
         documentTypeId: body.documentTypeId,
       })),
@@ -57,8 +48,9 @@ export class DocumentsController {
 
   @Get(':id/file')
   async file(@Param('id') id: string, @Res() response: Response) {
-    const document = await this.service.findById(id);
-    return response.sendFile(document.filePath);
+    const file = await this.service.getFile(id);
+    response.contentType(file.contentType);
+    return response.send(file.buffer);
   }
 
   @Post(':id/validate')

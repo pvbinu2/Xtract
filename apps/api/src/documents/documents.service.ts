@@ -12,6 +12,7 @@ import {
   IncomingDocumentDocument,
 } from '../schemas/incoming-document.schema';
 import { ConfigurationService } from '../configuration/configuration.service';
+import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
 
 function mockValue(label: string, type: string, index: number) {
   if (type === 'date') return new Date().toISOString().slice(0, 10);
@@ -41,6 +42,7 @@ export class DocumentsService {
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
     private readonly configurationService: ConfigurationService,
+    private readonly blobStorage: BlobStorageService,
   ) { }
 
   private escapeRegex(input: string) {
@@ -82,7 +84,8 @@ export class DocumentsService {
   async upload(payload: {
     fileName: string;
     originalName: string;
-    filePath: string;
+    buffer: Buffer;
+    mimeType?: string;
     category?: string;
     documentTypeId?: string;
   }[]) {
@@ -96,8 +99,15 @@ export class DocumentsService {
         throw new BadRequestException('Automatic classification requires Azure queue storage and the function worker.');
       }
 
+      const blobName = this.blobStorage.createBlobName(item.originalName);
+      await this.blobStorage.uploadBuffer(PROCESSING_CONTAINER, blobName, item.buffer, item.mimeType);
+
       const document = await this.documentModel.create({
-        ...item,
+        fileName: blobName,
+        originalName: item.originalName,
+        filePath: `azure://${PROCESSING_CONTAINER}/${blobName}`,
+        storageContainer: PROCESSING_CONTAINER,
+        storageBlobName: blobName,
         category: docType?.category ?? 'Unclassified',
         documentTypeId: docType?._id,
         documentTypeName: docType?.name ?? 'Pending classification',
@@ -138,14 +148,19 @@ export class DocumentsService {
     const docType = await this.documentTypeModel.findById(document.documentTypeId);
     if (!docType) throw new NotFoundException('Document type not found');
 
-    document.extractedData = await attachBoundingBoxes(
-      document.filePath,
-      (await extractValuesWithOpenAI(document.filePath, docType.fields, docType.name)) ??
-      mockExtractionFromSchema(docType),
-    );
-    document.status = 'extracted';
-    document.error = undefined;
-    return document.save();
+    const localPath = await this.resolveDocumentPath(document);
+    try {
+      document.extractedData = await attachBoundingBoxes(
+        localPath,
+        (await extractValuesWithOpenAI(localPath, docType.fields, docType.name)) ??
+        mockExtractionFromSchema(docType),
+      );
+      document.status = 'extracted';
+      document.error = undefined;
+      return document.save();
+    } finally {
+      if (document.storageContainer && document.storageBlobName) await this.blobStorage.removeTempFile(localPath);
+    }
   }
 
   async reprocess(id: string, newDocumentTypeId?: string) {
@@ -185,6 +200,24 @@ export class DocumentsService {
     const document = await this.documentModel.findById(id).lean();
     if (!document) throw new NotFoundException('Document not found');
     return document;
+  }
+
+  async getFile(id: string) {
+    const document = await this.documentModel.findById(id).lean();
+    if (!document) throw new NotFoundException('Document not found');
+
+    if (document.storageContainer && document.storageBlobName) {
+      return {
+        buffer: await this.blobStorage.downloadBuffer(document.storageContainer, document.storageBlobName),
+        contentType: 'application/pdf',
+      };
+    }
+
+    const { readFile } = await import('fs/promises');
+    return {
+      buffer: await readFile(document.filePath),
+      contentType: 'application/pdf',
+    };
   }
 
   private async getDownstreamConfig(overrideUrl?: string) {
@@ -314,15 +347,27 @@ export class DocumentsService {
     const document = await this.documentModel.findById(id);
     if (!document) throw new NotFoundException('Document not found');
 
-    await this.documentModel.deleteOne({ _id: document._id });
-    try {
-      await unlink(document.filePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
+    if (document.storageContainer && document.storageBlobName) {
+      await this.blobStorage.deleteBlob(document.storageContainer, document.storageBlobName);
+    } else {
+      try {
+        await unlink(document.filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
+        }
       }
     }
 
+    await this.documentModel.deleteOne({ _id: document._id });
+
     return { deleted: true };
+  }
+
+  private async resolveDocumentPath(document: IncomingDocumentDocument) {
+    if (document.storageContainer && document.storageBlobName) {
+      return this.blobStorage.downloadToTemp(document.storageContainer, document.storageBlobName);
+    }
+    return document.filePath;
   }
 }

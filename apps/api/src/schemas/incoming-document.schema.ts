@@ -58,6 +58,12 @@ export class IncomingDocument {
   @Prop({ required: true })
   filePath!: string;
 
+  @Prop()
+  storageContainer?: string;
+
+  @Prop()
+  storageBlobName?: string;
+
   @Prop({ default: 'Unclassified' })
   category!: string;
 

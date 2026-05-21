@@ -73,7 +73,7 @@ Set:
 ```bash
 OPENAI_API_KEY=sk-your-key
 OPENAI_MODEL=gpt-4o-mini
-AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=...;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;
+AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=...;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;
 ```
 
 Then restart the API:
@@ -84,6 +84,7 @@ npm run dev:api
 
 With `OPENAI_API_KEY` present:
 
+- File uploads use Azure Blob Storage. Document type samples are stored in the `train` container under a document-type-specific folder, and incoming documents are stored in the `processing` container.
 - Template generation uses the latest uploaded sample PDF plus your extraction prompt.
 - Document upload extraction sends the uploaded PDF and finalized schema to OpenAI.
 - Classifier training extracts text from every sample PDF for a document type, creates embeddings, and stores them in Qdrant.

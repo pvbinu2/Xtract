@@ -1,19 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { mkdirSync } from 'fs';
-import { extname, join } from 'path';
+import { memoryStorage } from 'multer';
 import { DocumentTypesService } from './document-types.service';
 
-const uploadDir = join(__dirname, '..', '..', 'uploads');
-mkdirSync(uploadDir, { recursive: true });
-
-const storage = diskStorage({
-  destination: uploadDir,
-  filename: (_req, file, callback) => {
-    callback(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`);
-  },
-});
+const storage = memoryStorage();
 
 @Controller('document-types')
 export class DocumentTypesController {
@@ -37,7 +27,7 @@ export class DocumentTypesController {
   @Post(':id/samples')
   @UseInterceptors(FileInterceptor('file', { storage }))
   addSample(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
-    return this.service.addSample(id, file.filename);
+    return this.service.addSample(id, file);
   }
 
   @Post(':id/train-classifier')

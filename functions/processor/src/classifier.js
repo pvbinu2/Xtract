@@ -3,6 +3,7 @@ const path = require('path');
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { withOpenAIRetry } = require('./openaiRetry');
+const { TRAIN_CONTAINER, downloadToTemp, isConfigured: isBlobStorageConfigured, removeTempFile } = require('./blobStorage');
 
 let openai;
 let pdfjsPromise;
@@ -55,6 +56,11 @@ function uploadRoot() {
 
 function samplePath(fileName) {
   return path.join(uploadRoot(), fileName);
+}
+
+async function resolveSamplePath(fileName) {
+  if (isBlobStorageConfigured()) return downloadToTemp(TRAIN_CONTAINER, fileName);
+  return samplePath(fileName);
 }
 
 function pdfInput(filePath) {
@@ -118,10 +124,12 @@ function fileExists(filePath) {
 }
 
 function latestExistingSample(documentType) {
+  if (isBlobStorageConfigured()) return [...(documentType.sampleFiles || [])].reverse()[0];
   return [...(documentType.sampleFiles || [])].reverse().find((fileName) => fileExists(samplePath(fileName)));
 }
 
 function existingSamples(documentType) {
+  if (isBlobStorageConfigured()) return documentType.sampleFiles || [];
   return (documentType.sampleFiles || []).filter((fileName) => fileExists(samplePath(fileName)));
 }
 
@@ -241,29 +249,33 @@ async function upsertDocumentTypeVectors(documentType, samples) {
   const points = [];
 
   for (const sampleFileName of samples) {
-    const filePath = samplePath(sampleFileName);
-    const text = [
-      `Document type: ${documentType.name}`,
-      `Category: ${documentType.category}`,
-      documentType.prompt ? `Prompt: ${documentType.prompt}` : '',
-      await extractPdfText(filePath),
-    ]
-      .filter(Boolean)
-      .join('\n');
+    const filePath = await resolveSamplePath(sampleFileName);
+    try {
+      const text = [
+        `Document type: ${documentType.name}`,
+        `Category: ${documentType.category}`,
+        documentType.prompt ? `Prompt: ${documentType.prompt}` : '',
+        await extractPdfText(filePath),
+      ]
+        .filter(Boolean)
+        .join('\n');
 
-    const chunks = chunkText(text);
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
-      points.push({
-        id: pointId(documentType._id, sampleFileName, chunkIndex),
-        vector: await embedText(chunks[chunkIndex]),
-        payload: {
-          documentTypeId: String(documentType._id),
-          documentTypeName: documentType.name,
-          category: documentType.category,
-          sampleFileName,
-          chunkIndex,
-        },
-      });
+      const chunks = chunkText(text);
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+        points.push({
+          id: pointId(documentType._id, sampleFileName, chunkIndex),
+          vector: await embedText(chunks[chunkIndex]),
+          payload: {
+            documentTypeId: String(documentType._id),
+            documentTypeName: documentType.name,
+            category: documentType.category,
+            sampleFileName,
+            chunkIndex,
+          },
+        });
+      }
+    } finally {
+      if (isBlobStorageConfigured()) await removeTempFile(filePath);
     }
   }
 
@@ -313,12 +325,17 @@ async function trainClassifierProfile(documentType, sampleFileName) {
   await upsertDocumentTypeVectors(documentType, samples);
 
   const latestSample = sampleFileName || samples.at(-1);
-  const sampleText = await extractPdfText(samplePath(latestSample));
-  return [
-    fallbackProfile(documentType, latestSample),
-    `Training samples indexed: ${samples.length}`,
-    `Sample text preview: ${sampleText.slice(0, Number(process.env.CLASSIFIER_PROFILE_TEXT_LIMIT || 2000))}`,
-  ].join('\n');
+  const latestSamplePath = await resolveSamplePath(latestSample);
+  try {
+    const sampleText = await extractPdfText(latestSamplePath);
+    return [
+      fallbackProfile(documentType, latestSample),
+      `Training samples indexed: ${samples.length}`,
+      `Sample text preview: ${sampleText.slice(0, Number(process.env.CLASSIFIER_PROFILE_TEXT_LIMIT || 2000))}`,
+    ].join('\n');
+  } finally {
+    if (isBlobStorageConfigured()) await removeTempFile(latestSamplePath);
+  }
 }
 
 async function classifyDocument(document, documentTypes) {
@@ -359,7 +376,7 @@ async function classifyDocument(document, documentTypes) {
     {
       type: 'input_text',
       text: [
-        'Classify the uploaded PDF using retrieval profiles and sample PDFs from trained document types.',
+        'Classify the uploaded PDF using trained document type profiles and metadata.',
         'Choose exactly one candidate document type. Return JSON only.',
         'The score must be a number from 0 to 1 representing match strength.',
         'Return this exact shape:',
@@ -375,16 +392,6 @@ async function classifyDocument(document, documentTypes) {
       ].join('\n'),
     },
   ];
-
-  llmCandidates.forEach((candidate, index) => {
-    const sampleFileName = latestExistingSample(candidate);
-    if (!sampleFileName) return;
-    content.push({
-      type: 'input_text',
-      text: `Retrieved sample for candidate ${index + 1}: id=${candidate._id}; category=${candidate.category}; name=${candidate.name}`,
-    });
-    content.push(pdfInput(samplePath(sampleFileName)));
-  });
 
   const response = await withOpenAIRetry(() => client.responses.create({
     model: modelName(),

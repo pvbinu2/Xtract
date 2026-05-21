@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
+import { unlink } from 'fs/promises';
 import { Model } from 'mongoose';
 import { join } from 'path';
 import { inferTemplateWithOpenAI } from '../openai-document-ai';
 import { DocumentType, DocumentTypeDocument, ExtractionField, TableColumn } from '../schemas/document-type.schema';
+import { BlobStorageService, TRAIN_CONTAINER } from '../storage/blob-storage.service';
 
 function toKey(label: string) {
   return label
@@ -85,7 +87,10 @@ function normalizeField(field: ExtractionField, prompt: string): ExtractionField
 
 @Injectable()
 export class DocumentTypesService {
-  constructor(@InjectModel(DocumentType.name) private readonly model: Model<DocumentTypeDocument>) {}
+  constructor(
+    @InjectModel(DocumentType.name) private readonly model: Model<DocumentTypeDocument>,
+    private readonly blobStorage: BlobStorageService,
+  ) {}
 
   async list() {
     return this.model.find().sort({ category: 1, name: 1 }).lean();
@@ -104,10 +109,17 @@ export class DocumentTypesService {
   async remove(id: string) {
     const result = await this.model.findByIdAndDelete(id);
     if (!result) throw new NotFoundException('Document type not found');
+    await Promise.all((result.sampleFiles || []).map((sampleFile) => this.deleteSampleFile(sampleFile)));
     return { deleted: true };
   }
 
-  async addSample(id: string, fileName: string) {
+  async addSample(id: string, file: Express.Multer.File) {
+    const docType = await this.model.findById(id);
+    if (!docType) throw new NotFoundException('Document type not found');
+
+    const fileName = this.blobStorage.createBlobName(file.originalname, docType.name);
+    await this.blobStorage.uploadBuffer(TRAIN_CONTAINER, fileName, file.buffer, file.mimetype);
+
     const canQueueTraining = this.hasQueueConnection();
     const updated = await this.model.findByIdAndUpdate(
       id,
@@ -163,13 +175,17 @@ export class DocumentTypesService {
 
     const latestSample = docType.sampleFiles.at(-1);
     if (latestSample && process.env.OPENAI_API_KEY) {
-      const samplePath = join(__dirname, '..', '..', 'uploads', latestSample);
-      const openAiFields = await inferTemplateWithOpenAI(samplePath, prompt);
-      if (openAiFields?.length) {
-        docType.prompt = prompt;
-        docType.fields = openAiFields;
-        docType.finalized = false;
-        return docType.save();
+      const samplePath = await this.resolveSamplePath(latestSample);
+      try {
+        const openAiFields = await inferTemplateWithOpenAI(samplePath, prompt);
+        if (openAiFields?.length) {
+          docType.prompt = prompt;
+          docType.fields = openAiFields;
+          docType.finalized = false;
+          return docType.save();
+        }
+      } finally {
+        if (this.blobStorage.isConfigured()) await this.blobStorage.removeTempFile(samplePath);
       }
     }
 
@@ -219,5 +235,23 @@ export class DocumentTypesService {
     const docType = await this.model.findById(id);
     if (!docType) throw new NotFoundException('Document type not found');
     return docType;
+  }
+
+  private async resolveSamplePath(fileName: string) {
+    if (this.blobStorage.isConfigured()) return this.blobStorage.downloadToTemp(TRAIN_CONTAINER, fileName);
+    return join(__dirname, '..', '..', 'uploads', fileName);
+  }
+
+  private async deleteSampleFile(fileName: string) {
+    if (this.blobStorage.isConfigured()) {
+      await this.blobStorage.deleteBlob(TRAIN_CONTAINER, fileName);
+      return;
+    }
+
+    try {
+      await unlink(join(__dirname, '..', '..', 'uploads', fileName));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 }

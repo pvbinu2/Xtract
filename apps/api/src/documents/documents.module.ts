@@ -5,6 +5,7 @@ import { IncomingDocument, IncomingDocumentSchema } from '../schemas/incoming-do
 import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
 import { ConfigurationModule } from '../configuration/configuration.module';
+import { BlobStorageService } from '../storage/blob-storage.service';
 
 @Module({
   imports: [
@@ -15,6 +16,6 @@ import { ConfigurationModule } from '../configuration/configuration.module';
     ConfigurationModule,
   ],
   controllers: [DocumentsController],
-  providers: [DocumentsService],
+  providers: [DocumentsService, BlobStorageService],
 })
 export class DocumentsModule {}
