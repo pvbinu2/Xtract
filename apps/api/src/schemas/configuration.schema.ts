@@ -10,6 +10,9 @@ export class Configuration {
 
   @Prop({ default: false })
   deleteAfterDownstream!: boolean;
+
+  @Prop({ default: false })
+  sendKeyValuePairs!: boolean;
 }
 
 export const ConfigurationSchema = SchemaFactory.createForClass(Configuration);

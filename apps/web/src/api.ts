@@ -64,22 +64,35 @@ export const api = {
       body: JSON.stringify({ documentTypeId }),
     }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
-  validateDocument: (id: string, extractedData: ExtractedValue[], deleteAfterDownstream = false, downstreamUrl?: string) =>
+  validateDocument: (
+    id: string,
+    extractedData: ExtractedValue[],
+    deleteAfterDownstream = false,
+    downstreamUrl?: string,
+    sendKeyValuePairs = false,
+  ) =>
     request<any>(`/documents/${id}/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl }),
+      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
     }),
-  getConfiguration: () => request<{ downstreamUrl: string; deleteAfterDownstream: boolean }>('/configuration'),
-  saveConfiguration: (payload: { downstreamUrl: string; deleteAfterDownstream: boolean }) =>
-    request<{ downstreamUrl: string; deleteAfterDownstream: boolean }>('/configuration', {
+  getConfiguration: () =>
+    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs?: boolean }>('/configuration'),
+  saveConfiguration: (payload: { downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs: boolean }) =>
+    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs: boolean }>('/configuration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  rejectDocument: (id: string, deleteAfterDownstream = false, downstreamUrl?: string) => request<IncomingDocument>(`/documents/${id}/reject`, { 
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deleteAfterDownstream, downstreamUrl }),
-  }),
+  rejectDocument: (
+    id: string,
+    deleteAfterDownstream = false,
+    downstreamUrl?: string,
+    sendKeyValuePairs = false,
+  ) =>
+    request<IncomingDocument>(`/documents/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
+    }),
 };

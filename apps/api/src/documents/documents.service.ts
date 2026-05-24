@@ -220,13 +220,16 @@ export class DocumentsService {
     };
   }
 
-  private async getDownstreamConfig(overrideUrl?: string) {
+  private async getDownstreamConfig(overrideUrl?: string, overrideSendKeyValuePairs?: boolean) {
     const resolvedUrl = overrideUrl?.trim();
     let url = resolvedUrl || process.env.DOWNSTREAM_API_URL?.trim();
     let useEnv = Boolean(resolvedUrl);
+    let sendKeyValuePairs = Boolean(overrideSendKeyValuePairs);
+
+    const configuration = await this.configurationService.get();
+    sendKeyValuePairs = overrideSendKeyValuePairs ?? Boolean(configuration.sendKeyValuePairs);
 
     if (!resolvedUrl) {
-      const configuration = await this.configurationService.get();
       url = configuration.downstreamUrl?.trim() || url;
       useEnv = !configuration.downstreamUrl?.trim();
     }
@@ -249,10 +252,39 @@ export class DocumentsService {
       }
     }
 
-    return { url, headers, source: useEnv ? 'environment' : 'database' };
+    return { url, headers, source: useEnv ? 'environment' : 'database', sendKeyValuePairs };
   }
 
-  private buildDownstreamPayload(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
+  private normalizeTableRows(value: unknown): Record<string, unknown>[] {
+    if (Array.isArray(value)) {
+      return value.map((row) =>
+        row && typeof row === 'object' && !Array.isArray(row)
+          ? row as Record<string, unknown>
+          : { value: row },
+      );
+    }
+    if (typeof value === 'string') {
+      try {
+        return this.normalizeTableRows(JSON.parse(value));
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  private buildKeyValueExtractedData(extractedData: ExtractedValue[]) {
+    return extractedData.reduce<Record<string, unknown>>((acc, item) => {
+      acc[item.key] = item.type === 'table' ? this.normalizeTableRows(item.value) : item.value;
+      return acc;
+    }, {});
+  }
+
+  private buildDownstreamPayload(
+    document: IncomingDocumentDocument,
+    extractedData: ExtractedValue[],
+    sendKeyValuePairs = false,
+  ) {
     return {
       documentId: document.id,
       fileName: document.originalName,
@@ -263,21 +295,26 @@ export class DocumentsService {
       classificationMethod: document.classificationMethod,
       status: document.status,
       processedAt: new Date().toISOString(),
-      extractedData: extractedData.map((item) => ({
-        key: item.key,
-        label: item.label,
-        type: item.type,
-        value: item.value,
-        confidence: item.confidence,
-      })),
+      extractedData: sendKeyValuePairs
+        ? this.buildKeyValueExtractedData(extractedData)
+        : extractedData.map((item) => ({
+          key: item.key,
+          label: item.label,
+          type: item.type,
+          value: item.value,
+          confidence: item.confidence,
+        })),
     };
   }
 
-  private async sendToDownstream(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
-    const config = await this.getDownstreamConfig();
+  private async sendToDownstream(
+    document: IncomingDocumentDocument,
+    extractedData: ExtractedValue[],
+    config: NonNullable<Awaited<ReturnType<DocumentsService['getDownstreamConfig']>>>,
+  ) {
     if (!config) return;
 
-    const payload = this.buildDownstreamPayload(document, extractedData);
+    const payload = this.buildDownstreamPayload(document, extractedData, config.sendKeyValuePairs);
     const response = await fetch(config.url, {
       method: 'POST',
       headers: config.headers,
@@ -292,7 +329,13 @@ export class DocumentsService {
     }
   }
 
-  async validate(id: string, extractedData: ExtractedValue[], deleteAfterDownstream = false, downstreamUrl?: string) {
+  async validate(
+    id: string,
+    extractedData: ExtractedValue[],
+    deleteAfterDownstream = false,
+    downstreamUrl?: string,
+    sendKeyValuePairs?: boolean,
+  ) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { extractedData, status: 'validated' },
@@ -300,10 +343,10 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl, sendKeyValuePairs);
     if (downstreamConfig) {
       try {
-        await this.sendToDownstream(updated, extractedData);
+        await this.sendToDownstream(updated, extractedData, downstreamConfig);
         // Only delete after successful downstream send
         if (deleteAfterDownstream) {
           await this.remove(updated.id);
@@ -318,7 +361,7 @@ export class DocumentsService {
     return updated;
   }
 
-  async reject(id: string, deleteAfterDownstream = false, downstreamUrl?: string) {
+  async reject(id: string, deleteAfterDownstream = false, downstreamUrl?: string, sendKeyValuePairs?: boolean) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { status: 'rejected' },
@@ -326,10 +369,10 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl, sendKeyValuePairs);
     if (downstreamConfig) {
       try {
-        await this.sendToDownstream(updated, updated.extractedData || []);
+        await this.sendToDownstream(updated, updated.extractedData || [], downstreamConfig);
         if (deleteAfterDownstream) {
           await this.remove(updated.id);
           return { deleted: true };

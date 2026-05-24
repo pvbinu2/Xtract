@@ -35,6 +35,7 @@ type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' |
 type AppConfig = {
   downstreamUrl: string;
   deleteAfterDownstream: boolean;
+  sendKeyValuePairs: boolean;
 };
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
@@ -127,17 +128,30 @@ export function App() {
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
-  const [config, setConfig] = useState<AppConfig>({ downstreamUrl: '', deleteAfterDownstream: false });
+  const [config, setConfig] = useState<AppConfig>({
+    downstreamUrl: '',
+    deleteAfterDownstream: false,
+    sendKeyValuePairs: false,
+  });
 
   async function loadConfiguration() {
     try {
       const saved = await api.getConfiguration();
-      setConfig(saved);
+      setConfig({
+        downstreamUrl: saved.downstreamUrl,
+        deleteAfterDownstream: saved.deleteAfterDownstream,
+        sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
+      });
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
       if (storedConfig) {
         try {
-          setConfig(JSON.parse(storedConfig));
+          const parsed = JSON.parse(storedConfig);
+          setConfig({
+            downstreamUrl: parsed.downstreamUrl || '',
+            deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
+            sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
+          });
         } catch {
           // ignore invalid saved config
         }
@@ -387,6 +401,7 @@ export function App() {
             documentTypes={documentTypes}
             downstreamUrl={config.downstreamUrl}
             defaultDeleteAfterDownstream={config.deleteAfterDownstream}
+            sendKeyValuePairs={config.sendKeyValuePairs}
             onRefresh={refreshDocumentTypes}
             onValidated={async (_notification: string) => {
               await moveToNextDocument(activeDocumentId || '');
@@ -463,6 +478,14 @@ function ConfigurationScreen({
             onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
           />
           <span>Delete document after sending to downstream</span>
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={config.sendKeyValuePairs}
+            onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
+          />
+          <span>Send key value pairs</span>
         </label>
         <div className="configuration-actions">
           <button className="secondary-button compact" type="button" onClick={refreshConfig}>
@@ -1599,12 +1622,16 @@ function ConfirmDialog({
   title,
   body,
   confirmLabel,
+  confirmIcon,
+  isDanger = true,
   onCancel,
   onConfirm,
 }: {
   title: string;
   body: string;
   confirmLabel: string;
+  confirmIcon?: JSX.Element;
+  isDanger?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -1624,8 +1651,8 @@ function ConfirmDialog({
           <button className="secondary-button" onClick={onCancel}>
             Cancel
           </button>
-          <button className="primary-button danger-action" onClick={onConfirm}>
-            <Trash2 size={16} />
+          <button className={`primary-button${isDanger ? ' danger-action' : ''}`} onClick={onConfirm}>
+            {confirmIcon || <Trash2 size={16} />}
             {confirmLabel}
           </button>
         </div>
@@ -1639,6 +1666,7 @@ function ValidationScreen({
   documentTypes,
   downstreamUrl,
   defaultDeleteAfterDownstream = false,
+  sendKeyValuePairs = false,
   onRefresh,
   onValidated,
   onNotify,
@@ -1647,6 +1675,7 @@ function ValidationScreen({
   documentTypes: DocumentType[];
   downstreamUrl: string;
   defaultDeleteAfterDownstream?: boolean;
+  sendKeyValuePairs?: boolean;
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
@@ -1659,6 +1688,7 @@ function ValidationScreen({
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
+  const [pendingValidationAction, setPendingValidationAction] = useState<'validate' | 'reject' | null>(null);
 
   async function refreshPage() {
     if (!documentId) return;
@@ -1715,6 +1745,7 @@ function ValidationScreen({
 
   async function submit() {
     if (!document) return;
+    setPendingValidationAction(null);
     const normalized = values.map((item) => {
       if (item.type !== 'table') return item;
       try {
@@ -1723,7 +1754,7 @@ function ValidationScreen({
         return item;
       }
     });
-    await api.validateDocument(document._id, normalized, deleteAfterDownstream, downstreamUrl);
+    await api.validateDocument(document._id, normalized, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs);
     const message = `Document validated: ${document.originalName}`;
     onNotify(message, 'success');
     await onValidated(message);
@@ -1731,7 +1762,8 @@ function ValidationScreen({
 
   async function reject() {
     if (!document) return;
-    await api.rejectDocument(document._id, deleteAfterDownstream, downstreamUrl);
+    setPendingValidationAction(null);
+    await api.rejectDocument(document._id, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs);
     const message = `Document rejected: ${document.originalName}`;
     onNotify(message, 'error');
     await onValidated(message);
@@ -1858,11 +1890,11 @@ function ValidationScreen({
                 <BrainCircuit size={16} />
                 Reclassify
               </button>
-              <button className="secondary-button danger-outline" type="button" onClick={reject}>
+              <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
                 <X size={16} />
                 Reject
               </button>
-              <button className="primary-button" type="button" onClick={submit}>
+              <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
                 <CheckCircle2 size={16} />
                 Submit Validation
               </button>
@@ -1878,6 +1910,21 @@ function ValidationScreen({
             updateTableValue(tableEditIndex, rows);
             setTableEditIndex(null);
           }}
+        />
+      )}
+      {pendingValidationAction && document && (
+        <ConfirmDialog
+          title={pendingValidationAction === 'validate' ? 'Validate Document' : 'Reject Document'}
+          body={
+            pendingValidationAction === 'validate'
+              ? `Submit validation for "${document.originalName}"?`
+              : `Reject "${document.originalName}"?`
+          }
+          confirmLabel={pendingValidationAction === 'validate' ? 'Validate' : 'Reject'}
+          confirmIcon={pendingValidationAction === 'validate' ? <CheckCircle2 size={16} /> : <X size={16} />}
+          isDanger={pendingValidationAction === 'reject'}
+          onCancel={() => setPendingValidationAction(null)}
+          onConfirm={pendingValidationAction === 'validate' ? submit : reject}
         />
       )}
       {showReclassifyDialog && document && (
