@@ -26,7 +26,16 @@ export const api = {
     data.append('file', file);
     return request<DocumentType>(`/document-types/${id}/samples`, { method: 'POST', body: data });
   },
-  trainClassifier: (id: string) => request<DocumentType>(`/document-types/${id}/train-classifier`, { method: 'POST' }),
+  deleteSample: (id: string, fileName: string) =>
+    request<DocumentType>(`/document-types/${id}/samples/${encodeURIComponent(fileName)}`, { method: 'DELETE' }),
+  trainClassifier: () => request<DocumentType[]>('/document-types/train-classifier', { method: 'POST' }),
+  resetClassifierTraining: () => request<DocumentType[]>('/document-types/reset-classifier-training', { method: 'POST' }),
+  updateClassificationInclusion: (id: string, includeInClassification: boolean) =>
+    request<DocumentType>(`/document-types/${id}/classification-inclusion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ includeInClassification }),
+    }),
   generateTemplate: (id: string, prompt: string) =>
     request<DocumentType>(`/document-types/${id}/generate-template`, {
       method: 'POST',

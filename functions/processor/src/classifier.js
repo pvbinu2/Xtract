@@ -222,6 +222,19 @@ async function ensureVectorCollection() {
   throw new Error(`Qdrant request failed: ${createResponse.status} ${message}`);
 }
 
+async function resetClassifierVectors() {
+  const collection = qdrantCollection();
+  let response;
+  try {
+    response = await fetch(`${qdrantUrl()}/collections/${collection}`, { method: 'DELETE' });
+  } catch (error) {
+    throw new Error(`Could not reach Qdrant at ${qdrantUrl()}: ${error?.message || String(error)}`);
+  }
+  if (response.ok || response.status === 404) return;
+  const message = await response.text();
+  throw new Error(`Qdrant collection reset failed: ${response.status} ${message}`);
+}
+
 async function embedText(text) {
   const client = getOpenAI();
   if (!client) throw new Error('OPENAI_API_KEY is required to create classifier embeddings.');
@@ -339,7 +352,11 @@ async function trainClassifierProfile(documentType, sampleFileName) {
 }
 
 async function classifyDocument(document, documentTypes) {
-  const candidates = documentTypes.filter((documentType) => documentType.finalized && latestExistingSample(documentType));
+  const candidates = documentTypes.filter((documentType) =>
+    documentType.includeInClassification &&
+    documentType.finalized &&
+    latestExistingSample(documentType)
+  );
   if (!candidates.length) {
     throw new Error('Upload at least one sample and save the schema for a document type before automatic classification.');
   }
@@ -416,6 +433,7 @@ function normalizeObjectId(value) {
 module.exports = {
   classifyDocument,
   normalizeObjectId,
+  resetClassifierVectors,
   samplePath,
   trainClassifierProfile,
 };

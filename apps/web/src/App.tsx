@@ -89,6 +89,11 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function displaySampleName(fileName: string) {
+  const parts = fileName.split('/');
+  return parts[parts.length - 1] || fileName;
+}
+
 function ClassificationMethodIcon({ method }: { method?: IncomingDocument['classificationMethod'] }) {
   if (method === 'vector') {
     return (
@@ -626,6 +631,7 @@ function ConfigurationScreen({
 }
 
 function classifierStatus(type: DocumentType) {
+  if (!type.includeInClassification) return 'excluded';
   if (!type.finalized) return 'draft';
   if (!type.sampleFiles.length) return 'needs sample';
   return type.classifierTrainingStatus || 'untrained';
@@ -640,54 +646,79 @@ function ClassificationScreen({
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
-  const includedTypes = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0);
-  const trainedCount = documentTypes.filter((type) => type.classifierTrainingStatus === 'trained').length;
-  const trainingCount = documentTypes.filter((type) => type.classifierTrainingStatus === 'training').length;
-  const fileCount = documentTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
+  const includedTypes = documentTypes.filter((type) => type.includeInClassification);
+  const trainableTypes = includedTypes.filter((type) => type.finalized && type.sampleFiles.length > 0);
+  const trainingCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'training').length;
+  const failedCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'failed').length;
+  const trainedCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'trained').length;
+  const includedFileCount = includedTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
+  const overallStatus = trainingCount
+    ? 'training'
+    : failedCount
+      ? 'failed'
+      : trainableTypes.length && trainedCount === trainableTypes.length
+        ? 'trained'
+        : 'untrained';
 
-  async function trainType(type: DocumentType) {
-    await api.trainClassifier(type._id);
+  async function trainIncludedTypes() {
+    await api.trainClassifier();
   }
 
   return (
     <div className="classification-layout">
       <section className="panel classification-summary">
         <StatusMetric label="Included Types" value={includedTypes.length} />
-        <StatusMetric label="Training" value={trainingCount} />
+        <StatusMetric label="Trainable" value={trainableTypes.length} />
         <StatusMetric label="Trained" value={trainedCount} />
-        <StatusMetric label="Sample Files" value={fileCount} />
+        <StatusMetric label="Sample Files" value={includedFileCount} />
       </section>
 
       <section className="panel">
         <div className="panel-heading">
           <div>
             <h2>Classifier Training</h2>
-            <p>Finalized document types with at least one sample are included.</p>
+            <p>Train classification for all document types marked for inclusion.</p>
+            <div className="classifier-status-line">
+              <span>Status</span>
+              <strong className={`classifier-pill ${overallStatus}`}>{overallStatus}</strong>
+            </div>
           </div>
           <div className="panel-heading-actions">
             <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
               <RefreshCw size={16} />
             </button>
             <button
-              className="primary-button"
-              disabled={!includedTypes.length}
+              className="secondary-button"
+              disabled={overallStatus === 'training'}
               onClick={() =>
                 onRun(async () => {
-                  await Promise.all(includedTypes.map((type) => trainType(type)));
+                  await api.resetClassifierTraining();
+                  await onRefresh();
+                }, 'Classifier training status reset')
+              }
+            >
+              <RotateCcw size={16} />
+              Reset Status
+            </button>
+            <button
+              className="primary-button"
+              disabled={!trainableTypes.length || overallStatus === 'training'}
+              onClick={() =>
+                onRun(async () => {
+                  await trainIncludedTypes();
                   await onRefresh();
                 }, 'Classifier training queued')
               }
             >
               <BrainCircuit size={16} />
-              Train All
+              Train
             </button>
           </div>
         </div>
 
         <div className="classification-table">
-          {documentTypes.map((type) => {
+          {includedTypes.map((type) => {
             const status = classifierStatus(type);
-            const canTrain = type.finalized && type.sampleFiles.length > 0;
             return (
               <div className="classification-row" key={type._id}>
                 <div>
@@ -696,22 +727,10 @@ function ClassificationScreen({
                 </div>
                 <span className="file-count">{type.sampleFiles.length} file{type.sampleFiles.length === 1 ? '' : 's'}</span>
                 <span className={`classifier-pill ${status.replace(/\s+/g, '-')}`}>{status}</span>
-                <button
-                  className="secondary-button compact"
-                  disabled={!canTrain}
-                  onClick={() =>
-                    onRun(async () => {
-                      await trainType(type);
-                      await onRefresh();
-                    }, `${type.name} training queued`)
-                  }
-                >
-                  <BrainCircuit size={14} />
-                  Train
-                </button>
               </div>
             );
           })}
+          {!includedTypes.length && <EmptyState text="No document types are included in classification." />}
         </div>
       </section>
     </div>
@@ -738,13 +757,18 @@ function DocumentTypeManagement({
   const [fields, setFields] = useState<ExtractionField[]>([]);
   const [schemaEditing, setSchemaEditing] = useState(false);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [isFileListExpanded, setIsFileListExpanded] = useState(false);
+  const [isSchemaExpanded, setIsSchemaExpanded] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
     setPrompt(activeType?.prompt || prompt);
     setSchemaEditing(false);
     setExpandedTables({});
+    setIsFileListExpanded(false);
+    setIsSchemaExpanded(true);
   }, [activeType?._id]);
 
   function addSchemaField() {
@@ -799,9 +823,11 @@ function DocumentTypeManagement({
                   ? 'Draft'
                   : type.classifierTrainingStatus === 'trained'
                     ? 'Trained'
-                    : type.sampleFiles.length
+                    : type.classifierTrainingStatus === 'training'
                       ? 'Training'
-                      : 'Needs sample'}
+                      : type.sampleFiles.length
+                        ? type.classifierTrainingStatus || 'Untrained'
+                        : 'Needs sample'}
               </em>
             </button>
           ))}
@@ -819,12 +845,7 @@ function DocumentTypeManagement({
               <button
                 className="icon-button danger"
                 title="Delete document type"
-                onClick={() =>
-                  onRun(async () => {
-                    await api.deleteDocumentType(activeType._id);
-                    await onRefresh();
-                  }, 'Document type deleted')
-                }
+                onClick={() => setDeleteTypeTarget(activeType)}
               >
                 <Trash2 size={17} />
               </button>
@@ -837,6 +858,23 @@ function DocumentTypeManagement({
                 {activeType.sampleFiles.length === 1 ? '' : 's'}
               </span>
             </div>
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={Boolean(activeType.includeInClassification)}
+                onChange={(event) =>
+                  onRun(async () => {
+                    await api.updateClassificationInclusion(activeType._id, event.target.checked);
+                    await onRefresh();
+                  }, event.target.checked ? 'Included in classification' : 'Removed from classification')
+                }
+              />
+              <span>
+                Include in classification
+                <small>Use this document type and its samples when running classifier training.</small>
+              </span>
+            </label>
 
             <div className="sample-row">
               <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
@@ -855,6 +893,43 @@ function DocumentTypeManagement({
                 <Upload size={16} />
                 Sample
               </button>
+            </div>
+
+            <div className="sample-file-list">
+              <button
+                className="collapsible-section-heading"
+                type="button"
+                onClick={() => setIsFileListExpanded((current) => !current)}
+              >
+                <span>
+                  {isFileListExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  Uploaded Documents
+                </span>
+                <span>{activeType.sampleFiles.length} file{activeType.sampleFiles.length === 1 ? '' : 's'}</span>
+              </button>
+              {isFileListExpanded && (
+                activeType.sampleFiles.length ? (
+                  activeType.sampleFiles.map((fileName) => (
+                    <div className="sample-file-row" key={fileName}>
+                      <span title={fileName}>{displaySampleName(fileName)}</span>
+                      <button
+                        className="icon-button danger"
+                        title="Delete sample file"
+                        onClick={() =>
+                          onRun(async () => {
+                            await api.deleteSample(activeType._id, fileName);
+                            await onRefresh();
+                          }, 'Sample deleted')
+                        }
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-table">No documents uploaded for this type.</div>
+                )
+              )}
             </div>
 
             {!fields.length && (
@@ -883,39 +958,49 @@ function DocumentTypeManagement({
             )}
 
             {!!fields.length && (
-              <div className="schema-toolbar">
-                <h3>Extraction Schema</h3>
-                {!schemaEditing ? (
-                  <button className="secondary-button" onClick={() => setSchemaEditing(true)}>
-                    <Pencil size={16} />
-                    Edit Schema
+              <div className="collapsible-section">
+                <div className="schema-toolbar">
+                  <button
+                    className="collapsible-section-title"
+                    type="button"
+                    onClick={() => setIsSchemaExpanded((current) => !current)}
+                  >
+                    {isSchemaExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    <span>Extraction Schema</span>
                   </button>
-                ) : (
-                  <div className="schema-actions">
-                    <button className="secondary-button" onClick={addSchemaField}>
-                      <Plus size={16} />
-                      Add Field
-                    </button>
-                    <button
-                      className="primary-button"
-                      onClick={() =>
-                        onRun(async () => {
-                          await api.finalizeTemplate(activeType._id, fields);
-                          setSchemaEditing(false);
-                          await onRefresh();
-                        }, 'Schema saved')
-                      }
-                    >
-                      <Save size={16} />
-                      Save Schema
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+                  {isSchemaExpanded && (
+                    !schemaEditing ? (
+                      <button className="secondary-button" onClick={() => setSchemaEditing(true)}>
+                        <Pencil size={16} />
+                        Edit Schema
+                      </button>
+                    ) : (
+                      <div className="schema-actions">
+                        <button className="secondary-button" onClick={addSchemaField}>
+                          <Plus size={16} />
+                          Add Field
+                        </button>
+                        <button
+                          className="primary-button"
+                          onClick={() =>
+                            onRun(async () => {
+                              await api.finalizeTemplate(activeType._id, fields);
+                              setSchemaEditing(false);
+                              await onRefresh();
+                            }, 'Schema saved')
+                          }
+                        >
+                          <Save size={16} />
+                          Save Schema
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
 
-            <div className="fields-table">
-              {fields.map((field, index) => (
+                {isSchemaExpanded && (
+                  <div className="fields-table">
+                    {fields.map((field, index) => (
                 <div className="schema-field" key={field.uiId || `${field.key}-${index}`}>
                   <div className={schemaEditing ? 'field-row editable' : 'field-row readonly'}>
                     <input
@@ -1100,8 +1185,11 @@ function DocumentTypeManagement({
                     </div>
                   )}
                 </div>
-              ))}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <EmptyState text="Select a document type to view details." />
@@ -1118,6 +1206,23 @@ function DocumentTypeManagement({
             onRefresh();
           }}
           onRun={onRun}
+        />
+      )}
+      {deleteTypeTarget && (
+        <ConfirmDialog
+          title="Delete Document Type"
+          body={`Delete "${deleteTypeTarget.name}" and its uploaded documents? This cannot be undone.`}
+          confirmLabel="Delete"
+          confirmIcon={<Trash2 size={16} />}
+          onCancel={() => setDeleteTypeTarget(null)}
+          onConfirm={() => {
+            const target = deleteTypeTarget;
+            setDeleteTypeTarget(null);
+            onRun(async () => {
+              await api.deleteDocumentType(target._id);
+              await onRefresh();
+            }, 'Document type deleted');
+          }}
         />
       )}
     </div>

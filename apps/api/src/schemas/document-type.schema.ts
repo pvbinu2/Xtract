@@ -47,6 +47,9 @@ export class DocumentType {
   @Prop({ type: [String], default: [] })
   sampleFiles!: string[];
 
+  @Prop({ default: false })
+  includeInClassification!: boolean;
+
   @Prop({ default: 'untrained' })
   classifierTrainingStatus!: 'untrained' | 'training' | 'trained' | 'failed';
 
