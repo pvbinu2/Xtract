@@ -159,7 +159,14 @@ export class DocumentsService {
 
     const localPath = await this.resolveDocumentPath(document);
     try {
-      const extraction = await extractValuesWithOpenAI(localPath, docType.fields, docType.name);
+      const configuration = await this.configurationService.get();
+      const useOcrForDocumentProcessing = Boolean(configuration.useOcrForDocumentProcessing);
+      const extraction = await extractValuesWithOpenAI(
+        localPath,
+        docType.fields,
+        docType.name,
+        useOcrForDocumentProcessing,
+      );
       document.extractedData = await attachBoundingBoxes(
         localPath,
         extraction?.values ??
@@ -174,6 +181,7 @@ export class DocumentsService {
         processedAt: new Date(),
       };
       document.processingMetrics = processingMetrics;
+      document.processingMode = useOcrForDocumentProcessing ? 'ocr' : 'pdf';
       document.status = 'extracted';
       document.error = undefined;
       const saved = await document.save();

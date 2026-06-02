@@ -382,6 +382,44 @@ textarea {
   font-weight: 600;
 }
 
+.configuration-form,
+.configuration-section {
+  display: grid;
+  gap: 14px;
+}
+
+.configuration-section {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.configuration-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.configuration-section h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.configuration-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.warning-text {
+  margin: -4px 0 0;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 8px;
+  background: #fef3c7;
+  color: #92400e;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 textarea {
   resize: vertical;
 }
@@ -536,7 +574,7 @@ textarea {
 }
 
 .document-open {
-  grid-template-columns: minmax(0, 1fr) 120px 90px 190px;
+  grid-template-columns: minmax(0, 1fr) 120px 90px 86px 190px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -613,6 +651,35 @@ textarea {
 .method-icon.llm {
   background: #fef3c7;
   color: #92400e;
+}
+
+.processing-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.processing-mode-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.processing-mode-icon.ocr {
+  color: #047857;
+}
+
+.processing-mode-icon.pdf {
+  color: #7c3aed;
 }
 
 .classification-score-line {
@@ -945,6 +1012,34 @@ textarea {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.extraction-pane .panel-heading {
+  align-items: flex-start;
+}
+
+.extraction-pane .panel-heading-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.validation-header-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.validation-header-badges .pill,
+.validation-header-badges .processing-mode-badge {
+  min-height: 30px;
+}
+
+.validation-refresh-button {
+  margin-right: 0;
 }
 
 .extraction-pane-content {

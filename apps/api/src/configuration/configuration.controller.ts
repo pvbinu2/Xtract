@@ -18,6 +18,7 @@ export class ConfigurationController {
       downstreamUrl: string;
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;
+      useOcrForDocumentProcessing?: boolean;
     },
   ): Promise<Configuration> {
     return this.configurationService.save(body);

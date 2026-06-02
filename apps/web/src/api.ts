@@ -93,9 +93,19 @@ export const api = {
       body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
     }),
   getConfiguration: () =>
-    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs?: boolean }>('/configuration'),
-  saveConfiguration: (payload: { downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs: boolean }) =>
-    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs: boolean }>('/configuration', {
+    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs?: boolean; useOcrForDocumentProcessing?: boolean }>('/configuration'),
+  saveConfiguration: (payload: {
+    downstreamUrl: string;
+    deleteAfterDownstream: boolean;
+    sendKeyValuePairs: boolean;
+    useOcrForDocumentProcessing: boolean;
+  }) =>
+    request<{
+      downstreamUrl: string;
+      deleteAfterDownstream: boolean;
+      sendKeyValuePairs: boolean;
+      useOcrForDocumentProcessing: boolean;
+    }>('/configuration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

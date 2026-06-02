@@ -7,6 +7,7 @@ import { join } from 'path';
 import { inferTemplateWithOpenAI } from '../openai-document-ai';
 import { DocumentType, DocumentTypeDocument, ExtractionField, TableColumn } from '../schemas/document-type.schema';
 import { BlobStorageService, TRAIN_CONTAINER } from '../storage/blob-storage.service';
+import { ConfigurationService } from '../configuration/configuration.service';
 
 function toKey(label: string) {
   return label
@@ -90,6 +91,7 @@ export class DocumentTypesService {
   constructor(
     @InjectModel(DocumentType.name) private readonly model: Model<DocumentTypeDocument>,
     private readonly blobStorage: BlobStorageService,
+    private readonly configurationService: ConfigurationService,
   ) {}
 
   async list() {
@@ -225,7 +227,12 @@ export class DocumentTypesService {
     if (latestSample && process.env.OPENAI_API_KEY) {
       const samplePath = await this.resolveSamplePath(latestSample);
       try {
-        const openAiFields = await inferTemplateWithOpenAI(samplePath, prompt);
+        const configuration = await this.configurationService.get();
+        const openAiFields = await inferTemplateWithOpenAI(
+          samplePath,
+          prompt,
+          Boolean(configuration.useOcrForDocumentProcessing),
+        );
         if (openAiFields?.length) {
           docType.prompt = prompt;
           docType.fields = openAiFields;
