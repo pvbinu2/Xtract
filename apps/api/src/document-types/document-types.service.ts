@@ -102,6 +102,7 @@ export class DocumentTypesService {
       name: payload.name,
       prompt: payload.prompt ?? '',
       fields: [],
+      includeInClassification: false,
       finalized: false,
     });
   }
@@ -120,53 +121,100 @@ export class DocumentTypesService {
     const fileName = this.blobStorage.createBlobName(file.originalname, docType.name);
     await this.blobStorage.uploadBuffer(TRAIN_CONTAINER, fileName, file.buffer, file.mimetype);
 
-    const canQueueTraining = this.hasQueueConnection();
     const updated = await this.model.findByIdAndUpdate(
       id,
       {
         $push: { sampleFiles: fileName },
         $set: {
-          classifierTrainingStatus: canQueueTraining ? 'training' : 'untrained',
-          classifierTrainingError: canQueueTraining ? undefined : 'Classifier training queue is not configured.',
+          classifierTrainingStatus: 'untrained',
+          classifierTrainingError: undefined,
         },
       },
       { new: true },
     );
     if (!updated) throw new NotFoundException('Document type not found');
-    if (canQueueTraining) await this.enqueueClassifierTraining(updated.id, fileName);
     return updated;
   }
 
-  async trainClassifier(id: string) {
+  async removeSample(id: string, fileName: string) {
+    const docType = await this.model.findById(id);
+    if (!docType) throw new NotFoundException('Document type not found');
+    if (!docType.sampleFiles.includes(fileName)) throw new NotFoundException('Sample file not found');
+
+    await this.deleteSampleFile(fileName);
+    docType.sampleFiles = docType.sampleFiles.filter((sampleFile) => sampleFile !== fileName);
+    docType.classifierTrainingStatus = 'untrained';
+    docType.classifierTrainingError = undefined;
+    return docType.save();
+  }
+
+  async trainClassifier() {
     if (!this.hasQueueConnection()) {
       throw new BadRequestException('Classifier training requires Azure queue storage and the function worker.');
     }
 
-    const docType = await this.model.findById(id);
-    if (!docType) throw new NotFoundException('Document type not found');
-
-    const sampleFileName = docType.sampleFiles.at(-1);
-    if (!sampleFileName) {
-      throw new BadRequestException('Upload at least one sample document before training the classifier.');
+    const includedTypes = await this.model.find({
+      includeInClassification: true,
+      finalized: true,
+      'sampleFiles.0': { $exists: true },
+    });
+    if (!includedTypes.length) {
+      throw new BadRequestException('Include at least one finalized document type with sample files before training the classifier.');
     }
 
-    docType.classifierTrainingStatus = 'training';
-    docType.classifierTrainingError = undefined;
-    await docType.save();
-    await this.enqueueClassifierTraining(docType.id, sampleFileName);
-    return docType;
+    await this.model.updateMany(
+      { _id: { $in: includedTypes.map((type) => type._id) } },
+      { $set: { classifierTrainingStatus: 'training', classifierTrainingError: undefined } },
+    );
+    await this.model.updateMany(
+      {
+        includeInClassification: true,
+        _id: { $nin: includedTypes.map((type) => type._id) },
+      },
+      { $set: { classifierTrainingStatus: 'untrained' } },
+    );
+    await this.enqueueClassifierTraining();
+    return this.list();
+  }
+
+  async resetClassifierTrainingStatus() {
+    await this.model.updateMany(
+      {},
+      {
+        $set: { classifierTrainingStatus: 'untrained' },
+        $unset: {
+          classifierTrainingError: '',
+          classifierTrainedAt: '',
+        },
+      },
+    );
+    return this.list();
+  }
+
+  async updateClassificationInclusion(id: string, includeInClassification: boolean) {
+    const updated = await this.model.findByIdAndUpdate(
+      id,
+      {
+        includeInClassification,
+        classifierTrainingStatus: 'untrained',
+        classifierTrainingError: undefined,
+      },
+      { new: true },
+    );
+    if (!updated) throw new NotFoundException('Document type not found');
+    return updated;
   }
 
   private hasQueueConnection() {
     return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
   }
 
-  private async enqueueClassifierTraining(documentTypeId: string, sampleFileName: string) {
+  private async enqueueClassifierTraining() {
     const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
     if (!connectionString) return;
     const queue = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('classifier-training');
     await queue.createIfNotExists();
-    await queue.sendMessage(Buffer.from(JSON.stringify({ documentTypeId, sampleFileName })).toString('base64'));
+    await queue.sendMessage(Buffer.from(JSON.stringify({ trainAll: true })).toString('base64'));
   }
 
   async generateTemplate(id: string, prompt: string) {

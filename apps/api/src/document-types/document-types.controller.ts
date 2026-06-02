@@ -19,20 +19,38 @@ export class DocumentTypesController {
     return this.service.create(body);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
-  }
-
   @Post(':id/samples')
   @UseInterceptors(FileInterceptor('file', { storage }))
   addSample(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
     return this.service.addSample(id, file);
   }
 
-  @Post(':id/train-classifier')
-  trainClassifier(@Param('id') id: string) {
-    return this.service.trainClassifier(id);
+  @Delete(':id/samples/:fileName')
+  removeSample(@Param('id') id: string, @Param('fileName') fileName: string) {
+    return this.service.removeSample(id, decodeURIComponent(fileName));
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.service.remove(id);
+  }
+
+  @Post('train-classifier')
+  trainClassifier() {
+    return this.service.trainClassifier();
+  }
+
+  @Post('reset-classifier-training')
+  resetClassifierTrainingStatus() {
+    return this.service.resetClassifierTrainingStatus();
+  }
+
+  @Post(':id/classification-inclusion')
+  updateClassificationInclusion(
+    @Param('id') id: string,
+    @Body() body: { includeInClassification: boolean },
+  ) {
+    return this.service.updateClassificationInclusion(id, Boolean(body.includeInClassification));
   }
 
   @Post(':id/generate-template')

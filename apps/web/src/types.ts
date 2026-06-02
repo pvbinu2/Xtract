@@ -19,6 +19,7 @@ export type DocumentType = {
   name: string;
   prompt: string;
   sampleFiles: string[];
+  includeInClassification?: boolean;
   classifierTrainingStatus?: 'untrained' | 'training' | 'trained' | 'failed';
   classifierProfile?: string;
   classifierTrainedAt?: string;

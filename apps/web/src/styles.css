@@ -451,15 +451,46 @@ textarea {
   margin-top: 20px;
 }
 
+.collapsible-section {
+  display: grid;
+  gap: 10px;
+}
+
+.collapsible-section-heading,
+.collapsible-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  text-align: left;
+  font-weight: 800;
+}
+
+.collapsible-section-heading {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.collapsible-section-heading span,
+.collapsible-section-title span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collapsible-section-heading > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .schema-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.schema-toolbar h3 {
-  margin: 0;
-  font-size: 16px;
 }
 
 .type-row,
@@ -484,7 +515,17 @@ textarea {
 }
 
 .classification-row {
-  grid-template-columns: minmax(0, 1fr) 110px 130px auto;
+  grid-template-columns: minmax(0, 1fr) 110px 130px;
+}
+
+.classifier-status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .classification-row small {
@@ -623,7 +664,8 @@ textarea {
 
 .classifier-pill.draft,
 .classifier-pill.needs-sample,
-.classifier-pill.untrained {
+.classifier-pill.untrained,
+.classifier-pill.excluded {
   background: var(--surface-muted);
   color: var(--muted);
 }
@@ -633,6 +675,39 @@ textarea {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.sample-file-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.sample-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 8px 10px;
+}
+
+.sample-file-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sample-file-row .icon-button {
+  width: 34px;
+  min-height: 34px;
+  margin-right: 0;
 }
 
 .field-row {
