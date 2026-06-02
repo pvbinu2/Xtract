@@ -1,4 +1,4 @@
-import { DocumentType, ExtractedValue, IncomingDocument, PagedResult } from './types';
+import { BusinessReviewSummary, DocumentType, ExtractedValue, IncomingDocument, PagedResult } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
 
@@ -55,6 +55,7 @@ export const api = {
   },
   listDocuments: (params: URLSearchParams) =>
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
+  getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
   deleteDocument: (id: string) => request(`/documents/${id}`, { method: 'DELETE' }),
   reprocessDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reprocess`, { method: 'POST' }),
   reclassifyDocument: (id: string, documentTypeId: string) =>
@@ -64,6 +65,12 @@ export const api = {
       body: JSON.stringify({ documentTypeId }),
     }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
+  updateExtractedData: (id: string, extractedData: ExtractedValue[]) =>
+    request<IncomingDocument>(`/documents/${id}/extracted-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extractedData }),
+    }),
   validateDocument: (
     id: string,
     extractedData: ExtractedValue[],

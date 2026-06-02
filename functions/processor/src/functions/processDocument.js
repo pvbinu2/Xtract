@@ -24,6 +24,59 @@ function getOpenAI() {
   return openai;
 }
 
+function modelName() {
+  return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+}
+
+const modelPricingUsdPerMillion = {
+  'gpt-4o-mini': { input: 0.15, output: 0.60 },
+  'gpt-4o': { input: 2.50, output: 10.00 },
+  'gpt-4.1': { input: 2.00, output: 8.00 },
+  'gpt-4.1-mini': { input: 0.40, output: 1.60 },
+  'gpt-4.1-nano': { input: 0.10, output: 0.40 },
+  'gpt-5': { input: 1.25, output: 10.00 },
+  'gpt-5-mini': { input: 0.25, output: 2.00 },
+  'gpt-5-nano': { input: 0.05, output: 0.40 },
+};
+
+function pricingForModel(model) {
+  const configuredInput = Number(process.env.OPENAI_INPUT_COST_PER_1M_TOKENS);
+  const configuredOutput = Number(process.env.OPENAI_OUTPUT_COST_PER_1M_TOKENS);
+  if (Number.isFinite(configuredInput) && Number.isFinite(configuredOutput)) {
+    return { input: configuredInput, output: configuredOutput };
+  }
+
+  return modelPricingUsdPerMillion[model] || { input: 0, output: 0 };
+}
+
+function tokenUsageFromResponse(response) {
+  const usage = response?.usage || {};
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
+
+  return {
+    inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0,
+    outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+    totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
+  };
+}
+
+function processingMetricsFromResponse(response, model) {
+  const tokens = tokenUsageFromResponse(response);
+  const pricing = pricingForModel(model);
+  const estimatedCostUsd =
+    (tokens.inputTokens / 1_000_000) * pricing.input +
+    (tokens.outputTokens / 1_000_000) * pricing.output;
+
+  return {
+    model,
+    ...tokens,
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(8)),
+    processedAt: new Date(),
+  };
+}
+
 function parseJsonObject(text) {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -36,8 +89,9 @@ async function extractValuesWithOpenAI(document, documentType) {
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const pdf = fs.readFileSync(document.filePath).toString('base64');
+  const model = modelName();
   const response = await withOpenAIRetry(() => client.responses.create({
-    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    model,
     input: [
       {
         role: 'user',
@@ -75,7 +129,7 @@ async function extractValuesWithOpenAI(document, documentType) {
 
   const parsed = parseJsonObject(response.output_text);
   const byKey = new Map((parsed.fields || []).map((field) => [field.key, field]));
-  return selectedFields.map((field) => {
+  const values = selectedFields.map((field) => {
     const extracted = byKey.get(field.key);
     return {
       key: field.key,
@@ -85,6 +139,11 @@ async function extractValuesWithOpenAI(document, documentType) {
       confidence: typeof extracted?.confidence === 'number' ? extracted.confidence : undefined,
     };
   });
+
+  return {
+    values,
+    metrics: processingMetricsFromResponse(response, model),
+  };
 }
 
 function mockValue(label, type, index) {
@@ -128,6 +187,45 @@ async function markDocumentFailed(documents, documentId, error) {
     { _id: documentId },
     { $set: { status: 'failed', error, updatedAt: new Date() } },
   );
+}
+
+async function recordBusinessReviewProcessing(db, document, documentType, metrics) {
+  const processedAt = metrics?.processedAt || new Date();
+  const normalizedMetrics = {
+    model: metrics?.model || 'mock',
+    inputTokens: Number(metrics?.inputTokens || 0),
+    outputTokens: Number(metrics?.outputTokens || 0),
+    totalTokens: Number(metrics?.totalTokens || 0),
+    estimatedCostUsd: Number(metrics?.estimatedCostUsd || 0),
+    processedAt,
+  };
+
+  await Promise.all([
+    db.collection('business_review_summaries').updateOne(
+      { key: 'global' },
+      {
+        $setOnInsert: { key: 'global', createdAt: new Date() },
+        $inc: {
+          filesProcessed: 1,
+          inputTokens: normalizedMetrics.inputTokens,
+          outputTokens: normalizedMetrics.outputTokens,
+          totalTokens: normalizedMetrics.totalTokens,
+          estimatedCostUsd: normalizedMetrics.estimatedCostUsd,
+        },
+        $set: { updatedAt: new Date() },
+      },
+      { upsert: true },
+    ),
+    db.collection('business_review_history').insertOne({
+      documentId: String(document._id),
+      fileName: document.originalName,
+      documentTypeName: documentType?.name || document.documentTypeName,
+      category: documentType?.category || document.category,
+      ...normalizedMetrics,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }),
+  ]);
 }
 
 async function processDocument(message, context) {
@@ -195,9 +293,10 @@ async function processDocument(message, context) {
       );
       }
 
+      const extraction = await extractValuesWithOpenAI(localDocument, documentType);
       const extractedData = await attachBoundingBoxes(
         localFilePath,
-        (await extractValuesWithOpenAI(localDocument, documentType)) ||
+        extraction?.values ||
         (documentType.fields || [])
           .filter((field) => field.selected)
           .map((field, index) => ({
@@ -209,17 +308,28 @@ async function processDocument(message, context) {
           })),
       );
 
+      const processingMetrics = extraction?.metrics || {
+        model: 'mock',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        processedAt: new Date(),
+      };
+
       await documents.updateOne(
         { _id: document._id },
         {
           $set: {
             status: 'extracted',
             extractedData,
+            processingMetrics,
             error: null,
             updatedAt: new Date(),
           },
         },
       );
+      await recordBusinessReviewProcessing(db, document, documentType, processingMetrics);
     } finally {
       if (document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
     }

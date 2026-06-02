@@ -23,6 +23,11 @@ export class DocumentsController {
     return this.service.list(query);
   }
 
+  @Get('business-review/summary')
+  businessReviewSummary() {
+    return this.service.businessReviewSummary();
+  }
+
   @Post('upload')
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
@@ -51,6 +56,14 @@ export class DocumentsController {
     const file = await this.service.getFile(id);
     response.contentType(file.contentType);
     return response.send(file.buffer);
+  }
+
+  @Post(':id/extracted-data')
+  updateExtractedData(
+    @Param('id') id: string,
+    @Body() body: { extractedData: any[] },
+  ) {
+    return this.service.updateExtractedData(id, body.extractedData);
   }
 
   @Post(':id/validate')

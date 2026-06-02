@@ -225,6 +225,72 @@ nav {
   font-size: 22px;
 }
 
+.business-review {
+  display: grid;
+  gap: 18px;
+}
+
+.review-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.review-metric {
+  display: grid;
+  gap: 5px;
+  min-height: 106px;
+  align-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 14px;
+}
+
+.review-metric span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.review-metric strong {
+  color: var(--text);
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.review-metric small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.business-review-table {
+  overflow: auto;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+}
+
+.business-review-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.business-review-table th,
+.business-review-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.business-review-table th {
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
 .two-column {
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
@@ -872,7 +938,7 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
-  height: 30px
+  height: 30px;
 }
 
 .extraction-form .field-label > button,
@@ -915,6 +981,36 @@ textarea {
   padding: 0;
   text-align: left;
   font-weight: 800;
+}
+
+.extraction-form .extraction-field > .value-editor,
+.value-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.value-editor input {
+  min-width: 0;
+}
+
+.value-editor input[readonly] {
+  background: var(--surface-muted);
+  color: var(--text);
+  cursor: default;
+}
+
+.value-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.value-editor-actions .icon-button {
+  width: 36px;
+  min-height: 36px;
+  margin-right: 0;
 }
 
 .table-value {
@@ -1164,7 +1260,8 @@ textarea {
   }
 }
 
-.loading-line svg {
+.loading-line svg,
+.spin {
   animation: spin 1s linear infinite;
 }
 
@@ -1184,6 +1281,7 @@ textarea {
 @media (max-width: 980px) {
   .app-shell,
   .two-column,
+  .review-metric-grid,
   .validation-layout {
     grid-template-columns: 1fr;
   }

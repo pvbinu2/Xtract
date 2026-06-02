@@ -10,7 +10,14 @@ import {
   ExtractedValue,
   IncomingDocument,
   IncomingDocumentDocument,
+  ProcessingMetrics,
 } from '../schemas/incoming-document.schema';
+import {
+  BusinessReviewHistory,
+  BusinessReviewHistoryDocument,
+  BusinessReviewSummary,
+  BusinessReviewSummaryDocument,
+} from '../schemas/business-review.schema';
 import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
 
@@ -41,6 +48,8 @@ export class DocumentsService {
   constructor(
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
+    @InjectModel(BusinessReviewSummary.name) private readonly businessReviewSummaryModel: Model<BusinessReviewSummaryDocument>,
+    @InjectModel(BusinessReviewHistory.name) private readonly businessReviewHistoryModel: Model<BusinessReviewHistoryDocument>,
     private readonly configurationService: ConfigurationService,
     private readonly blobStorage: BlobStorageService,
   ) { }
@@ -150,14 +159,26 @@ export class DocumentsService {
 
     const localPath = await this.resolveDocumentPath(document);
     try {
+      const extraction = await extractValuesWithOpenAI(localPath, docType.fields, docType.name);
       document.extractedData = await attachBoundingBoxes(
         localPath,
-        (await extractValuesWithOpenAI(localPath, docType.fields, docType.name)) ??
+        extraction?.values ??
         mockExtractionFromSchema(docType),
       );
+      const processingMetrics = extraction?.metrics ?? {
+        model: 'mock',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        processedAt: new Date(),
+      };
+      document.processingMetrics = processingMetrics;
       document.status = 'extracted';
       document.error = undefined;
-      return document.save();
+      const saved = await document.save();
+      await this.recordBusinessReviewProcessing(saved, processingMetrics);
+      return saved;
     } finally {
       if (document.storageContainer && document.storageBlobName) await this.blobStorage.removeTempFile(localPath);
     }
@@ -217,6 +238,85 @@ export class DocumentsService {
     return {
       buffer: await readFile(document.filePath),
       contentType: 'application/pdf',
+    };
+  }
+
+  async updateExtractedData(id: string, extractedData: ExtractedValue[]) {
+    const updated = await this.documentModel.findByIdAndUpdate(
+      id,
+      { extractedData },
+      { new: true },
+    ).lean();
+    if (!updated) throw new NotFoundException('Document not found');
+    return updated;
+  }
+
+  private async recordBusinessReviewProcessing(document: IncomingDocumentDocument, metrics: ProcessingMetrics) {
+    const processedAt = metrics.processedAt ?? new Date();
+    await Promise.all([
+      this.businessReviewSummaryModel.findOneAndUpdate(
+        { key: 'global' },
+        {
+          $setOnInsert: { key: 'global' },
+          $inc: {
+            filesProcessed: 1,
+            inputTokens: Number(metrics.inputTokens || 0),
+            outputTokens: Number(metrics.outputTokens || 0),
+            totalTokens: Number(metrics.totalTokens || 0),
+            estimatedCostUsd: Number(metrics.estimatedCostUsd || 0),
+          },
+        },
+        { upsert: true, new: true },
+      ),
+      this.businessReviewHistoryModel.create({
+        documentId: String(document._id),
+        fileName: document.originalName,
+        documentTypeName: document.documentTypeName,
+        category: document.category,
+        model: metrics.model,
+        inputTokens: Number(metrics.inputTokens || 0),
+        outputTokens: Number(metrics.outputTokens || 0),
+        totalTokens: Number(metrics.totalTokens || 0),
+        estimatedCostUsd: Number(metrics.estimatedCostUsd || 0),
+        processedAt,
+      }),
+    ]);
+  }
+
+  async businessReviewSummary() {
+    const processedStatuses = ['extracted', 'validated', 'rejected'];
+    const [totalFiles, filesProcessing, filesFailed, persistedSummary, processedDocuments] = await Promise.all([
+      this.documentModel.countDocuments(),
+      this.documentModel.countDocuments({ status: 'processing' }),
+      this.documentModel.countDocuments({ status: 'failed' }),
+      this.businessReviewSummaryModel.findOne({ key: 'global' }).lean(),
+      this.documentModel
+        .find({ status: { $in: processedStatuses } })
+        .select('originalName status processingMetrics updatedAt')
+        .sort({ updatedAt: -1 })
+        .lean(),
+    ]);
+
+    return {
+      totalFiles,
+      filesProcessed: persistedSummary?.filesProcessed || 0,
+      filesProcessing,
+      filesFailed,
+      tokens: {
+        input: persistedSummary?.inputTokens || 0,
+        output: persistedSummary?.outputTokens || 0,
+        total: persistedSummary?.totalTokens || 0,
+      },
+      estimatedCostUsd: Number((persistedSummary?.estimatedCostUsd || 0).toFixed(8)),
+      documentsWithRecordedUsage: persistedSummary?.filesProcessed || 0,
+      recentDocuments: processedDocuments.slice(0, 8).map((doc) => ({
+        id: String(doc._id),
+        name: doc.originalName,
+        status: doc.status,
+        tokens: doc.processingMetrics?.totalTokens || 0,
+        estimatedCostUsd: doc.processingMetrics?.estimatedCostUsd || 0,
+        processedAt: doc.processingMetrics?.processedAt || (doc as unknown as { updatedAt?: Date }).updatedAt,
+      })),
     };
   }
 

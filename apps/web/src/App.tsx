@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState, useRef } from 're
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   CheckCircle2,
+  BarChart3,
   BrainCircuit,
   ChevronRight,
   ChevronUp,
@@ -26,11 +27,11 @@ import {
   Upload,
 } from 'lucide-react';
 import { api } from './api';
-import { DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult } from './types';
+import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review';
 
 type AppConfig = {
   downstreamUrl: string;
@@ -73,6 +74,19 @@ function coerceValue(value: unknown) {
 
 function formatScore(score?: number) {
   return typeof score === 'number' ? `${Math.round(score * 100)}%` : 'N/A';
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat().format(value);
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2,
+    maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 2,
+  }).format(value);
 }
 
 function ClassificationMethodIcon({ method }: { method?: IncomingDocument['classificationMethod'] }) {
@@ -290,6 +304,7 @@ export function App() {
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
+    { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
   ];
 
   return (
@@ -395,6 +410,9 @@ export function App() {
             }}
           />
         )}
+        {view === 'business-review' && (
+          <BusinessReviewScreen onNotify={showToast} />
+        )}
         {view === 'validation' && (
           <ValidationScreen
             documentId={activeDocumentId || documents[0]?._id || ''}
@@ -427,6 +445,108 @@ function StatusMetric({ label, value }: { label: string; value: number }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ReviewMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
+  return (
+    <div className="review-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {helper && <small>{helper}</small>}
+    </div>
+  );
+}
+
+function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+
+  async function loadSummary() {
+    setLoadingSummary(true);
+    try {
+      setSummary(await api.getBusinessReviewSummary());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load business review', 'error');
+    } finally {
+      setLoadingSummary(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSummary();
+  }, []);
+
+  if (loadingSummary && !summary) {
+    return (
+      <section className="panel empty">
+        <Loader2 size={24} className="spin" />
+        <p>Loading business review.</p>
+      </section>
+    );
+  }
+
+  if (!summary) return <EmptyState text="Business review data is unavailable." />;
+
+  return (
+    <div className="business-review">
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Processing Summary</h2>
+            <p>Persisted processing volume, token usage, and estimated OpenAI processing cost.</p>
+          </div>
+          <button className="icon-button" title="Refresh business review" onClick={loadSummary}>
+            {loadingSummary ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
+        </div>
+        <div className="review-metric-grid">
+          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} helper={`${formatNumber(summary.totalFiles)} total files`} />
+          <ReviewMetric label="Estimated cost" value={formatCurrency(summary.estimatedCostUsd)} helper="USD" />
+          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} helper={`${formatNumber(summary.filesProcessed)} persisted processing events`} />
+          <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
+          <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
+          <ReviewMetric label="In progress / failed" value={`${formatNumber(summary.filesProcessing)} / ${formatNumber(summary.filesFailed)}`} />
+        </div>
+        <p className="help-text">
+          Summary totals are consolidated when processing completes and are stored separately from document records.
+        </p>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Recent Processed Files</h2>
+            <p>Latest documents with recorded processing totals when available.</p>
+          </div>
+        </div>
+        <div className="business-review-table">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Status</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+                <th>Processed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.recentDocuments.map((document) => (
+                <tr key={document.id}>
+                  <td>{document.name}</td>
+                  <td><span className={`pill ${document.status}`}>{document.status}</span></td>
+                  <td>{formatNumber(document.tokens)}</td>
+                  <td>{formatCurrency(document.estimatedCostUsd)}</td>
+                  <td>{new Date(document.processedAt).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!summary.recentDocuments.length && <div className="empty-table">No processed files yet.</div>}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1683,6 +1803,9 @@ function ValidationScreen({
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
+  const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
+  const [editingValueDraft, setEditingValueDraft] = useState('');
+  const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
@@ -1720,27 +1843,73 @@ function ValidationScreen({
     }, {});
   }, [values]);
 
+  const pdfHighlights = useMemo(() => {
+    return values.flatMap((item) => {
+      const styles = fieldStyles[item.key];
+      return (item.boundingBoxes || []).map((box) => ({
+        ...box,
+        fieldKey: item.key,
+        color: styles?.border || 'rgba(59, 130, 246, 0.8)',
+        activeFill: styles?.activeFill || 'rgba(59, 130, 246, 0.25)',
+      }));
+    });
+  }, [fieldStyles, values]);
+
   useEffect(() => {
     if (!documentId) return;
     api.getDocument(documentId).then((doc) => {
       setDocument(doc);
       setValues(doc.extractedData);
+      setEditingValueKey(null);
+      setEditingValueDraft('');
+      setSavingValueKey(null);
       setReclassifyCategory(doc.category);
       setReclassifyDocumentType(doc.documentTypeId || '');
     });
   }, [documentId]);
 
-  function updateValue(index: number, value: string) {
-    const next = [...values];
-    const current = next[index];
-    next[index] = { ...current, value };
-    setValues(next);
+  function startValueEdit(item: ExtractedValue) {
+    setActiveFieldKey(item.key);
+    setEditingValueKey(item.key);
+    setEditingValueDraft(coerceValue(item.value));
   }
 
-  function updateTableValue(index: number, value: Record<string, unknown>[]) {
+  function cancelValueEdit() {
+    setEditingValueKey(null);
+    setEditingValueDraft('');
+  }
+
+  async function persistExtractedData(nextValues: ExtractedValue[]) {
+    if (!document) return;
+    const updated = await api.updateExtractedData(document._id, nextValues);
+    setDocument(updated);
+    setValues(updated.extractedData);
+  }
+
+  async function saveValueEdit(index: number) {
+    if (!document || savingValueKey) return;
+    const current = values[index];
+    if (!current) return;
+
+    const next = [...values];
+    next[index] = { ...current, value: editingValueDraft };
+
+    setSavingValueKey(current.key);
+    try {
+      await persistExtractedData(next);
+      cancelValueEdit();
+      onNotify(`${current.label} saved`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to save value', 'error');
+    } finally {
+      setSavingValueKey(null);
+    }
+  }
+
+  async function updateTableValue(index: number, value: Record<string, unknown>[]) {
     const next = [...values];
     next[index] = { ...next[index], value };
-    setValues(next);
+    await persistExtractedData(next);
   }
 
   async function submit() {
@@ -1788,15 +1957,7 @@ function ValidationScreen({
       <section className="pdf-pane">
         <PdfViewer
           url={api.documentFileUrl(document._id)}
-          highlights={values.flatMap((item, index) => {
-            const styles = fieldStyles[item.key];
-            return (item.boundingBoxes || []).map((box) => ({
-              ...box,
-              fieldKey: item.key,
-              color: styles?.border || 'rgba(59, 130, 246, 0.8)',
-              activeFill: styles?.activeFill || 'rgba(59, 130, 246, 0.25)',
-            }));
-          })}
+          highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
         />
       </section>
@@ -1833,6 +1994,9 @@ function ValidationScreen({
                 backgroundColor: isActive ? styles?.activeFill : styles?.fill,
               } as const;
 
+              const isEditingValue = editingValueKey === item.key;
+              const isSavingValue = savingValueKey === item.key;
+
               return item.type === 'table' ? (
                 <div
                   className={`extraction-field${isActive ? ' active' : ''}`}
@@ -1848,7 +2012,7 @@ function ValidationScreen({
                   <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
                 </div>
               ) : (
-                <label
+                <div
                   key={item.key}
                   className={`extraction-field${isActive ? ' active' : ''}`}
                   style={wrapperStyle}
@@ -1859,12 +2023,47 @@ function ValidationScreen({
                     </button>
                     {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
                   </div>
-                  <input
-                    value={coerceValue(item.value)}
-                    disabled={isLocked}
-                    onChange={(event) => updateValue(index, event.target.value)}
-                  />
-                </label>
+                  <div className="value-editor">
+                    <input
+                      aria-label={`${item.label} value`}
+                      value={isEditingValue ? editingValueDraft : coerceValue(item.value)}
+                      readOnly={!isEditingValue}
+                      disabled={isLocked}
+                      autoFocus={isEditingValue}
+                      onChange={(event) => setEditingValueDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (!isEditingValue) return;
+                        if (isSavingValue) return;
+                        if (event.key === 'Enter') saveValueEdit(index);
+                        if (event.key === 'Escape') cancelValueEdit();
+                      }}
+                    />
+                    <div className="value-editor-actions">
+                      {isEditingValue ? (
+                        <>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Save value"
+                            disabled={isSavingValue}
+                            onClick={() => saveValueEdit(index)}
+                          >
+                            {isSavingValue ? <Loader2 size={15} className="spin" /> : <Save size={15} />}
+                          </button>
+                          <button className="icon-button" type="button" title="Cancel edit" disabled={isSavingValue} onClick={cancelValueEdit}>
+                            <X size={15} />
+                          </button>
+                        </>
+                      ) : (
+                        !isLocked && (
+                          <button className="icon-button" type="button" title="Edit value" onClick={() => startValueEdit(item)}>
+                            <Pencil size={15} />
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -1906,9 +2105,15 @@ function ValidationScreen({
         <TableEditDialog
           item={values[tableEditIndex]}
           onClose={() => setTableEditIndex(null)}
-          onSave={(rows) => {
-            updateTableValue(tableEditIndex, rows);
-            setTableEditIndex(null);
+          onSave={async (rows) => {
+            try {
+              const label = values[tableEditIndex].label;
+              await updateTableValue(tableEditIndex, rows);
+              setTableEditIndex(null);
+              onNotify(`${label} saved`, 'success');
+            } catch (error) {
+              onNotify(error instanceof Error ? error.message : 'Failed to save table', 'error');
+            }
           }}
         />
       )}

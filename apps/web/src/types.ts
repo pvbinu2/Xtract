@@ -57,6 +57,28 @@ export type IncomingDocument = {
   updatedAt: string;
 };
 
+export type BusinessReviewSummary = {
+  totalFiles: number;
+  filesProcessed: number;
+  filesProcessing: number;
+  filesFailed: number;
+  tokens: {
+    input: number;
+    output: number;
+    total: number;
+  };
+  estimatedCostUsd: number;
+  documentsWithRecordedUsage: number;
+  recentDocuments: Array<{
+    id: string;
+    name: string;
+    status: IncomingDocument['status'];
+    tokens: number;
+    estimatedCostUsd: number;
+    processedAt: string;
+  }>;
+};
+
 export type PagedResult<T> = {
   items: T[];
   total: number;
