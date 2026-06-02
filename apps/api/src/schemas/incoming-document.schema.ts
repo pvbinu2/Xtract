@@ -102,6 +102,9 @@ export class IncomingDocument {
   @Prop({ default: 'manual' })
   classificationMethod!: 'manual' | 'vector' | 'llm';
 
+  @Prop()
+  processingMode?: 'ocr' | 'pdf';
+
   @Prop({ default: 'uploaded' })
   status!: DocumentStatus;
 

@@ -4,9 +4,9 @@ const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { withOpenAIRetry } = require('./openaiRetry');
 const { TRAIN_CONTAINER, downloadToTemp, isConfigured: isBlobStorageConfigured, removeTempFile } = require('./blobStorage');
+const { extractDocumentText } = require('./documentText');
 
 let openai;
-let pdfjsPromise;
 
 function getOpenAI() {
   if (!process.env.OPENAI_API_KEY) return undefined;
@@ -38,6 +38,15 @@ function vectorScoreThreshold() {
   return Number(process.env.CLASSIFIER_VECTOR_SCORE_THRESHOLD || 0.82);
 }
 
+function pdfInput(filePath) {
+  const data = fs.readFileSync(filePath).toString('base64');
+  return {
+    type: 'input_file',
+    filename: path.basename(filePath),
+    file_data: `data:application/pdf;base64,${data}`,
+  };
+}
+
 function embeddingTextLimit() {
   return Number(process.env.CLASSIFIER_EMBED_TEXT_LIMIT || 6000);
 }
@@ -61,47 +70,6 @@ function samplePath(fileName) {
 async function resolveSamplePath(fileName) {
   if (isBlobStorageConfigured()) return downloadToTemp(TRAIN_CONTAINER, fileName);
   return samplePath(fileName);
-}
-
-function pdfInput(filePath) {
-  const data = fs.readFileSync(filePath).toString('base64');
-  return {
-    type: 'input_file',
-    filename: path.basename(filePath),
-    file_data: `data:application/pdf;base64,${data}`,
-  };
-}
-
-async function loadPdfJs() {
-  if (!pdfjsPromise) {
-    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((module) => {
-      module.GlobalWorkerOptions.workerSrc = require.resolve('pdfjs-dist/build/pdf.worker.mjs');
-      return module;
-    });
-  }
-  return pdfjsPromise;
-}
-
-async function extractPdfText(filePath) {
-  const { getDocument } = await loadPdfJs();
-  const data = fs.readFileSync(filePath);
-  const standardFontDataUrl = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + path.sep;
-  const pdf = await getDocument({ data: new Uint8Array(data), disableWorker: true, standardFontDataUrl }).promise;
-  const pages = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const text = textContent.items
-      .filter((item) => 'str' in item)
-      .map((item) => item.str)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (text) pages.push(text);
-  }
-
-  return pages.join('\n').slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
 }
 
 function parseJsonObject(text) {
@@ -268,7 +236,7 @@ async function upsertDocumentTypeVectors(documentType, samples) {
         `Document type: ${documentType.name}`,
         `Category: ${documentType.category}`,
         documentType.prompt ? `Prompt: ${documentType.prompt}` : '',
-        await extractPdfText(filePath),
+        await extractDocumentText(filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000)),
       ]
         .filter(Boolean)
         .join('\n');
@@ -301,7 +269,7 @@ async function upsertDocumentTypeVectors(documentType, samples) {
 
 async function searchDocumentTypeVectors(document) {
   await ensureVectorCollection();
-  const text = await extractPdfText(document.filePath);
+  const text = await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
   const chunks = chunkText([
     `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
     text,
@@ -340,7 +308,7 @@ async function trainClassifierProfile(documentType, sampleFileName) {
   const latestSample = sampleFileName || samples.at(-1);
   const latestSamplePath = await resolveSamplePath(latestSample);
   try {
-    const sampleText = await extractPdfText(latestSamplePath);
+    const sampleText = await extractDocumentText(latestSamplePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
     return [
       fallbackProfile(documentType, latestSample),
       `Training samples indexed: ${samples.length}`,
@@ -351,7 +319,7 @@ async function trainClassifierProfile(documentType, sampleFileName) {
   }
 }
 
-async function classifyDocument(document, documentTypes) {
+async function classifyDocument(document, documentTypes, options = {}) {
   const candidates = documentTypes.filter((documentType) =>
     documentType.includeInClassification &&
     documentType.finalized &&
@@ -361,11 +329,14 @@ async function classifyDocument(document, documentTypes) {
     throw new Error('Upload at least one sample and save the schema for a document type before automatic classification.');
   }
 
+  const useOcr = Boolean(options.useOcr);
   let vectorHits = [];
-  try {
-    vectorHits = await searchDocumentTypeVectors(document);
-  } catch (error) {
-    vectorHits = [];
+  if (useOcr) {
+    try {
+      vectorHits = await searchDocumentTypeVectors(document);
+    } catch (error) {
+      vectorHits = [];
+    }
   }
   const topHit = vectorHits[0];
   const vectorDocumentType = topHit
@@ -388,17 +359,21 @@ async function classifyDocument(document, documentTypes) {
     ...candidates.filter((candidate) => !retrievedIds.has(String(candidate._id))),
   ].slice(0, Number(process.env.CLASSIFIER_LLM_CANDIDATE_LIMIT || 8));
 
+  const documentText = useOcr ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000)) : '';
   const content = [
-    pdfInput(document.filePath),
+    ...(useOcr ? [] : [pdfInput(document.filePath)]),
     {
       type: 'input_text',
       text: [
-        'Classify the uploaded PDF using trained document type profiles and metadata.',
+        useOcr
+          ? 'Classify the uploaded document using locally extracted OCR/text, trained document type profiles, and metadata.'
+          : 'Classify the uploaded PDF using trained document type profiles and metadata.',
         'Choose exactly one candidate document type. Return JSON only.',
         'The score must be a number from 0 to 1 representing match strength.',
         'Return this exact shape:',
         '{"documentTypeId":"candidate_id","score":0.92}',
         `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
+        useOcr ? `Document text:\n${documentText}` : '',
         'Candidates:',
         ...llmCandidates.map((candidate, index) => (
           `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`

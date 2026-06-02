@@ -52,6 +52,7 @@ export type IncomingDocument = {
   documentTypeName: string;
   classificationScore?: number;
   classificationMethod?: 'manual' | 'vector' | 'llm';
+  processingMode?: 'ocr' | 'pdf';
   status: 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
   extractedData: ExtractedValue[];
   createdAt: string;

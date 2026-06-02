@@ -13,6 +13,9 @@ export class Configuration {
 
   @Prop({ default: false })
   sendKeyValuePairs!: boolean;
+
+  @Prop({ default: false })
+  useOcrForDocumentProcessing!: boolean;
 }
 
 export const ConfigurationSchema = SchemaFactory.createForClass(Configuration);

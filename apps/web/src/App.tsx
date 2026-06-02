@@ -14,6 +14,7 @@ import {
   FileSearch,
   Files,
   Gauge,
+  ScanText,
   Network,
   Loader2,
   Pencil,
@@ -25,6 +26,7 @@ import {
   X,
   Trash2,
   Upload,
+  FileText,
 } from 'lucide-react';
 import { api } from './api';
 import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult } from './types';
@@ -37,6 +39,7 @@ type AppConfig = {
   downstreamUrl: string;
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
+  useOcrForDocumentProcessing: boolean;
 };
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
@@ -112,6 +115,24 @@ function ClassificationMethodIcon({ method }: { method?: IncomingDocument['class
   return null;
 }
 
+function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'] }) {
+  if (mode === 'ocr') {
+    return (
+      <span className="processing-mode-icon ocr" title="Processed using OCR text" aria-label="Processed using OCR text">
+        <ScanText size={14} />
+      </span>
+    );
+  }
+  if (mode === 'pdf') {
+    return (
+      <span className="processing-mode-icon pdf" title="Processed using PDF file" aria-label="Processed using PDF file">
+        <FileText size={14} />
+      </span>
+    );
+  }
+  return null;
+}
+
 function asTableRows(value: unknown): Record<string, unknown>[] {
   if (Array.isArray(value)) {
     return value.map((row) => (row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : { value: row }));
@@ -151,6 +172,7 @@ export function App() {
     downstreamUrl: '',
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
+    useOcrForDocumentProcessing: false,
   });
 
   async function loadConfiguration() {
@@ -160,6 +182,7 @@ export function App() {
         downstreamUrl: saved.downstreamUrl,
         deleteAfterDownstream: saved.deleteAfterDownstream,
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
+        useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
       });
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
@@ -170,6 +193,7 @@ export function App() {
             downstreamUrl: parsed.downstreamUrl || '',
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
+            useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
           });
         } catch {
           // ignore invalid saved config
@@ -587,6 +611,26 @@ function ConfigurationScreen({
         </button>
       </div>
       <div className="configuration-form">
+        <div className="configuration-section">
+          <h3>Document Processing Configuration</h3>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={config.useOcrForDocumentProcessing}
+              onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
+            />
+            <span>
+              Use OCR for document processing
+              <small>Extract text locally with on-prem OCR before classification and extraction.</small>
+            </span>
+          </label>
+          <p className="warning-text">
+            Processing PDFs directly can cost more because the full PDF is sent to the model instead of locally extracted text.
+          </p>
+        </div>
+
+        <div className="configuration-section">
+          <h3>Downstream Configuration</h3>
         <label>
           Downstream API URL
           <input
@@ -625,6 +669,7 @@ function ConfigurationScreen({
         <p className="help-text">
           When saved, validation submits will forward clean JSON data to the downstream system using this URL.
         </p>
+        </div>
       </div>
     </div>
   );
@@ -1701,6 +1746,10 @@ function DocumentList({
                 {formatScore(doc.classificationScore)}
                 <ClassificationMethodIcon method={doc.classificationMethod} />
               </span>
+              <span className="processing-mode-badge">
+                <ProcessingModeIcon mode={doc.processingMode} />
+                {doc.processingMode ? doc.processingMode.toUpperCase() : 'N/A'}
+              </span>
               <time>{new Date(doc.createdAt).toLocaleString()}</time>
             </button>
             <div className="row-actions">
@@ -2079,10 +2128,16 @@ function ValidationScreen({
               </div>
             </div>
             <div className="panel-heading-actions">
-              <button className="icon-button" title="Refresh validation page" onClick={refreshPage}>
+              <div className="validation-header-badges">
+                <span className={`pill ${document.status}`}>{document.status}</span>
+                <span className="processing-mode-badge">
+                  <ProcessingModeIcon mode={document.processingMode} />
+                  {document.processingMode ? document.processingMode.toUpperCase() : 'N/A'}
+                </span>
+              </div>
+              <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
-              <span className={`pill ${document.status}`}>{document.status}</span>
             </div>
           </div>
           {!downstreamUrl && (

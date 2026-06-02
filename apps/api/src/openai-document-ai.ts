@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { basename } from 'path';
 import { ExtractionField } from './schemas/document-type.schema';
 import { ExtractedValue } from './schemas/incoming-document.schema';
+import { extractDocumentText } from './document-text';
 
 type SchemaField = Pick<ExtractionField, 'key' | 'label' | 'type' | 'description' | 'selected' | 'columns'>;
 type ProcessingMetrics = {
@@ -126,6 +127,12 @@ async function withOpenAIRetry<T>(operation: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
+function parseJsonObject(text: string) {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return JSON.parse(fenced ? fenced[1] : trimmed);
+}
+
 function pdfInput(filePath: string) {
   const data = readFileSync(filePath).toString('base64');
   return {
@@ -133,12 +140,6 @@ function pdfInput(filePath: string) {
     filename: basename(filePath),
     file_data: `data:application/pdf;base64,${data}`,
   };
-}
-
-function parseJsonObject(text: string) {
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
 function fieldTypePrompt() {
@@ -189,9 +190,10 @@ function normalizeSchemaField(field: SchemaField, prompt: string): SchemaField {
   };
 }
 
-export async function inferTemplateWithOpenAI(filePath: string, prompt: string): Promise<SchemaField[] | undefined> {
+export async function inferTemplateWithOpenAI(filePath: string, prompt: string, useOcr = false): Promise<SchemaField[] | undefined> {
   const openai = getClient();
   if (!openai) return undefined;
+  const documentText = useOcr ? await extractDocumentText(filePath) : '';
 
   const response = await withOpenAIRetry(() => openai.responses.create({
     model: modelName(),
@@ -199,11 +201,13 @@ export async function inferTemplateWithOpenAI(filePath: string, prompt: string):
       {
         role: 'user',
         content: [
-          pdfInput(filePath),
+          ...(useOcr ? [] : [pdfInput(filePath)]),
           {
             type: 'input_text',
             text: [
-              'Create an extraction schema for this PDF document type.',
+              useOcr
+                ? 'Create an extraction schema for this document type using the locally extracted OCR/text below.'
+                : 'Create an extraction schema for this PDF document type.',
               fieldTypePrompt(),
               'Use snake_case keys. Select fields that match the user prompt.',
               'For every field and table column, include a concise description that explains exactly what value should be extracted.',
@@ -212,6 +216,7 @@ export async function inferTemplateWithOpenAI(filePath: string, prompt: string):
               'Return JSON only in this shape:',
               '{"fields":[{"key":"line_items","label":"Line Items","type":"table","description":"...","selected":true,"columns":[{"key":"description","label":"Description","type":"string","description":"..."}]}]}',
               `User prompt: ${prompt}`,
+              useOcr ? `Document text:\n${documentText}` : '',
             ].join('\n'),
           },
         ],
@@ -228,23 +233,27 @@ export async function extractValuesWithOpenAI(
   filePath: string,
   fields: SchemaField[],
   documentTypeName: string,
+  useOcr = false,
 ): Promise<{ values: ExtractedValue[]; metrics: ProcessingMetrics } | undefined> {
   const openai = getClient();
   if (!openai) return undefined;
 
   const selectedFields = fields.filter((field) => field.selected);
   const model = modelName();
+  const documentText = useOcr ? await extractDocumentText(filePath) : '';
   const response = await withOpenAIRetry(() => openai.responses.create({
     model,
     input: [
       {
         role: 'user',
         content: [
-          pdfInput(filePath),
+          ...(useOcr ? [] : [pdfInput(filePath)]),
           {
             type: 'input_text',
             text: [
-              `Extract values from this ${documentTypeName} PDF.`,
+              useOcr
+                ? `Extract values from this ${documentTypeName} document using the locally extracted OCR/text below.`
+                : `Extract values from this ${documentTypeName} PDF.`,
               'Return JSON only. Do not include markdown.',
               'If a value is missing, return an empty string and low confidence.',
               'For table fields, return an array of row objects.',
@@ -259,6 +268,7 @@ export async function extractValuesWithOpenAI(
                   columns: field.type === 'table' ? field.columns || [] : undefined,
                 })),
               )}`,
+              useOcr ? `Document text:\n${documentText}` : '',
             ].join('\n'),
           },
         ],

@@ -7,6 +7,7 @@ const { attachBoundingBoxes } = require('../pdfBoundingBox');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
 const { withOpenAIRetry } = require('../openaiRetry');
 const { downloadToTemp, removeTempFile } = require('../blobStorage');
+const { extractDocumentText } = require('../documentText');
 
 let clientPromise;
 let openai;
@@ -83,12 +84,21 @@ function parseJsonObject(text) {
   return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
-async function extractValuesWithOpenAI(document, documentType) {
+function pdfInput(filePath) {
+  const data = fs.readFileSync(filePath).toString('base64');
+  return {
+    type: 'input_file',
+    filename: path.basename(filePath),
+    file_data: `data:application/pdf;base64,${data}`,
+  };
+}
+
+async function extractValuesWithOpenAI(document, documentType, useOcr = false) {
   const client = getOpenAI();
   if (!client) return undefined;
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
-  const pdf = fs.readFileSync(document.filePath).toString('base64');
+  const documentText = useOcr ? await extractDocumentText(document.filePath) : '';
   const model = modelName();
   const response = await withOpenAIRetry(() => client.responses.create({
     model,
@@ -96,15 +106,13 @@ async function extractValuesWithOpenAI(document, documentType) {
       {
         role: 'user',
         content: [
-          {
-            type: 'input_file',
-            filename: path.basename(document.filePath),
-            file_data: `data:application/pdf;base64,${pdf}`,
-          },
+          ...(useOcr ? [] : [pdfInput(document.filePath)]),
           {
             type: 'input_text',
             text: [
-              `Extract values from this ${documentType.name} PDF.`,
+              useOcr
+                ? `Extract values from this ${documentType.name} document using the locally extracted OCR/text below.`
+                : `Extract values from this ${documentType.name} PDF.`,
               'Return JSON only. Do not include markdown.',
               'If a value is missing, return an empty string and low confidence.',
               'For table fields, return an array of row objects.',
@@ -119,6 +127,7 @@ async function extractValuesWithOpenAI(document, documentType) {
                   columns: field.type === 'table' ? field.columns || [] : undefined,
                 })),
               )}`,
+              useOcr ? `Document text:\n${documentText}` : '',
             ].join('\n'),
           },
         ],
@@ -239,6 +248,8 @@ async function processDocument(message, context) {
   const db = client.db();
   const documents = db.collection('incomingdocuments');
   const documentTypes = db.collection('documenttypes');
+  const configuration = await db.collection('configuration').findOne({});
+  const useOcrForDocumentProcessing = Boolean(configuration?.useOcrForDocumentProcessing);
 
   const document = await documents.findOne({ _id: new ObjectId(documentId) });
   if (!document) {
@@ -276,7 +287,9 @@ async function processDocument(message, context) {
     try {
       if (!documentType) {
       const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
-      const classification = await classifyDocument(localDocument, allDocumentTypes);
+      const classification = await classifyDocument(localDocument, allDocumentTypes, {
+        useOcr: useOcrForDocumentProcessing,
+      });
       documentType = classification.documentType;
       await documents.updateOne(
         { _id: document._id },
@@ -293,7 +306,7 @@ async function processDocument(message, context) {
       );
       }
 
-      const extraction = await extractValuesWithOpenAI(localDocument, documentType);
+      const extraction = await extractValuesWithOpenAI(localDocument, documentType, useOcrForDocumentProcessing);
       const extractedData = await attachBoundingBoxes(
         localFilePath,
         extraction?.values ||
@@ -324,6 +337,7 @@ async function processDocument(message, context) {
             status: 'extracted',
             extractedData,
             processingMetrics,
+            processingMode: useOcrForDocumentProcessing ? 'ocr' : 'pdf',
             error: null,
             updatedAt: new Date(),
           },
