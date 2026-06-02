@@ -17,6 +17,7 @@ export class ConfigurationController {
     body: {
       downstreamUrl: string;
       deleteAfterDownstream: boolean;
+      sendKeyValuePairs?: boolean;
     },
   ): Promise<Configuration> {
     return this.configurationService.save(body);

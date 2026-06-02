@@ -47,6 +47,29 @@ export class ExtractedValue {
 
 const ExtractedValueSchema = SchemaFactory.createForClass(ExtractedValue);
 
+@Schema({ _id: false })
+export class ProcessingMetrics {
+  @Prop()
+  model?: string;
+
+  @Prop({ default: 0 })
+  inputTokens?: number;
+
+  @Prop({ default: 0 })
+  outputTokens?: number;
+
+  @Prop({ default: 0 })
+  totalTokens?: number;
+
+  @Prop({ default: 0 })
+  estimatedCostUsd?: number;
+
+  @Prop()
+  processedAt?: Date;
+}
+
+const ProcessingMetricsSchema = SchemaFactory.createForClass(ProcessingMetrics);
+
 @Schema({ timestamps: true })
 export class IncomingDocument {
   @Prop({ required: true })
@@ -84,6 +107,9 @@ export class IncomingDocument {
 
   @Prop({ type: [ExtractedValueSchema], default: [] })
   extractedData!: ExtractedValue[];
+
+  @Prop({ type: ProcessingMetricsSchema })
+  processingMetrics?: ProcessingMetrics;
 
   @Prop()
   error?: string;

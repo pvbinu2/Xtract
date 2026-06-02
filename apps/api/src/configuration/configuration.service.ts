@@ -11,12 +11,16 @@ export class ConfigurationService {
 
   async get(): Promise<Configuration> {
     const config = await this.configModel.findOne().lean().exec();
-    return config || { downstreamUrl: '', deleteAfterDownstream: false };
+    return config || { downstreamUrl: '', deleteAfterDownstream: false, sendKeyValuePairs: false };
   }
 
-  async save(config: { downstreamUrl: string; deleteAfterDownstream: boolean }): Promise<Configuration> {
+  async save(config: {
+    downstreamUrl: string;
+    deleteAfterDownstream: boolean;
+    sendKeyValuePairs?: boolean;
+  }): Promise<Configuration> {
     const updated = await this.configModel
-      .findOneAndUpdate({}, config, {
+      .findOneAndUpdate({}, { ...config, sendKeyValuePairs: Boolean(config.sendKeyValuePairs) }, {
         new: true,
         upsert: true,
         setDefaultsOnInsert: true,

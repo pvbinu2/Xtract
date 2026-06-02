@@ -23,6 +23,11 @@ export class DocumentsController {
     return this.service.list(query);
   }
 
+  @Get('business-review/summary')
+  businessReviewSummary() {
+    return this.service.businessReviewSummary();
+  }
+
   @Post('upload')
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
@@ -53,17 +58,40 @@ export class DocumentsController {
     return response.send(file.buffer);
   }
 
+  @Post(':id/extracted-data')
+  updateExtractedData(
+    @Param('id') id: string,
+    @Body() body: { extractedData: any[] },
+  ) {
+    return this.service.updateExtractedData(id, body.extractedData);
+  }
+
   @Post(':id/validate')
   validate(
     @Param('id') id: string,
-    @Body() body: { extractedData: any[]; deleteAfterDownstream?: boolean; downstreamUrl?: string },
+    @Body()
+    body: {
+      extractedData: any[];
+      deleteAfterDownstream?: boolean;
+      downstreamUrl?: string;
+      sendKeyValuePairs?: boolean;
+    },
   ) {
-    return this.service.validate(id, body.extractedData, body.deleteAfterDownstream, body.downstreamUrl);
+    return this.service.validate(
+      id,
+      body.extractedData,
+      body.deleteAfterDownstream,
+      body.downstreamUrl,
+      body.sendKeyValuePairs,
+    );
   }
 
   @Post(':id/reject')
-  reject(@Param('id') id: string, @Body() body: { deleteAfterDownstream?: boolean; downstreamUrl?: string }) {
-    return this.service.reject(id, body.deleteAfterDownstream, body.downstreamUrl);
+  reject(
+    @Param('id') id: string,
+    @Body() body: { deleteAfterDownstream?: boolean; downstreamUrl?: string; sendKeyValuePairs?: boolean },
+  ) {
+    return this.service.reject(id, body.deleteAfterDownstream, body.downstreamUrl, body.sendKeyValuePairs);
   }
 
   @Post(':id/reprocess')

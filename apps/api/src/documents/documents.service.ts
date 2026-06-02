@@ -10,7 +10,14 @@ import {
   ExtractedValue,
   IncomingDocument,
   IncomingDocumentDocument,
+  ProcessingMetrics,
 } from '../schemas/incoming-document.schema';
+import {
+  BusinessReviewHistory,
+  BusinessReviewHistoryDocument,
+  BusinessReviewSummary,
+  BusinessReviewSummaryDocument,
+} from '../schemas/business-review.schema';
 import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
 
@@ -41,6 +48,8 @@ export class DocumentsService {
   constructor(
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
+    @InjectModel(BusinessReviewSummary.name) private readonly businessReviewSummaryModel: Model<BusinessReviewSummaryDocument>,
+    @InjectModel(BusinessReviewHistory.name) private readonly businessReviewHistoryModel: Model<BusinessReviewHistoryDocument>,
     private readonly configurationService: ConfigurationService,
     private readonly blobStorage: BlobStorageService,
   ) { }
@@ -150,14 +159,26 @@ export class DocumentsService {
 
     const localPath = await this.resolveDocumentPath(document);
     try {
+      const extraction = await extractValuesWithOpenAI(localPath, docType.fields, docType.name);
       document.extractedData = await attachBoundingBoxes(
         localPath,
-        (await extractValuesWithOpenAI(localPath, docType.fields, docType.name)) ??
+        extraction?.values ??
         mockExtractionFromSchema(docType),
       );
+      const processingMetrics = extraction?.metrics ?? {
+        model: 'mock',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        processedAt: new Date(),
+      };
+      document.processingMetrics = processingMetrics;
       document.status = 'extracted';
       document.error = undefined;
-      return document.save();
+      const saved = await document.save();
+      await this.recordBusinessReviewProcessing(saved, processingMetrics);
+      return saved;
     } finally {
       if (document.storageContainer && document.storageBlobName) await this.blobStorage.removeTempFile(localPath);
     }
@@ -220,13 +241,95 @@ export class DocumentsService {
     };
   }
 
-  private async getDownstreamConfig(overrideUrl?: string) {
+  async updateExtractedData(id: string, extractedData: ExtractedValue[]) {
+    const updated = await this.documentModel.findByIdAndUpdate(
+      id,
+      { extractedData },
+      { new: true },
+    ).lean();
+    if (!updated) throw new NotFoundException('Document not found');
+    return updated;
+  }
+
+  private async recordBusinessReviewProcessing(document: IncomingDocumentDocument, metrics: ProcessingMetrics) {
+    const processedAt = metrics.processedAt ?? new Date();
+    await Promise.all([
+      this.businessReviewSummaryModel.findOneAndUpdate(
+        { key: 'global' },
+        {
+          $setOnInsert: { key: 'global' },
+          $inc: {
+            filesProcessed: 1,
+            inputTokens: Number(metrics.inputTokens || 0),
+            outputTokens: Number(metrics.outputTokens || 0),
+            totalTokens: Number(metrics.totalTokens || 0),
+            estimatedCostUsd: Number(metrics.estimatedCostUsd || 0),
+          },
+        },
+        { upsert: true, new: true },
+      ),
+      this.businessReviewHistoryModel.create({
+        documentId: String(document._id),
+        fileName: document.originalName,
+        documentTypeName: document.documentTypeName,
+        category: document.category,
+        model: metrics.model,
+        inputTokens: Number(metrics.inputTokens || 0),
+        outputTokens: Number(metrics.outputTokens || 0),
+        totalTokens: Number(metrics.totalTokens || 0),
+        estimatedCostUsd: Number(metrics.estimatedCostUsd || 0),
+        processedAt,
+      }),
+    ]);
+  }
+
+  async businessReviewSummary() {
+    const processedStatuses = ['extracted', 'validated', 'rejected'];
+    const [totalFiles, filesProcessing, filesFailed, persistedSummary, processedDocuments] = await Promise.all([
+      this.documentModel.countDocuments(),
+      this.documentModel.countDocuments({ status: 'processing' }),
+      this.documentModel.countDocuments({ status: 'failed' }),
+      this.businessReviewSummaryModel.findOne({ key: 'global' }).lean(),
+      this.documentModel
+        .find({ status: { $in: processedStatuses } })
+        .select('originalName status processingMetrics updatedAt')
+        .sort({ updatedAt: -1 })
+        .lean(),
+    ]);
+
+    return {
+      totalFiles,
+      filesProcessed: persistedSummary?.filesProcessed || 0,
+      filesProcessing,
+      filesFailed,
+      tokens: {
+        input: persistedSummary?.inputTokens || 0,
+        output: persistedSummary?.outputTokens || 0,
+        total: persistedSummary?.totalTokens || 0,
+      },
+      estimatedCostUsd: Number((persistedSummary?.estimatedCostUsd || 0).toFixed(8)),
+      documentsWithRecordedUsage: persistedSummary?.filesProcessed || 0,
+      recentDocuments: processedDocuments.slice(0, 8).map((doc) => ({
+        id: String(doc._id),
+        name: doc.originalName,
+        status: doc.status,
+        tokens: doc.processingMetrics?.totalTokens || 0,
+        estimatedCostUsd: doc.processingMetrics?.estimatedCostUsd || 0,
+        processedAt: doc.processingMetrics?.processedAt || (doc as unknown as { updatedAt?: Date }).updatedAt,
+      })),
+    };
+  }
+
+  private async getDownstreamConfig(overrideUrl?: string, overrideSendKeyValuePairs?: boolean) {
     const resolvedUrl = overrideUrl?.trim();
     let url = resolvedUrl || process.env.DOWNSTREAM_API_URL?.trim();
     let useEnv = Boolean(resolvedUrl);
+    let sendKeyValuePairs = Boolean(overrideSendKeyValuePairs);
+
+    const configuration = await this.configurationService.get();
+    sendKeyValuePairs = overrideSendKeyValuePairs ?? Boolean(configuration.sendKeyValuePairs);
 
     if (!resolvedUrl) {
-      const configuration = await this.configurationService.get();
       url = configuration.downstreamUrl?.trim() || url;
       useEnv = !configuration.downstreamUrl?.trim();
     }
@@ -249,10 +352,39 @@ export class DocumentsService {
       }
     }
 
-    return { url, headers, source: useEnv ? 'environment' : 'database' };
+    return { url, headers, source: useEnv ? 'environment' : 'database', sendKeyValuePairs };
   }
 
-  private buildDownstreamPayload(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
+  private normalizeTableRows(value: unknown): Record<string, unknown>[] {
+    if (Array.isArray(value)) {
+      return value.map((row) =>
+        row && typeof row === 'object' && !Array.isArray(row)
+          ? row as Record<string, unknown>
+          : { value: row },
+      );
+    }
+    if (typeof value === 'string') {
+      try {
+        return this.normalizeTableRows(JSON.parse(value));
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  private buildKeyValueExtractedData(extractedData: ExtractedValue[]) {
+    return extractedData.reduce<Record<string, unknown>>((acc, item) => {
+      acc[item.key] = item.type === 'table' ? this.normalizeTableRows(item.value) : item.value;
+      return acc;
+    }, {});
+  }
+
+  private buildDownstreamPayload(
+    document: IncomingDocumentDocument,
+    extractedData: ExtractedValue[],
+    sendKeyValuePairs = false,
+  ) {
     return {
       documentId: document.id,
       fileName: document.originalName,
@@ -263,21 +395,26 @@ export class DocumentsService {
       classificationMethod: document.classificationMethod,
       status: document.status,
       processedAt: new Date().toISOString(),
-      extractedData: extractedData.map((item) => ({
-        key: item.key,
-        label: item.label,
-        type: item.type,
-        value: item.value,
-        confidence: item.confidence,
-      })),
+      extractedData: sendKeyValuePairs
+        ? this.buildKeyValueExtractedData(extractedData)
+        : extractedData.map((item) => ({
+          key: item.key,
+          label: item.label,
+          type: item.type,
+          value: item.value,
+          confidence: item.confidence,
+        })),
     };
   }
 
-  private async sendToDownstream(document: IncomingDocumentDocument, extractedData: ExtractedValue[]) {
-    const config = await this.getDownstreamConfig();
+  private async sendToDownstream(
+    document: IncomingDocumentDocument,
+    extractedData: ExtractedValue[],
+    config: NonNullable<Awaited<ReturnType<DocumentsService['getDownstreamConfig']>>>,
+  ) {
     if (!config) return;
 
-    const payload = this.buildDownstreamPayload(document, extractedData);
+    const payload = this.buildDownstreamPayload(document, extractedData, config.sendKeyValuePairs);
     const response = await fetch(config.url, {
       method: 'POST',
       headers: config.headers,
@@ -292,7 +429,13 @@ export class DocumentsService {
     }
   }
 
-  async validate(id: string, extractedData: ExtractedValue[], deleteAfterDownstream = false, downstreamUrl?: string) {
+  async validate(
+    id: string,
+    extractedData: ExtractedValue[],
+    deleteAfterDownstream = false,
+    downstreamUrl?: string,
+    sendKeyValuePairs?: boolean,
+  ) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { extractedData, status: 'validated' },
@@ -300,10 +443,10 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl, sendKeyValuePairs);
     if (downstreamConfig) {
       try {
-        await this.sendToDownstream(updated, extractedData);
+        await this.sendToDownstream(updated, extractedData, downstreamConfig);
         // Only delete after successful downstream send
         if (deleteAfterDownstream) {
           await this.remove(updated.id);
@@ -318,7 +461,7 @@ export class DocumentsService {
     return updated;
   }
 
-  async reject(id: string, deleteAfterDownstream = false, downstreamUrl?: string) {
+  async reject(id: string, deleteAfterDownstream = false, downstreamUrl?: string, sendKeyValuePairs?: boolean) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { status: 'rejected' },
@@ -326,10 +469,10 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl);
+    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl, sendKeyValuePairs);
     if (downstreamConfig) {
       try {
-        await this.sendToDownstream(updated, updated.extractedData || []);
+        await this.sendToDownstream(updated, updated.extractedData || [], downstreamConfig);
         if (deleteAfterDownstream) {
           await this.remove(updated.id);
           return { deleted: true };

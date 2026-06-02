@@ -5,6 +5,14 @@ import { ExtractionField } from './schemas/document-type.schema';
 import { ExtractedValue } from './schemas/incoming-document.schema';
 
 type SchemaField = Pick<ExtractionField, 'key' | 'label' | 'type' | 'description' | 'selected' | 'columns'>;
+type ProcessingMetrics = {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  processedAt: Date;
+};
 
 let client: OpenAI | undefined;
 
@@ -16,6 +24,55 @@ function getClient() {
 
 function modelName() {
   return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+}
+
+const modelPricingUsdPerMillion: Record<string, { input: number; output: number }> = {
+  'gpt-4o-mini': { input: 0.15, output: 0.60 },
+  'gpt-4o': { input: 2.50, output: 10.00 },
+  'gpt-4.1': { input: 2.00, output: 8.00 },
+  'gpt-4.1-mini': { input: 0.40, output: 1.60 },
+  'gpt-4.1-nano': { input: 0.10, output: 0.40 },
+  'gpt-5': { input: 1.25, output: 10.00 },
+  'gpt-5-mini': { input: 0.25, output: 2.00 },
+  'gpt-5-nano': { input: 0.05, output: 0.40 },
+};
+
+function pricingForModel(model: string) {
+  const configuredInput = Number(process.env.OPENAI_INPUT_COST_PER_1M_TOKENS);
+  const configuredOutput = Number(process.env.OPENAI_OUTPUT_COST_PER_1M_TOKENS);
+  if (Number.isFinite(configuredInput) && Number.isFinite(configuredOutput)) {
+    return { input: configuredInput, output: configuredOutput };
+  }
+
+  return modelPricingUsdPerMillion[model] || { input: 0, output: 0 };
+}
+
+function tokenUsageFromResponse(response: unknown) {
+  const usage = (response as { usage?: Record<string, unknown> })?.usage || {};
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
+
+  return {
+    inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0,
+    outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+    totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
+  };
+}
+
+function processingMetricsFromResponse(response: unknown, model: string): ProcessingMetrics {
+  const tokens = tokenUsageFromResponse(response);
+  const pricing = pricingForModel(model);
+  const estimatedCostUsd =
+    (tokens.inputTokens / 1_000_000) * pricing.input +
+    (tokens.outputTokens / 1_000_000) * pricing.output;
+
+  return {
+    model,
+    ...tokens,
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(8)),
+    processedAt: new Date(),
+  };
 }
 
 function sleep(ms: number) {
@@ -171,13 +228,14 @@ export async function extractValuesWithOpenAI(
   filePath: string,
   fields: SchemaField[],
   documentTypeName: string,
-): Promise<ExtractedValue[] | undefined> {
+): Promise<{ values: ExtractedValue[]; metrics: ProcessingMetrics } | undefined> {
   const openai = getClient();
   if (!openai) return undefined;
 
   const selectedFields = fields.filter((field) => field.selected);
+  const model = modelName();
   const response = await withOpenAIRetry(() => openai.responses.create({
-    model: modelName(),
+    model,
     input: [
       {
         role: 'user',
@@ -214,7 +272,7 @@ export async function extractValuesWithOpenAI(
   };
   const byKey = new Map((parsed.fields || []).map((field) => [field.key, field]));
 
-  return selectedFields.map((field) => {
+  const values = selectedFields.map((field) => {
     const extracted = byKey.get(field.key);
     return {
       key: field.key,
@@ -225,4 +283,9 @@ export async function extractValuesWithOpenAI(
       boundingBoxes: [],
     };
   });
+
+  return {
+    values,
+    metrics: processingMetricsFromResponse(response, model),
+  };
 }

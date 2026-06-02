@@ -1,4 +1,4 @@
-import { DocumentType, ExtractedValue, IncomingDocument, PagedResult } from './types';
+import { BusinessReviewSummary, DocumentType, ExtractedValue, IncomingDocument, PagedResult } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
 
@@ -55,6 +55,7 @@ export const api = {
   },
   listDocuments: (params: URLSearchParams) =>
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
+  getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
   deleteDocument: (id: string) => request(`/documents/${id}`, { method: 'DELETE' }),
   reprocessDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reprocess`, { method: 'POST' }),
   reclassifyDocument: (id: string, documentTypeId: string) =>
@@ -64,22 +65,41 @@ export const api = {
       body: JSON.stringify({ documentTypeId }),
     }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
-  validateDocument: (id: string, extractedData: ExtractedValue[], deleteAfterDownstream = false, downstreamUrl?: string) =>
+  updateExtractedData: (id: string, extractedData: ExtractedValue[]) =>
+    request<IncomingDocument>(`/documents/${id}/extracted-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extractedData }),
+    }),
+  validateDocument: (
+    id: string,
+    extractedData: ExtractedValue[],
+    deleteAfterDownstream = false,
+    downstreamUrl?: string,
+    sendKeyValuePairs = false,
+  ) =>
     request<any>(`/documents/${id}/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl }),
+      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
     }),
-  getConfiguration: () => request<{ downstreamUrl: string; deleteAfterDownstream: boolean }>('/configuration'),
-  saveConfiguration: (payload: { downstreamUrl: string; deleteAfterDownstream: boolean }) =>
-    request<{ downstreamUrl: string; deleteAfterDownstream: boolean }>('/configuration', {
+  getConfiguration: () =>
+    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs?: boolean }>('/configuration'),
+  saveConfiguration: (payload: { downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs: boolean }) =>
+    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs: boolean }>('/configuration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  rejectDocument: (id: string, deleteAfterDownstream = false, downstreamUrl?: string) => request<IncomingDocument>(`/documents/${id}/reject`, { 
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deleteAfterDownstream, downstreamUrl }),
-  }),
+  rejectDocument: (
+    id: string,
+    deleteAfterDownstream = false,
+    downstreamUrl?: string,
+    sendKeyValuePairs = false,
+  ) =>
+    request<IncomingDocument>(`/documents/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
+    }),
 };
