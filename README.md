@@ -8,6 +8,7 @@ Xtract is a local-first document extraction prototype.
 - NestJS API
 - MongoDB for local persistence
 - JavaScript Azure Function worker for document processing
+- Python Azure Function for Docling markdown extraction
 
 ## Business Application
 
@@ -115,6 +116,59 @@ Use `QDRANT_URL=http://127.0.0.1:6333` for local vector search. Optional classif
 The Docker `docling-markdown` service runs the Docling markdown function app on port `7072`. The app container calls it at `http://docling-markdown:7072/api/extract-markdown`; from the host browser, use `http://127.0.0.1:7072/api/extract-markdown` in the Configuration page.
 
 OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts. The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.
+
+## Docling Markdown Extraction
+
+Xtract can process documents by sending extracted text to the model instead of sending the full PDF. This can reduce token usage and gives the extraction prompt a cleaner markdown representation of the source document.
+
+The document processing configuration supports three modes:
+
+- **Direct PDF processing**: Leave **Use extracted text for document processing** unchecked. Xtract sends the full PDF to the model.
+- **Built in text extraction**: Check **Use extracted text for document processing** and select **Built in** as the text extraction engine.
+- **Docling markdown extraction**: Check **Use extracted text for document processing**, select **Markdown (Docling service)**, and provide the Docling service URL.
+
+The Docling service lives in `functions/docling-markdown`. It is a Python Azure Function that accepts JSON containing a PDF as base64 and returns markdown:
+
+```json
+{
+  "fileName": "invoice.pdf",
+  "fileBase64": "..."
+}
+```
+
+Successful responses include:
+
+```json
+{
+  "engine": "docling",
+  "fileName": "invoice.pdf",
+  "markdown": "# ..."
+}
+```
+
+### Running Docling Locally
+
+Start the Docling markdown service with Docker Compose:
+
+```bash
+docker compose up -d azurite docling-markdown
+```
+
+The service is exposed on:
+
+```text
+http://127.0.0.1:7072/api/extract-markdown
+```
+
+When running the full Docker Compose stack, containers should use the internal service URL:
+
+```text
+http://docling-markdown:7072/api/extract-markdown
+```
+
+The compose file sets `DOCLING_MARKDOWN_SERVICE_URL=http://docling-markdown:7072/api/extract-markdown` for the app containers. In the web app, open **Configuration**, enable **Use extracted text for document processing**, select **Markdown (Docling service)**, enter the host URL if you are running from your browser, then save.
+
+The mock downstream API also includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL and show both rendered markdown and raw markdown output.
 
 ## Document Reclassification
 
