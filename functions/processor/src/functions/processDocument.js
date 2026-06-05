@@ -98,6 +98,40 @@ function parseJsonObject(text) {
   return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
+function normalizedName(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function coerceTableRowsToSchema(value, columns = []) {
+  if (!columns.length) return Array.isArray(value) ? value : [];
+
+  const rows = Array.isArray(value) ? value : [];
+  return rows.map((row) => {
+    const rowObject = row && typeof row === 'object' && !Array.isArray(row)
+      ? row
+      : { [columns[0].key]: row };
+    const aliases = new Map();
+
+    Object.entries(rowObject).forEach(([key, rowValue]) => {
+      aliases.set(key, rowValue);
+      aliases.set(normalizedName(key), rowValue);
+    });
+
+    if (typeof rowObject.key === 'string' && Object.prototype.hasOwnProperty.call(rowObject, 'value')) {
+      aliases.set(rowObject.key, rowObject.value);
+      aliases.set(normalizedName(rowObject.key), rowObject.value);
+    }
+
+    return Object.fromEntries(columns.map((column) => [
+      column.key,
+      aliases.get(column.key) ??
+      aliases.get(normalizedName(column.key)) ??
+      aliases.get(normalizedName(column.label)) ??
+      '',
+    ]));
+  });
+}
+
 function pdfInput(filePath) {
   const data = fs.readFileSync(filePath).toString('base64');
   return {
@@ -133,7 +167,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false) {
                 : `Extract values from this ${documentType.name} PDF.`,
               'Return JSON only. Do not include markdown.',
               'If a value is missing, return an empty string and low confidence.',
-              'For table fields, return an array of row objects.',
+              'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
               'Return this exact shape:',
               '{"fields":[{"key":"field_key","value":"extracted value","confidence":0.92}]}',
               `Schema: ${JSON.stringify(
@@ -162,7 +196,9 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false) {
       key: field.key,
       label: field.label,
       type: field.type,
-      value: extracted?.value ?? '',
+      value: field.type === 'table'
+        ? coerceTableRowsToSchema(extracted?.value, field.columns || [])
+        : extracted?.value ?? '',
       confidence: typeof extracted?.confidence === 'number' ? extracted.confidence : undefined,
     };
   });
@@ -178,7 +214,6 @@ function mockValue(label, type, index) {
   if (type === 'number') return index + 1;
   if (type === 'currency') return Number((250 + index * 125.5).toFixed(2));
   if (type === 'boolean') return true;
-  if (type === 'table') return [{ item: 'Sample line', quantity: 1, amount: 100 }];
   return `Extracted ${label}`;
 }
 
@@ -364,7 +399,12 @@ async function processDocument(message, context) {
             key: field.key,
             label: field.label,
             type: field.type,
-            value: mockValue(field.label, field.type, index),
+            value: field.type === 'table'
+              ? [(field.columns || []).reduce((row, column) => {
+                row[column.key] = mockValue(column.label, column.type, index);
+                return row;
+              }, {})]
+              : mockValue(field.label, field.type, index),
             confidence: Number((0.82 + Math.min(index, 8) * 0.015).toFixed(2)),
           })),
       );

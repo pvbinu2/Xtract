@@ -216,6 +216,41 @@ function normalizeSchemaField(field: SchemaField, prompt: string): SchemaField {
   };
 }
 
+function normalizedName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function coerceTableRowsToSchema(value: unknown, columns: SchemaField['columns']) {
+  const schemaColumns = columns || [];
+  if (!schemaColumns.length) return Array.isArray(value) ? value : [];
+
+  const rows = Array.isArray(value) ? value : [];
+  return rows.map((row) => {
+    const rowObject = row && typeof row === 'object' && !Array.isArray(row)
+      ? row as Record<string, unknown>
+      : { [schemaColumns[0].key]: row };
+    const aliases = new Map<string, unknown>();
+
+    Object.entries(rowObject).forEach(([key, rowValue]) => {
+      aliases.set(key, rowValue);
+      aliases.set(normalizedName(key), rowValue);
+    });
+
+    if (typeof rowObject.key === 'string' && Object.prototype.hasOwnProperty.call(rowObject, 'value')) {
+      aliases.set(rowObject.key, rowObject.value);
+      aliases.set(normalizedName(rowObject.key), rowObject.value);
+    }
+
+    return Object.fromEntries(schemaColumns.map((column) => [
+      column.key,
+      aliases.get(column.key) ??
+      aliases.get(normalizedName(column.key)) ??
+      aliases.get(normalizedName(column.label)) ??
+      '',
+    ]));
+  });
+}
+
 export async function inferTemplateWithOpenAI(
   filePath: string,
   prompt: string,
@@ -290,7 +325,7 @@ export async function extractValuesWithOpenAI(
                 : `Extract values from this ${documentTypeName} PDF.`,
               'Return JSON only. Do not include markdown.',
               'If a value is missing, return an empty string and low confidence.',
-              'For table fields, return an array of row objects.',
+              'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
               'Return this exact shape:',
               '{"fields":[{"key":"field_key","value":"extracted value","confidence":0.92}]}',
               `Schema: ${JSON.stringify(
@@ -322,7 +357,9 @@ export async function extractValuesWithOpenAI(
       key: field.key,
       label: field.label,
       type: field.type,
-      value: extracted?.value ?? '',
+      value: field.type === 'table'
+        ? coerceTableRowsToSchema(extracted?.value, field.columns)
+        : extracted?.value ?? '',
       confidence: typeof extracted?.confidence === 'number' ? extracted.confidence : undefined,
       boundingBoxes: [],
     };

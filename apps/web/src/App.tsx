@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   BarChart3,
   BrainCircuit,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   ChevronDown,
@@ -26,10 +27,11 @@ import {
   X,
   Trash2,
   Upload,
+  Download,
   FileText,
 } from 'lucide-react';
 import { api, AppConfigPayload } from './api';
-import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort } from './types';
+import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
@@ -61,6 +63,16 @@ function modelLabel(model?: string) {
 
 function displayModel(model?: string) {
   return modelLabel(model || 'N/A');
+}
+
+function downloadJsonFile(fileName: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName.replace(/[^\w.-]+/g, '_') || 'document-data.json';
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function defaultTableColumns() {
@@ -214,6 +226,45 @@ function tableColumns(rows: Record<string, unknown>[]) {
   return Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
 }
 
+function normalizedColumnName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function coerceRowsToColumns(value: unknown, columns: TableColumn[]) {
+  if (!columns.length) return asTableRows(value);
+  return asTableRows(value).map((row) => {
+    const aliases = new Map<string, unknown>();
+    Object.entries(row).forEach(([key, rowValue]) => {
+      aliases.set(key, rowValue);
+      aliases.set(normalizedColumnName(key), rowValue);
+    });
+    if (typeof row.key === 'string' && Object.prototype.hasOwnProperty.call(row, 'value')) {
+      aliases.set(row.key, row.value);
+      aliases.set(normalizedColumnName(row.key), row.value);
+    }
+    return Object.fromEntries(columns.map((column) => [
+      column.key,
+      aliases.get(column.key) ??
+      aliases.get(normalizedColumnName(column.key)) ??
+      aliases.get(normalizedColumnName(column.label)) ??
+      '',
+    ]));
+  });
+}
+
+function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?: DocumentType) {
+  if (!documentType) return values;
+  const fieldsByKey = new Map(documentType.fields.map((field) => [field.key, field]));
+  return values.map((item) => {
+    const schemaField = fieldsByKey.get(item.key);
+    if (item.type !== 'table' || !schemaField?.columns?.length) return item;
+    return {
+      ...item,
+      value: coerceRowsToColumns(item.value, schemaField.columns),
+    };
+  });
+}
+
 export function App() {
   const [view, setView] = useState<View>('documents');
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
@@ -355,6 +406,44 @@ export function App() {
     setView('documents');
   }
 
+  async function moveToAdjacentDocument(currentId: string, direction: 'previous' | 'next') {
+    if (!currentId) return;
+
+    const currentIndex = documents.findIndex((item) => item._id === currentId);
+    if (direction === 'previous') {
+      if (currentIndex > 0) {
+        setActiveDocumentId(documents[currentIndex - 1]._id);
+        setView('validation');
+        return;
+      }
+
+      if (currentIndex === 0 && documentPage.page > 1) {
+        const previousPage = await loadDocumentsPage(documentPage.page - 1);
+        const previousDocument = previousPage.items.at(-1);
+        if (previousDocument) {
+          setActiveDocumentId(previousDocument._id);
+          setView('validation');
+        }
+      }
+      return;
+    }
+
+    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
+      setActiveDocumentId(documents[currentIndex + 1]._id);
+      setView('validation');
+      return;
+    }
+
+    if (currentIndex === documents.length - 1 && documentPage.page < documentPage.totalPages) {
+      const nextPage = await loadDocumentsPage(documentPage.page + 1);
+      const nextDocument = nextPage.items[0];
+      if (nextDocument) {
+        setActiveDocumentId(nextDocument._id);
+        setView('validation');
+      }
+    }
+  }
+
   useEffect(() => {
     refresh().catch((error) => showToast(error.message, 'error'));
   }, []);
@@ -403,6 +492,15 @@ export function App() {
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
   ];
+  const validationDocumentId = activeDocumentId || documents[0]?._id || '';
+  const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
+  const canNavigatePreviousDocument =
+    Boolean(validationDocumentId) &&
+    (documentPage.page > 1 || validationDocumentIndex > 0);
+  const canNavigateNextDocument =
+    Boolean(validationDocumentId) &&
+    (documentPage.page < documentPage.totalPages ||
+      (validationDocumentIndex >= 0 && validationDocumentIndex < documents.length - 1));
 
   return (
     <main className="app-shell">
@@ -515,14 +613,18 @@ export function App() {
         )}
         {view === 'validation' && (
           <ValidationScreen
-            documentId={activeDocumentId || documents[0]?._id || ''}
+            documentId={validationDocumentId}
             documentTypes={documentTypes}
             downstreamUrl={config.downstreamUrl}
             defaultDeleteAfterDownstream={config.deleteAfterDownstream}
             sendKeyValuePairs={config.sendKeyValuePairs}
+            canNavigatePrevious={canNavigatePreviousDocument}
+            canNavigateNext={canNavigateNextDocument}
+            onNavigatePrevious={() => moveToAdjacentDocument(validationDocumentId, 'previous')}
+            onNavigateNext={() => moveToAdjacentDocument(validationDocumentId, 'next')}
             onRefresh={refreshDocumentTypes}
             onValidated={async (_notification: string) => {
-              await moveToNextDocument(activeDocumentId || '');
+              await moveToNextDocument(validationDocumentId);
             }}
             onNotify={showToast}
           />
@@ -604,6 +706,10 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
 
   if (!summary) return <EmptyState text="Business review data is unavailable." />;
 
+  const averageCostPerDocument = summary.filesProcessed
+    ? summary.estimatedCostUsd / summary.filesProcessed
+    : 0;
+
   return (
     <div className="business-review">
       <section className="panel">
@@ -624,10 +730,10 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
         <div className="review-metric-grid">
           <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} helper={`${formatNumber(summary.totalFiles)} total files`} />
           <ReviewMetric label="Estimated cost" value={formatCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
+          <ReviewMetric label="Avg cost / document" value={formatCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} />
           <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} helper={`${formatNumber(summary.filesProcessed)} persisted processing events`} />
           <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
           <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
-          <ReviewMetric label="In progress / failed" value={`${formatNumber(summary.filesProcessing)} / ${formatNumber(summary.filesFailed)}`} />
         </div>
         <p className="help-text">
           Summary totals are consolidated when processing completes and are stored separately from document records.
@@ -2113,6 +2219,10 @@ function ValidationScreen({
   downstreamUrl,
   defaultDeleteAfterDownstream = false,
   sendKeyValuePairs = false,
+  canNavigatePrevious = false,
+  canNavigateNext = false,
+  onNavigatePrevious,
+  onNavigateNext,
   onRefresh,
   onValidated,
   onNotify,
@@ -2122,6 +2232,10 @@ function ValidationScreen({
   downstreamUrl: string;
   defaultDeleteAfterDownstream?: boolean;
   sendKeyValuePairs?: boolean;
+  canNavigatePrevious?: boolean;
+  canNavigateNext?: boolean;
+  onNavigatePrevious: () => Promise<void>;
+  onNavigateNext: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
@@ -2138,12 +2252,14 @@ function ValidationScreen({
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
   const [pendingValidationAction, setPendingValidationAction] = useState<'validate' | 'reject' | null>(null);
+  const documentTypeFor = (doc: IncomingDocument) => documentTypes.find((type) => type._id === doc.documentTypeId);
 
   async function refreshPage() {
     if (!documentId) return;
     const refreshed = await api.getDocument(documentId);
-    setDocument(refreshed);
-    setValues(refreshed.extractedData);
+    const normalizedValues = normalizeExtractedDataToSchema(refreshed.extractedData, documentTypeFor(refreshed));
+    setDocument({ ...refreshed, extractedData: normalizedValues });
+    setValues(normalizedValues);
     setReclassifyCategory(refreshed.category);
     setReclassifyDocumentType(refreshed.documentTypeId || '');
     await onRefresh();
@@ -2184,15 +2300,16 @@ function ValidationScreen({
   useEffect(() => {
     if (!documentId) return;
     api.getDocument(documentId).then((doc) => {
-      setDocument(doc);
-      setValues(doc.extractedData);
+      const normalizedValues = normalizeExtractedDataToSchema(doc.extractedData, documentTypeFor(doc));
+      setDocument({ ...doc, extractedData: normalizedValues });
+      setValues(normalizedValues);
       setEditingValueKey(null);
       setEditingValueDraft('');
       setSavingValueKey(null);
       setReclassifyCategory(doc.category);
       setReclassifyDocumentType(doc.documentTypeId || '');
     });
-  }, [documentId]);
+  }, [documentId, documentTypes]);
 
   function startValueEdit(item: ExtractedValue) {
     setActiveFieldKey(item.key);
@@ -2208,8 +2325,9 @@ function ValidationScreen({
   async function persistExtractedData(nextValues: ExtractedValue[]) {
     if (!document) return;
     const updated = await api.updateExtractedData(document._id, nextValues);
-    setDocument(updated);
-    setValues(updated.extractedData);
+    const normalizedValues = normalizeExtractedDataToSchema(updated.extractedData, documentTypeFor(updated));
+    setDocument({ ...updated, extractedData: normalizedValues });
+    setValues(normalizedValues);
   }
 
   async function saveValueEdit(index: number) {
@@ -2273,6 +2391,27 @@ function ValidationScreen({
     await onValidated(message);
   }
 
+  function downloadExtractedJson() {
+    if (!document) return;
+    const normalizedValues = normalizeExtractedDataToSchema(values, documentTypeFor(document));
+    downloadJsonFile(`${document.originalName.replace(/\.[^.]+$/, '') || document.fileName}-extracted-data.json`, {
+      documentId: document._id,
+      fileName: document.originalName,
+      category: document.category,
+      documentTypeId: document.documentTypeId,
+      documentTypeName: document.documentTypeName,
+      classificationScore: document.classificationScore,
+      classificationMethod: document.classificationMethod,
+      classificationModel: document.classificationModel,
+      extractionModel: document.processingMetrics?.model,
+      processingMode: document.processingMode,
+      status: document.status,
+      extractedData: normalizedValues,
+      exportedAt: new Date().toISOString(),
+    });
+    onNotify('JSON downloaded', 'success');
+  }
+
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
@@ -2313,6 +2452,9 @@ function ValidationScreen({
               </div>
               <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
+              </button>
+              <button className="icon-button" title="Download extracted data as JSON" onClick={downloadExtractedJson}>
+                <Download size={16} />
               </button>
             </div>
           </div>
@@ -2421,6 +2563,24 @@ function ValidationScreen({
               <span>Delete document after sending to downstream</span>
             </label>
             <div className="validation-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!canNavigatePrevious}
+                onClick={onNavigatePrevious}
+              >
+                <ChevronLeft size={16} />
+                Previous
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!canNavigateNext}
+                onClick={onNavigateNext}
+              >
+                Next
+                <ChevronRight size={16} />
+              </button>
               <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
                 <BrainCircuit size={16} />
                 Reclassify
