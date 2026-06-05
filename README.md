@@ -1,125 +1,64 @@
 # Xtract
 
-Xtract is a local-first document extraction prototype.
+Xtract is a local-first document extraction prototype for classifying PDF documents, extracting structured data, reviewing results, and sending validated output to downstream systems.
 
-## Stack
+## Business Perspective
 
-- React + Vite frontend
-- NestJS API
-- MongoDB for local persistence
-- JavaScript Azure Function worker for document processing
-- Python Azure Function for Docling markdown extraction
-
-## Business Application
-
-Xtract is designed for organizations that need to automate document processing workflows at scale. It solves the critical challenge of extracting structured data from unstructured PDF documents efficiently and accurately.
+Xtract is designed for organizations that need to automate document processing workflows at scale. It solves the challenge of extracting structured data from unstructured PDF documents efficiently, consistently, and with a human validation step before final submission.
 
 ### Key Business Benefits
 
-- **Cost Reduction**: Automate manual document data entry, reducing labor costs and human error.
-- **Faster Processing**: Process hundreds or thousands of documents quickly with intelligent classification and extraction.
-- **Flexible Classification**: Support multiple document types with customizable extraction templates, enabling use across diverse business processes.
-- **Quality Control**: Review, validate, and correct extracted data side-by-side with source PDFs before finalization.
-- **Scalability**: Process documents on-demand with queue-based architecture supporting high-volume workflows.
+- **Cost reduction**: Automate manual document data entry, reducing labor cost and human error.
+- **Faster processing**: Process batches of documents with intelligent classification and extraction.
+- **Flexible classification**: Support multiple document categories and extraction templates for different business workflows.
+- **Quality control**: Review, validate, and correct extracted data side-by-side with the source PDF.
+- **Operational visibility**: Track processed files, token usage, and estimated processing cost in the business review screen.
+- **Downstream integration**: Submit validated document data to another API and optionally delete local documents after forwarding.
 
 ### Ideal Use Cases
 
-- **Accounts Payable**: Extract invoice details (vendor, amount, due date, line items) for automated payment processing.
-- **Document Management**: Classify and extract metadata from contracts, policies, and correspondence.
-- **Compliance & Auditing**: Capture required fields from regulatory documents with quality validation.
-- **Healthcare**: Extract patient information, lab results, and prescriptions from medical records.
-- **Finance**: Process loan applications, tax forms, and financial statements with standardized field extraction.
-- **HR & Recruitment**: Extract resume data, employment history, and certifications for candidate processing.
+- **Accounts payable**: Extract invoice details such as vendor, amount, due date, and line items.
+- **Document management**: Classify contracts, policies, correspondence, and supporting records.
+- **Compliance and auditing**: Capture required fields from regulatory documents with reviewable evidence.
+- **Healthcare**: Extract patient information, lab results, prescriptions, and administrative records.
+- **Finance**: Process loan applications, tax forms, statements, and supporting documents.
+- **HR and recruitment**: Extract resume data, employment history, certifications, and candidate records.
 
-### How It Works for Business Users
+### Business Workflow
 
-1. **Define**: Create document categories and extraction templates matching your specific business needs.
-2. **Train**: Upload sample documents and refine extraction rules until accuracy meets requirements.
-3. **Process**: Batch upload incoming documents for automatic classification and extraction.
-4. **Validate**: Review extracted data with visual confirmation against source documents.
-5. **Export**: Integrate extracted data into downstream systems and databases.
+1. **Define** document categories and extraction templates.
+2. **Train** classification with sample documents.
+3. **Process** incoming PDFs through classification and extraction.
+4. **Validate** extracted data against the source PDF.
+5. **Export** clean JSON data to downstream systems.
 
-## Local Setup
+## Features and Tech Stack
 
-1. Install dependencies:
+### Core Features
 
-```bash
-npm install
-```
+- Document type management with configurable extraction schemas.
+- Sample PDF upload for template generation and classifier training.
+- Automatic document classification using vector search with LLM fallback.
+- PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
+- Validation screen with source PDF preview and editable extracted fields.
+- Reclassification and reprocessing when a document was assigned to the wrong type or a schema changes.
+- Business review dashboard with processed-file counts, token usage, estimated cost, and display currency conversion.
+- Configurable downstream API delivery with optional document deletion after successful forwarding.
+- Mock downstream API UI for testing validation payloads and Docling markdown output.
 
-2. Start MongoDB:
+### Tech Stack
 
-```bash
-docker compose up -d mongo
-```
+- **Frontend**: React + Vite
+- **API**: NestJS
+- **Persistence**: MongoDB
+- **Document storage and queueing**: Azure Blob Storage and Azure Queue Storage, with Azurite for local development
+- **Processing worker**: JavaScript Azure Function
+- **Markdown extraction**: Python Azure Function using Docling
+- **Vector search**: Qdrant
+- **AI extraction and classification**: OpenAI Responses API, embeddings, and model-based structured extraction
+- **Local orchestration**: Docker Compose
 
-3. Start the API and web app:
-
-```bash
-npm run dev
-```
-
-The web app runs on `http://localhost:5173` and the API runs on `http://localhost:3000`.
-
-## OpenAI Setup
-
-The API uses the OpenAI Responses API for PDF extraction when an API key is configured. Copy the example environment file and add your real key:
-
-```bash
-cp apps/api/.env.example apps/api/.env
-```
-
-Set:
-
-```bash
-OPENAI_API_KEY=sk-your-key
-OPENAI_MODEL=gpt-4o-mini
-AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=...;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;
-```
-
-Then restart the API:
-
-```bash
-npm run dev:api
-```
-
-With `OPENAI_API_KEY` present:
-
-- File uploads use Azure Blob Storage. Document type samples are stored in the `train` container under a document-type-specific folder, and incoming documents are stored in the `processing` container.
-- Template generation uses the latest uploaded sample PDF plus your extraction prompt.
-- Document upload extraction sends the uploaded PDF and finalized schema to OpenAI.
-- Classifier training extracts text from every sample PDF for a document type, creates embeddings, and stores them in Qdrant.
-- Automatic classification searches Qdrant first. If the best vector score is at least `CLASSIFIER_VECTOR_SCORE_THRESHOLD` (default `0.82`), the worker skips the LLM classifier call.
-- If no key is configured, the app falls back to deterministic mock values for local UI testing.
-
-Do not commit `.env` or `local.settings.json`; both are ignored.
-
-## Processing Flow
-
-1. Create categories and document types in Document Type Management.
-2. Upload sample PDFs and describe fields to extract.
-3. Generate a template, select fields, and finalize the schema.
-4. Upload incoming PDFs against a category and document type.
-5. Documents enter `processing`, then the worker/API mock extractor stores extraction data.
-6. Open a document from the list, correct values side by side with the PDF, then submit validation.
-
-The first implementation includes a deterministic mock extractor so the UI and persistence can run locally without a cloud OCR or LLM account. Replace `mockExtractionFromSchema` in the API or the Azure Function worker with Azure Document Intelligence/OpenAI calls when ready.
-
-For quick local demos, the API processes selected-type uploads inline. Automatic classification requires the Azure Function worker, queue storage, and Qdrant:
-
-```bash
-docker compose up -d mongo azurite qdrant
-```
-
-Use `QDRANT_URL=http://127.0.0.1:6333` for local vector search. Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`. To use the Azure Function worker, run the API with `PROCESSING_MODE=queue` and set `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage`, then start `npm run dev:function`.
-
-The Docker `docling-markdown` service runs the Docling markdown function app on port `7072`. The app container calls it at `http://docling-markdown:7072/api/extract-markdown`; from the host browser, use `http://127.0.0.1:7072/api/extract-markdown` in the Configuration page.
-
-OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts. The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.
-
-## Docling Markdown Extraction
-
-Xtract can process documents by sending extracted text to the model instead of sending the full PDF. This can reduce token usage and gives the extraction prompt a cleaner markdown representation of the source document.
+### Processing Modes
 
 The document processing configuration supports three modes:
 
@@ -127,7 +66,11 @@ The document processing configuration supports three modes:
 - **Built in text extraction**: Check **Use extracted text for document processing** and select **Built in** as the text extraction engine.
 - **Docling markdown extraction**: Check **Use extracted text for document processing**, select **Markdown (Docling service)**, and provide the Docling service URL.
 
-The Docling service lives in `functions/docling-markdown`. It is a Python Azure Function that accepts JSON containing a PDF as base64 and returns markdown:
+### Docling Markdown Extraction
+
+The Docling service lives in `functions/docling-markdown`. It is a Python Azure Function exposed at `/api/extract-markdown`. It accepts JSON containing a PDF as base64 and returns markdown that can be used for document classification, schema generation, and extraction.
+
+Request shape:
 
 ```json
 {
@@ -136,7 +79,7 @@ The Docling service lives in `functions/docling-markdown`. It is a Python Azure 
 }
 ```
 
-Successful responses include:
+Successful response shape:
 
 ```json
 {
@@ -146,59 +89,157 @@ Successful responses include:
 }
 ```
 
-### Running Docling Locally
+The mock downstream API includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL and show both rendered markdown and raw markdown output.
 
-Start the Docling markdown service with Docker Compose:
+### Reclassification and Reprocessing
+
+Reclassification lets users correct documents that were assigned to the wrong type:
+
+1. Open a document from the document list or validation page.
+2. Choose **Reclassify**.
+3. Select the correct category and document type.
+4. Reprocess the document with the selected schema.
+5. Review and validate the fresh extracted values.
+
+This is useful for misclassified documents, schema changes, and manual corrections without deleting and re-uploading the source PDF.
+
+## Local Environment and End-to-End Run
+
+### Prerequisites
+
+- Node.js 20+
+- npm
+- Docker Desktop or another Docker Compose-compatible runtime
+- OpenAI API key for real AI extraction and classification
+
+### Install Dependencies
 
 ```bash
-docker compose up -d azurite docling-markdown
+npm install
 ```
 
-The service is exposed on:
+### Start Core Infrastructure
+
+For a minimal UI/API run with local persistence:
+
+```bash
+docker compose up -d mongo
+```
+
+For end-to-end queue processing, classification, storage, and Docling markdown extraction:
+
+```bash
+docker compose up -d mongo azurite qdrant docling-markdown
+```
+
+Docling is exposed to the host at:
 
 ```text
 http://127.0.0.1:7072/api/extract-markdown
 ```
 
-When running the full Docker Compose stack, containers should use the internal service URL:
+Containers use the internal Docker URL:
 
 ```text
 http://docling-markdown:7072/api/extract-markdown
 ```
 
-The compose file sets `DOCLING_MARKDOWN_SERVICE_URL=http://docling-markdown:7072/api/extract-markdown` for the app containers. In the web app, open **Configuration**, enable **Use extracted text for document processing**, select **Markdown (Docling service)**, enter the host URL if you are running from your browser, then save.
+### Configure OpenAI and Storage
 
-The mock downstream API also includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL and show both rendered markdown and raw markdown output.
+Copy the API environment file:
 
-## Document Reclassification
+```bash
+cp apps/api/.env.example apps/api/.env
+```
 
-The reclassify feature allows users to reprocess a document with a different document type, enabling quick corrections if a document was initially misclassified.
+Set the required values:
 
-### Where to Use Reclassify
+```bash
+OPENAI_API_KEY=sk-your-key
+OPENAI_MODEL=gpt-4o-mini
+AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=...;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;
+QDRANT_URL=http://127.0.0.1:6333
+DOCLING_MARKDOWN_SERVICE_URL=http://127.0.0.1:7072/api/extract-markdown
+```
 
-1. **Document List Page**: Click the brain icon button on any document row to open the reclassify dialog.
-2. **Validation Page**: Click the "Reclassify" button in the document detail panel before submitting validation.
+Do not commit `.env` or `local.settings.json`; both are ignored.
 
-### How It Works
+### Run the Application
 
-1. Open the reclassify dialog for a document.
-2. Select a new **Category** from the dropdown menu.
-3. The **Document Type** dropdown automatically updates to show only types in the selected category.
-4. Select the correct **Document Type**.
-5. Click **Reclassify** to reprocess the document.
+Start the API and web app:
 
-### What Happens on Reclassify
+```bash
+npm run dev
+```
 
-- The document's category and document type are updated.
-- All extracted data is cleared and the document status is reset to `processing`.
-- The document is reprocessed with the new document type's schema and extraction rules.
-- Once complete, the document status changes to `extracted` with fresh extraction data.
-- You can then review and validate the new extracted values.
+The web app runs on:
 
-### Use Cases
+```text
+http://localhost:5173
+```
 
-- **Misclassified Documents**: If the automatic classification assigned a document to the wrong type.
-- **Schema Changes**: When you've refined the extraction template and want to re-extract with the updated schema.
-- **Manual Corrections**: After reviewing a document, reassign it to the correct category if needed.
+The API runs on:
 
-This feature ensures documents can be corrected without needing to delete and re-upload them.
+```text
+http://localhost:3000
+```
+
+For queue-based processing with the Azure Function worker, run the API with `PROCESSING_MODE=queue`, make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set, then start:
+
+```bash
+npm run dev:function
+```
+
+### Run the Mock Downstream API
+
+The mock downstream API is useful for testing validation submits and Docling markdown extraction:
+
+```bash
+docker compose up -d mock-downstream-api
+```
+
+It runs on:
+
+```text
+http://localhost:3001
+```
+
+In Xtract, open **Configuration**, expand **Downstream Configuration**, and set the downstream URL to the mock API endpoint you want to test.
+
+### Configure Document Processing in the UI
+
+Open **Configuration** in the web app:
+
+1. Expand **Document Processing Configuration**.
+2. Check **Use extracted text for document processing** if you want text or markdown extraction before model calls.
+3. Select **Built in** for built-in extraction or **Markdown (Docling service)** for Docling.
+4. For Docling, set the URL to `http://127.0.0.1:7072/api/extract-markdown` when using the browser-hosted app.
+5. Save the configuration.
+
+When running the full Docker Compose app containers, use:
+
+```text
+http://docling-markdown:7072/api/extract-markdown
+```
+
+### End-to-End Workflow
+
+1. Create categories and document types in Document Type Management.
+2. Upload sample PDFs and describe the fields to extract.
+3. Generate a template, select fields, and finalize the schema.
+4. Train or refresh classifier data for the document type.
+5. Upload incoming PDFs.
+6. Let the API or worker process documents into `extracted` status.
+7. Open a document from the list and review extracted values beside the PDF.
+8. Validate or reject the document.
+9. Confirm the downstream payload in the mock downstream API or your configured target system.
+10. Review volume, token usage, and estimated cost in Business Review.
+
+### Runtime Notes
+
+- With `OPENAI_API_KEY` present, uploads use Azure Blob Storage, template generation and extraction use OpenAI, and classifier training stores embeddings in Qdrant.
+- If no OpenAI key is configured, the app falls back to deterministic mock values for local UI testing.
+- Automatic classification searches Qdrant first. If the best vector score is at least `CLASSIFIER_VECTOR_SCORE_THRESHOLD` (default `0.82`), the worker skips the LLM classifier call.
+- Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`.
+- OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts.
+- The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.
