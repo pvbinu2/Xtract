@@ -5,6 +5,62 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mock Downstream API</title>
   <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f5f5;
+      --text: #333;
+      --muted: #666;
+      --muted-strong: #555;
+      --subtle: #999;
+      --surface: #fff;
+      --surface-muted: #f5f5f5;
+      --surface-code: #f7fafc;
+      --border: #ddd;
+      --border-soft: #e0e0e0;
+      --border-code: #e2e8f0;
+      --primary: #667eea;
+      --primary-strong: #5568d3;
+      --primary-text: #4c51bf;
+      --danger: #f56565;
+      --danger-strong: #e53e3e;
+      --danger-text: #c53030;
+      --success-text: #4caf50;
+      --code-inline: #edf2f7;
+      --code-block: #1a202c;
+      --code-block-text: #edf2f7;
+      --shadow: rgba(0, 0, 0, 0.1);
+      --shadow-strong: rgba(0, 0, 0, 0.15);
+      --primary-shadow: rgba(102, 126, 234, 0.4);
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f172a;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --muted-strong: #cbd5e1;
+      --subtle: #94a3b8;
+      --surface: #111827;
+      --surface-muted: #1f2937;
+      --surface-code: #0f172a;
+      --border: #334155;
+      --border-soft: #334155;
+      --border-code: #475569;
+      --primary: #818cf8;
+      --primary-strong: #6366f1;
+      --primary-text: #a5b4fc;
+      --danger: #ef4444;
+      --danger-strong: #dc2626;
+      --danger-text: #fca5a5;
+      --success-text: #86efac;
+      --code-inline: #334155;
+      --code-block: #020617;
+      --code-block-text: #e2e8f0;
+      --shadow: rgba(0, 0, 0, 0.35);
+      --shadow-strong: rgba(0, 0, 0, 0.45);
+      --primary-shadow: rgba(129, 140, 248, 0.3);
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -13,8 +69,8 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", sans-serif;
-      background: #f5f5f5;
-      color: #333;
+      background: var(--bg);
+      color: var(--text);
       line-height: 1.6;
     }
 
@@ -22,8 +78,21 @@
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       padding: 20px;
+      box-shadow: 0 2px 8px var(--shadow);
+    }
+
+    .header-content {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .header-copy {
+      flex: 1;
       text-align: center;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     }
 
     .header h1 {
@@ -34,6 +103,25 @@
     .header p {
       font-size: 14px;
       opacity: 0.9;
+    }
+
+    .theme-toggle {
+      display: inline-flex;
+      min-width: 44px;
+      min-height: 40px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.12);
+      color: white;
+      cursor: pointer;
+      font-size: 18px;
+      transition: all 0.2s;
+    }
+
+    .theme-toggle:hover {
+      background: rgba(255, 255, 255, 0.22);
     }
 
     .container {
@@ -49,7 +137,8 @@
       flex-wrap: wrap;
     }
 
-    .controls button {
+    .controls button,
+    .upload-form button {
       padding: 10px 16px;
       border: none;
       border-radius: 6px;
@@ -60,23 +149,30 @@
     }
 
     .btn-primary {
-      background: #667eea;
+      background: var(--primary);
       color: white;
     }
 
     .btn-primary:hover {
-      background: #5568d3;
+      background: var(--primary-strong);
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      box-shadow: 0 4px 12px var(--primary-shadow);
+    }
+
+    .btn-primary:disabled {
+      background: var(--primary-text);
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
     }
 
     .btn-danger {
-      background: #f56565;
+      background: var(--danger);
       color: white;
     }
 
     .btn-danger:hover {
-      background: #e53e3e;
+      background: var(--danger-strong);
     }
 
     .stats {
@@ -87,16 +183,16 @@
     }
 
     .stat-card {
-      background: white;
+      background: var(--surface);
       padding: 16px;
       border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 1px 3px var(--shadow);
       text-align: center;
     }
 
     .stat-card h3 {
       font-size: 12px;
-      color: #666;
+      color: var(--muted);
       margin-bottom: 8px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -105,7 +201,7 @@
     .stat-card .value {
       font-size: 32px;
       font-weight: bold;
-      color: #667eea;
+      color: var(--primary);
     }
 
     .requests-grid {
@@ -114,15 +210,15 @@
     }
 
     .request-card {
-      background: white;
+      background: var(--surface);
       border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 1px 3px var(--shadow);
       overflow: hidden;
       transition: all 0.2s;
     }
 
     .request-card:hover {
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      box-shadow: 0 4px 12px var(--shadow-strong);
       transform: translateY(-2px);
     }
 
@@ -162,12 +258,12 @@
 
     .status-validated {
       background: rgba(76, 175, 80, 0.2);
-      color: #4caf50;
+      color: var(--success-text);
     }
 
     .status-rejected {
       background: rgba(244, 67, 54, 0.2);
-      color: #f44336;
+      color: var(--danger-text);
     }
 
     .request-content {
@@ -175,7 +271,8 @@
     }
 
     .request-content pre {
-      background: #f5f5f5;
+      background: var(--surface-muted);
+      color: var(--text);
       padding: 12px;
       border-radius: 6px;
       overflow-x: auto;
@@ -187,16 +284,16 @@
 
     .request-footer {
       padding: 12px 16px;
-      border-top: 1px solid #e0e0e0;
+      border-top: 1px solid var(--border-soft);
       display: flex;
       justify-content: space-between;
       align-items: center;
       font-size: 12px;
-      color: #666;
+      color: var(--muted);
     }
 
     .delete-btn {
-      background: #f56565;
+      background: var(--danger);
       color: white;
       border: none;
       padding: 6px 12px;
@@ -207,15 +304,15 @@
     }
 
     .delete-btn:hover {
-      background: #e53e3e;
+      background: var(--danger-strong);
     }
 
     .empty-state {
       text-align: center;
       padding: 40px;
-      background: white;
+      background: var(--surface);
       border-radius: 8px;
-      color: #999;
+      color: var(--subtle);
     }
 
     .empty-state h3 {
@@ -226,41 +323,282 @@
     .loading {
       text-align: center;
       padding: 20px;
-      color: #666;
+      color: var(--muted);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab-button {
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--muted-strong);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 12px 14px;
+    }
+
+    .tab-button.active {
+      border-bottom-color: var(--primary);
+      color: var(--primary-text);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .docling-panel,
+    .markdown-card {
+      background: var(--surface);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px var(--shadow);
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+
+    .docling-panel h2,
+    .markdown-card h2 {
+      font-size: 18px;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .docling-panel p {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .upload-form {
+      display: grid;
+      gap: 12px;
+      max-width: 640px;
+    }
+
+    .upload-form label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted-strong);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .upload-form input[type="file"],
+    .upload-form input[type="url"] {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface-code);
+      color: var(--text);
+      font-size: 14px;
+      padding: 10px;
+      width: 100%;
+    }
+
+    .status-line {
+      color: var(--muted-strong);
+      font-size: 13px;
+      min-height: 20px;
+    }
+
+    .status-line.error {
+      color: var(--danger-text);
+      font-weight: 700;
+    }
+
+    .markdown-layout {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .markdown-viewer {
+      border: 1px solid var(--border-code);
+      border-radius: 6px;
+      max-height: 600px;
+      min-height: 260px;
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .markdown-viewer h1,
+    .markdown-viewer h2,
+    .markdown-viewer h3 {
+      margin: 12px 0 8px;
+      line-height: 1.25;
+    }
+
+    .markdown-viewer p,
+    .markdown-viewer ul,
+    .markdown-viewer table,
+    .markdown-viewer pre {
+      margin-bottom: 12px;
+    }
+
+    .markdown-viewer code {
+      background: var(--code-inline);
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+
+    .markdown-viewer pre {
+      background: var(--code-block);
+      color: var(--code-block-text);
+      overflow-x: auto;
+      padding: 12px;
+    }
+
+    .markdown-viewer table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .markdown-viewer th,
+    .markdown-viewer td {
+      border: 1px solid var(--border-code);
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .raw-markdown {
+      background: var(--surface-code);
+      border: 1px solid var(--border-code);
+      color: var(--text);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+      max-height: 600px;
+      min-height: 260px;
+      overflow: auto;
+      padding: 16px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    @media (max-width: 900px) {
+      .markdown-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .header-content {
+        align-items: flex-start;
+      }
+
+      .header-copy {
+        text-align: left;
+      }
     }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>📥 Mock Downstream API</h1>
-    <p>Receiving and storing document validation requests</p>
+    <div class="header-content">
+      <div class="header-copy">
+        <h1>📥 Mock Downstream API</h1>
+        <p>Receiving and storing document validation requests</p>
+      </div>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Enable dark mode" title="Enable dark mode">☾</button>
+    </div>
   </div>
 
   <div class="container">
-    <div class="controls">
-      <button class="btn-primary" onclick="refreshRequests()">🔄 Refresh</button>
-      <button class="btn-danger" onclick="clearAllRequests()">🗑️ Clear All</button>
+    <div class="tabs">
+      <button class="tab-button active" id="requestsTab" onclick="showTab('requests')">Requests</button>
+      <button class="tab-button" id="doclingTab" onclick="showTab('docling')">Docling Markdown</button>
     </div>
 
-    <div class="stats">
-      <div class="stat-card">
-        <h3>Total Requests</h3>
-        <div class="value" id="totalCount">0</div>
+    <section class="tab-panel active" id="requestsPanel">
+      <div class="controls">
+        <button class="btn-primary" onclick="refreshRequests()">Refresh</button>
+        <button class="btn-danger" onclick="clearAllRequests()">Clear All</button>
       </div>
-      <div class="stat-card">
-        <h3>Validated</h3>
-        <div class="value" id="validatedCount">0</div>
-      </div>
-      <div class="stat-card">
-        <h3>Rejected</h3>
-        <div class="value" id="rejectedCount">0</div>
-      </div>
-    </div>
 
-    <div id="requestsList" class="requests-grid"></div>
+      <div class="stats">
+        <div class="stat-card">
+          <h3>Total Requests</h3>
+          <div class="value" id="totalCount">0</div>
+        </div>
+        <div class="stat-card">
+          <h3>Validated</h3>
+          <div class="value" id="validatedCount">0</div>
+        </div>
+        <div class="stat-card">
+          <h3>Rejected</h3>
+          <div class="value" id="rejectedCount">0</div>
+        </div>
+      </div>
+
+      <div id="requestsList" class="requests-grid"></div>
+    </section>
+
+    <section class="tab-panel" id="doclingPanel">
+      <div class="docling-panel">
+        <h2>Docling Markdown Test</h2>
+        <p>Upload a PDF and send it to the Docling markdown function service.</p>
+        <form class="upload-form" id="doclingForm">
+          <label>
+            PDF document
+            <input type="file" id="doclingFile" accept="application/pdf,.pdf" />
+          </label>
+          <label>
+            Docling target URL
+            <input type="url" id="doclingServiceUrl" value="http://docling-markdown:7072/api/extract-markdown" />
+          </label>
+          <button class="btn-primary" id="doclingSubmit" type="submit">Submit</button>
+          <div class="status-line" id="doclingStatus"></div>
+        </form>
+      </div>
+
+      <div class="markdown-card">
+        <h2>Markdown Response</h2>
+        <div class="markdown-layout">
+          <div class="markdown-viewer" id="markdownViewer"></div>
+          <pre class="raw-markdown" id="rawMarkdown"></pre>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script>
+    const themeToggle = document.getElementById('themeToggle');
+    const storedTheme = localStorage.getItem('mockDownstreamTheme');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    let currentTheme = storedTheme || (prefersDark ? 'dark' : 'light');
+
+    function applyTheme(theme) {
+      currentTheme = theme;
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem('mockDownstreamTheme', theme);
+      const isDark = theme === 'dark';
+      themeToggle.textContent = isDark ? '☀' : '☾';
+      themeToggle.setAttribute('aria-label', isDark ? 'Enable light mode' : 'Enable dark mode');
+      themeToggle.setAttribute('title', isDark ? 'Enable light mode' : 'Enable dark mode');
+    }
+
+    themeToggle.addEventListener('click', () => {
+      applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+    });
+
+    applyTheme(currentTheme);
+
+    function showTab(tabName) {
+      const isDocling = tabName === 'docling';
+      document.getElementById('requestsPanel').classList.toggle('active', !isDocling);
+      document.getElementById('doclingPanel').classList.toggle('active', isDocling);
+      document.getElementById('requestsTab').classList.toggle('active', !isDocling);
+      document.getElementById('doclingTab').classList.toggle('active', isDocling);
+    }
+
     async function refreshRequests() {
       try {
         const response = await fetch('/api/requests');
@@ -333,6 +671,133 @@
       div.textContent = text;
       return div.innerHTML;
     }
+
+    function renderMarkdown(markdown) {
+      const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+      const html = [];
+      let inCode = false;
+      let listOpen = false;
+      let tableBuffer = [];
+
+      function closeList() {
+        if (listOpen) {
+          html.push('</ul>');
+          listOpen = false;
+        }
+      }
+
+      function flushTable() {
+        if (!tableBuffer.length) return;
+        html.push('<table>');
+        tableBuffer.forEach((row, index) => {
+          const cells = row.split('|').slice(1, -1).map((cell) => escapeHtml(cell.trim()));
+          if (index === 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))) return;
+          const tag = index === 0 ? 'th' : 'td';
+          html.push(`<tr>${cells.map((cell) => `<${tag}>${cell}</${tag}>`).join('')}</tr>`);
+        });
+        html.push('</table>');
+        tableBuffer = [];
+      }
+
+      function inline(value) {
+        return escapeHtml(value)
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>');
+      }
+
+      for (const line of lines) {
+        if (line.startsWith('```')) {
+          flushTable();
+          closeList();
+          html.push(inCode ? '</code></pre>' : '<pre><code>');
+          inCode = !inCode;
+          continue;
+        }
+        if (inCode) {
+          html.push(`${escapeHtml(line)}\n`);
+          continue;
+        }
+        if (/^\|.*\|$/.test(line.trim())) {
+          closeList();
+          tableBuffer.push(line.trim());
+          continue;
+        }
+        flushTable();
+        if (!line.trim()) {
+          closeList();
+          continue;
+        }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+          closeList();
+          html.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
+          continue;
+        }
+        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+        if (bullet) {
+          if (!listOpen) {
+            html.push('<ul>');
+            listOpen = true;
+          }
+          html.push(`<li>${inline(bullet[1])}</li>`);
+          continue;
+        }
+        closeList();
+        html.push(`<p>${inline(line)}</p>`);
+      }
+      flushTable();
+      closeList();
+      if (inCode) html.push('</code></pre>');
+      return html.join('');
+    }
+
+    document.getElementById('doclingForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const fileInput = document.getElementById('doclingFile');
+      const serviceUrlInput = document.getElementById('doclingServiceUrl');
+      const status = document.getElementById('doclingStatus');
+      const submit = document.getElementById('doclingSubmit');
+      const viewer = document.getElementById('markdownViewer');
+      const raw = document.getElementById('rawMarkdown');
+      const file = fileInput.files[0];
+
+      status.className = 'status-line';
+      if (!file) {
+        status.className = 'status-line error';
+        status.textContent = 'Select a PDF file first.';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('serviceUrl', serviceUrlInput.value || 'http://docling-markdown:7072/api/extract-markdown');
+      status.textContent = 'Sending document to Docling...';
+      submit.disabled = true;
+      viewer.innerHTML = '';
+      raw.textContent = '';
+
+      try {
+        const response = await fetch('/api/docling/extract', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+          throw new Error(data.error || `Request failed: ${response.status}`);
+        }
+        const markdown = data.markdown || '';
+        status.textContent = `Markdown extracted from ${data.fileName || file.name}`;
+        raw.textContent = markdown;
+        viewer.innerHTML = markdown ? renderMarkdown(markdown) : '<p>No markdown returned.</p>';
+      } catch (error) {
+        status.className = 'status-line error';
+        status.textContent = error.message || 'Failed to extract markdown.';
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    refreshRequests();
   </script>
 </body>
 </html>

@@ -141,12 +141,18 @@ function pdfInput(filePath) {
   };
 }
 
-async function extractValuesWithOpenAI(document, documentType, useOcr = false) {
+async function extractValuesWithOpenAI(document, documentType, useOcr = false, textOptions = {}) {
   const client = getOpenAI();
   if (!client) return undefined;
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
-  const documentText = useOcr ? await extractDocumentText(document.filePath) : '';
+  const textMode = textOptions.mode === 'markdown' ? 'markdown' : 'ocr';
+  const documentText = useOcr ? await extractDocumentText(document.filePath, undefined, {
+    mode: textMode,
+    markdownServiceUrl: textOptions.markdownServiceUrl,
+    fileName: document.originalName || document.fileName,
+  }) : '';
+  const textSourceLabel = textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text';
   const requestConfig = openAIRequestConfig({
     model: documentType.extractionModel,
     reasoningEffort: documentType.extractionReasoningEffort,
@@ -163,7 +169,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false) {
             type: 'input_text',
             text: [
               useOcr
-                ? `Extract values from this ${documentType.name} document using the locally extracted OCR/text below.`
+                ? `Extract values from this ${documentType.name} document using the ${textSourceLabel} below.`
                 : `Extract values from this ${documentType.name} PDF.`,
               'Return JSON only. Do not include markdown.',
               'If a value is missing, return an empty string and low confidence.',
@@ -325,6 +331,11 @@ async function processDocument(message, context) {
   const documentTypes = db.collection('documenttypes');
   const configuration = await db.collection('configuration').findOne({});
   const useOcrForDocumentProcessing = Boolean(configuration?.useOcrForDocumentProcessing);
+  const documentTextMode = configuration?.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
+  const textOptions = {
+    mode: documentTextMode,
+    markdownServiceUrl: configuration?.markdownServiceUrl,
+  };
 
   const document = await documents.findOne({ _id: new ObjectId(documentId) });
   if (!document) {
@@ -366,6 +377,8 @@ async function processDocument(message, context) {
           useOcr: useOcrForDocumentProcessing,
           model: configuration?.classificationModel,
           reasoningEffort: configuration?.classificationReasoningEffort,
+          documentTextMode,
+          markdownServiceUrl: configuration?.markdownServiceUrl,
         });
         documentType = classification.documentType;
         localDocument.classificationMetrics = classification.classificationMetrics;
@@ -389,7 +402,7 @@ async function processDocument(message, context) {
         localDocument.classificationModel = localDocument.classificationMethod === 'manual' ? 'manual' : 'unknown';
       }
 
-      const extraction = await extractValuesWithOpenAI(localDocument, documentType, useOcrForDocumentProcessing);
+      const extraction = await extractValuesWithOpenAI(localDocument, documentType, useOcrForDocumentProcessing, textOptions);
       const extractedData = await attachBoundingBoxes(
         localFilePath,
         extraction?.values ||
@@ -459,7 +472,7 @@ async function processDocument(message, context) {
             extractedData,
             processingMetrics,
             classificationModel: localDocument.classificationModel,
-            processingMode: useOcrForDocumentProcessing ? 'ocr' : 'pdf',
+            processingMode: useOcrForDocumentProcessing && documentTextMode === 'markdown' ? 'markdown' : useOcrForDocumentProcessing ? 'ocr' : 'pdf',
             error: null,
             updatedAt: new Date(),
           },

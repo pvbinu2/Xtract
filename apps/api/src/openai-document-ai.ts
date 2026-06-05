@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { basename } from 'path';
 import { ExtractionField } from './schemas/document-type.schema';
 import { ExtractedValue } from './schemas/incoming-document.schema';
-import { extractDocumentText } from './document-text';
+import { DocumentTextMode, extractDocumentText } from './document-text';
 
 type SchemaField = Pick<ExtractionField, 'key' | 'label' | 'type' | 'description' | 'selected' | 'columns'>;
 type ProcessingMetrics = {
@@ -21,6 +21,8 @@ type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 type OpenAIRequestOptions = {
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  documentTextMode?: DocumentTextMode;
+  markdownServiceUrl?: string;
 };
 type OpenAIRequestConfig = {
   model: string;
@@ -259,7 +261,12 @@ export async function inferTemplateWithOpenAI(
 ): Promise<SchemaField[] | undefined> {
   const openai = getClient();
   if (!openai) return undefined;
-  const documentText = useOcr ? await extractDocumentText(filePath) : '';
+  const textMode = options?.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
+  const documentText = useOcr ? await extractDocumentText(filePath, undefined, {
+    mode: textMode,
+    markdownServiceUrl: options?.markdownServiceUrl,
+  }) : '';
+  const textSourceLabel = textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text';
 
   const requestConfig = openAIRequestConfig(options);
   const response = await withOpenAIRetry(() => openai.responses.create({
@@ -273,7 +280,7 @@ export async function inferTemplateWithOpenAI(
             type: 'input_text',
             text: [
               useOcr
-                ? 'Create an extraction schema for this document type using the locally extracted OCR/text below.'
+                ? `Create an extraction schema for this document type using the ${textSourceLabel} below.`
                 : 'Create an extraction schema for this PDF document type.',
               fieldTypePrompt(),
               'Use snake_case keys. Select fields that match the user prompt.',
@@ -309,7 +316,12 @@ export async function extractValuesWithOpenAI(
   const selectedFields = fields.filter((field) => field.selected);
   const requestConfig = openAIRequestConfig(options);
   const model = requestConfig.model;
-  const documentText = useOcr ? await extractDocumentText(filePath) : '';
+  const textMode = options?.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
+  const documentText = useOcr ? await extractDocumentText(filePath, undefined, {
+    mode: textMode,
+    markdownServiceUrl: options?.markdownServiceUrl,
+  }) : '';
+  const textSourceLabel = textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text';
   const response = await withOpenAIRetry(() => openai.responses.create({
     ...requestConfig,
     input: [
@@ -321,7 +333,7 @@ export async function extractValuesWithOpenAI(
             type: 'input_text',
             text: [
               useOcr
-                ? `Extract values from this ${documentTypeName} document using the locally extracted OCR/text below.`
+                ? `Extract values from this ${documentTypeName} document using the ${textSourceLabel} below.`
                 : `Extract values from this ${documentTypeName} PDF.`,
               'Return JSON only. Do not include markdown.',
               'If a value is missing, return an empty string and low confidence.',

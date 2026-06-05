@@ -115,7 +115,7 @@ export class IncomingDocument {
   classificationModel?: string;
 
   @Prop()
-  processingMode?: 'ocr' | 'pdf';
+  processingMode?: 'ocr' | 'pdf' | 'markdown';
 
   @Prop({ default: 'uploaded' })
   status!: DocumentStatus;

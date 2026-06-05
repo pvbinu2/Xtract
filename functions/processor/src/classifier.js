@@ -374,9 +374,12 @@ async function upsertDocumentTypeVectors(documentType, samples) {
   });
 }
 
-async function searchDocumentTypeVectors(document) {
+async function searchDocumentTypeVectors(document, textOptions = {}) {
   await ensureVectorCollection();
-  const text = await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
+  const text = await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
+    ...textOptions,
+    fileName: document.originalName || document.fileName,
+  });
   const chunks = chunkText([
     `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
     text,
@@ -442,11 +445,15 @@ async function classifyDocument(document, documentTypes, options = {}) {
   }
 
   const useOcr = Boolean(options.useOcr);
+  const textOptions = {
+    mode: options.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+    markdownServiceUrl: options.markdownServiceUrl,
+  };
   let vectorHits = [];
   let embeddingMetrics = emptyMetrics(embeddingModelName());
   if (useOcr) {
     try {
-      const vectorSearch = await searchDocumentTypeVectors(document);
+      const vectorSearch = await searchDocumentTypeVectors(document, textOptions);
       vectorHits = vectorSearch.hits;
       embeddingMetrics = vectorSearch.metrics;
     } catch (error) {
@@ -477,7 +484,10 @@ async function classifyDocument(document, documentTypes, options = {}) {
     ...candidates.filter((candidate) => !retrievedIds.has(String(candidate._id))),
   ].slice(0, Number(process.env.CLASSIFIER_LLM_CANDIDATE_LIMIT || 8));
 
-  const documentText = useOcr ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000)) : '';
+  const documentText = useOcr ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
+    ...textOptions,
+    fileName: document.originalName || document.fileName,
+  }) : '';
   const requestConfig = openAIRequestConfig({
     model: options.model,
     reasoningEffort: options.reasoningEffort,
@@ -488,7 +498,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
       type: 'input_text',
       text: [
         useOcr
-          ? 'Classify the uploaded document using locally extracted OCR/text, trained document type profiles, and metadata.'
+          ? `Classify the uploaded document using ${textOptions.mode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text'}, trained document type profiles, and metadata.`
           : 'Classify the uploaded PDF using trained document type profiles and metadata.',
         'Choose exactly one candidate document type. Return JSON only.',
         'The score must be a number from 0 to 1 representing match strength.',

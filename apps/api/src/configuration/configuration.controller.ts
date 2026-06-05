@@ -19,6 +19,8 @@ export class ConfigurationController {
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;
       useOcrForDocumentProcessing?: boolean;
+      documentTextMode?: 'ocr' | 'markdown';
+      markdownServiceUrl?: string;
       classificationModel?: string;
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     },

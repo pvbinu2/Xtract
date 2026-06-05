@@ -250,6 +250,8 @@ export class DocumentTypesService {
           {
             model: docType.extractionModel,
             reasoningEffort: docType.extractionReasoningEffort,
+            documentTextMode: configuration.documentTextMode,
+            markdownServiceUrl: configuration.markdownServiceUrl,
           },
         );
         if (openAiFields?.length) {

@@ -17,6 +17,12 @@ export class Configuration {
   @Prop({ default: false })
   useOcrForDocumentProcessing!: boolean;
 
+  @Prop({ default: 'ocr' })
+  documentTextMode!: 'ocr' | 'markdown';
+
+  @Prop({ default: '' })
+  markdownServiceUrl!: string;
+
   @Prop({ default: 'gpt-5-nano' })
   classificationModel!: string;
 

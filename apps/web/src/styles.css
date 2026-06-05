@@ -279,7 +279,7 @@ nav {
 
 .business-review-table th,
 .business-review-table td {
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border);
   padding: 10px 12px;
   text-align: left;
 }
@@ -325,6 +325,22 @@ nav {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.currency-selector {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.currency-selector select {
+  min-height: 36px;
+  width: auto;
+  min-width: 150px;
+  padding: 7px 30px 7px 10px;
 }
 
 .form-grid,
@@ -389,7 +405,7 @@ textarea {
 }
 
 .configuration-form,
-.configuration-section {
+.configuration-section-body {
   display: grid;
   gap: 14px;
 }
@@ -404,9 +420,38 @@ textarea {
   padding-top: 0;
 }
 
-.configuration-section h3 {
-  margin: 0;
+.configuration-section-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  text-align: left;
+}
+
+.configuration-section-toggle span {
   font-size: 16px;
+  font-weight: 800;
+}
+
+.configuration-section-toggle svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.configuration-section-toggle:hover,
+.configuration-section-toggle:focus-visible {
+  color: var(--primary);
+}
+
+.configuration-section-body {
+  padding-top: 10px;
 }
 
 .configuration-actions {
@@ -610,7 +655,7 @@ textarea {
 }
 
 .document-open {
-  grid-template-columns: minmax(0, 1fr) 120px 90px 86px 190px;
+  grid-template-columns: minmax(0, 1fr) 120px 90px 118px 190px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -693,6 +738,9 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  justify-self: stretch;
+  width: 118px;
+  flex-shrink: 0;
   gap: 6px;
   min-height: 28px;
   border-radius: 8px;
@@ -702,6 +750,7 @@ textarea {
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .processing-mode-icon {
@@ -716,6 +765,10 @@ textarea {
 
 .processing-mode-icon.pdf {
   color: #7c3aed;
+}
+
+.processing-mode-icon.markdown {
+  color: #0369a1;
 }
 
 .classification-score-line {

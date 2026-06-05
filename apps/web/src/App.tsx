@@ -52,6 +52,13 @@ const openAIModelOptions = [
   { value: 'gpt-4o', label: 'GPT-4o' },
 ];
 const reasoningEffortOptions: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+const displayCurrencyOptions = [
+  { value: 'USD', label: 'US dollar', rate: 1 },
+  { value: 'INR', label: 'Indian rupee', rate: 83.5 },
+  { value: 'GBP', label: 'British pound', rate: 0.79 },
+  { value: 'EUR', label: 'Euro', rate: 0.92 },
+] as const;
+type DisplayCurrency = (typeof displayCurrencyOptions)[number]['value'];
 
 function supportsReasoningEffort(model: string) {
   return /^(gpt-5|o\d|o\d-)/.test(model);
@@ -114,13 +121,15 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
 }
 
-function formatCurrency(value: number) {
+function formatCurrency(value: number, currency: DisplayCurrency = 'USD') {
+  const option = displayCurrencyOptions.find((item) => item.value === currency) || displayCurrencyOptions[0];
+  const convertedValue = value * option.rate;
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2,
-    maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 2,
-  }).format(value);
+    currency: option.value,
+    minimumFractionDigits: convertedValue > 0 && convertedValue < 0.01 ? 4 : 2,
+    maximumFractionDigits: convertedValue > 0 && convertedValue < 0.01 ? 6 : 2,
+  }).format(convertedValue);
 }
 
 function displaySampleName(fileName: string) {
@@ -157,6 +166,13 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
   if (mode === 'pdf') {
     return (
       <span className="processing-mode-icon pdf" title="Processed using PDF file" aria-label="Processed using PDF file">
+        <FileText size={14} />
+      </span>
+    );
+  }
+  if (mode === 'markdown') {
+    return (
+      <span className="processing-mode-icon markdown" title="Processed using markdown" aria-label="Processed using markdown">
         <FileText size={14} />
       </span>
     );
@@ -286,6 +302,8 @@ export function App() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    documentTextMode: 'ocr',
+    markdownServiceUrl: '',
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
   });
@@ -298,6 +316,8 @@ export function App() {
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+        markdownServiceUrl: saved.markdownServiceUrl || '',
         classificationModel: saved.classificationModel || lowCostOpenAIModel,
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
       });
@@ -311,6 +331,8 @@ export function App() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+            markdownServiceUrl: parsed.markdownServiceUrl || '',
             classificationModel: parsed.classificationModel || lowCostOpenAIModel,
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
           });
@@ -665,6 +687,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
 
   async function loadSummary() {
     setLoadingSummary(true);
@@ -709,6 +732,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
   const averageCostPerDocument = summary.filesProcessed
     ? summary.estimatedCostUsd / summary.filesProcessed
     : 0;
+  const formatReviewCurrency = (value: number) => formatCurrency(value, displayCurrency);
 
   return (
     <div className="business-review">
@@ -719,6 +743,16 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
             <p>Persisted processing volume, token usage, and estimated OpenAI processing cost.</p>
           </div>
           <div className="toolbar-actions">
+            <label className="currency-selector">
+              Currency
+              <select value={displayCurrency} onChange={(event) => setDisplayCurrency(event.target.value as DisplayCurrency)}>
+                {displayCurrencyOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button className="icon-button danger" title="Reset business review data" onClick={() => setShowResetConfirm(true)}>
               <Trash2 size={16} />
             </button>
@@ -729,8 +763,8 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
         </div>
         <div className="review-metric-grid">
           <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} helper={`${formatNumber(summary.totalFiles)} total files`} />
-          <ReviewMetric label="Estimated cost" value={formatCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
-          <ReviewMetric label="Avg cost / document" value={formatCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} />
+          <ReviewMetric label="Estimated cost" value={formatReviewCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
+          <ReviewMetric label="Avg cost / document" value={formatReviewCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} />
           <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} helper={`${formatNumber(summary.filesProcessed)} persisted processing events`} />
           <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
           <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
@@ -769,10 +803,10 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
                   <td>{displayModel(document.classificationModel)}</td>
                   <td>{displayModel(document.extractionModel)}</td>
                   <td>{formatNumber(document.tokens)}</td>
-                  <td>{formatCurrency(document.extractionCostUsd || 0)}</td>
-                  <td>{formatCurrency(document.classificationCostUsd || 0)}</td>
-                  <td>{formatCurrency(document.embeddingCostUsd || 0)}</td>
-                  <td>{formatCurrency(document.estimatedCostUsd)}</td>
+                  <td>{formatReviewCurrency(document.extractionCostUsd || 0)}</td>
+                  <td>{formatReviewCurrency(document.classificationCostUsd || 0)}</td>
+                  <td>{formatReviewCurrency(document.embeddingCostUsd || 0)}</td>
+                  <td>{formatReviewCurrency(document.estimatedCostUsd)}</td>
                   <td>{new Date(document.processedAt).toLocaleString()}</td>
                 </tr>
               ))}
@@ -807,6 +841,15 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
+  const [expandedSections, setExpandedSections] = useState({
+    documentProcessing: true,
+    downstream: true,
+  });
+
+  function toggleSection(section: keyof typeof expandedSections) {
+    setExpandedSections((current) => ({ ...current, [section]: !current[section] }));
+  }
+
   async function refreshConfig() {
     await onRefresh();
   }
@@ -817,61 +860,105 @@ function ConfigurationScreen({
 
   return (
     <div className="panel configuration-panel">
-      <div className="panel-heading">
-        <div>
-          <h2>Downstream Configuration</h2>
-          <p>Configure where validated document data is sent and whether the document should be deleted afterward.</p>
-        </div>
-        <button className="icon-button" title="Refresh configuration" onClick={refreshConfig}>
-          <RefreshCw size={16} />
-        </button>
-      </div>
       <div className="configuration-form">
         <div className="configuration-section">
-          <h3>Document Processing Configuration</h3>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={config.useOcrForDocumentProcessing}
-              onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
-            />
-            <span>
-              Use OCR for document processing
-              <small>Extract text locally with on-prem OCR before classification and extraction.</small>
-            </span>
-          </label>
-          <p className="warning-text">
-            Processing PDFs directly can cost more because the full PDF is sent to the model instead of locally extracted text.
-          </p>
+          <button
+            className="configuration-section-toggle"
+            type="button"
+            aria-expanded={expandedSections.documentProcessing}
+            onClick={() => toggleSection('documentProcessing')}
+          >
+            <span>Document Processing Configuration</span>
+            {expandedSections.documentProcessing ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {expandedSections.documentProcessing && (
+            <div className="configuration-section-body">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.useOcrForDocumentProcessing}
+                  onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
+                />
+                <span>
+                  Use extracted text for document processing
+                  <small>Extract text before classification, schema generation, and extraction.</small>
+                </span>
+              </label>
+              {config.useOcrForDocumentProcessing && (
+                <label>
+                  Text extraction engine
+                  <select
+                    value={config.documentTextMode}
+                    onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
+                  >
+                    <option value="ocr">Built in</option>
+                    <option value="markdown">Markdown (Docling service)</option>
+                  </select>
+                </label>
+              )}
+              {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
+                <label>
+                  Docling markdown service URL
+                  <input
+                    type="url"
+                    placeholder="https://your-function-app.azurewebsites.net/api/extract-markdown"
+                    value={config.markdownServiceUrl}
+                    onChange={(event) => onConfigChange({ ...config, markdownServiceUrl: event.target.value })}
+                  />
+                </label>
+              )}
+              {!config.useOcrForDocumentProcessing && (
+                <p className="warning-text">
+                  Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="configuration-section">
-          <h3>Downstream Configuration</h3>
-        <label>
-          Downstream API URL
-          <input
-            type="url"
-            placeholder="https://example.com/api/documents"
-            value={config.downstreamUrl}
-            onChange={(event) => onConfigChange({ ...config, downstreamUrl: event.target.value })}
-          />
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={config.deleteAfterDownstream}
-            onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
-          />
-          <span>Delete document after sending to downstream</span>
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={config.sendKeyValuePairs}
-            onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
-          />
-          <span>Send key value pairs</span>
-        </label>
+          <button
+            className="configuration-section-toggle"
+            type="button"
+            aria-expanded={expandedSections.downstream}
+            onClick={() => toggleSection('downstream')}
+          >
+            <span>Downstream Configuration</span>
+            {expandedSections.downstream ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {expandedSections.downstream && (
+            <div className="configuration-section-body">
+              <label>
+                Downstream API URL
+                <input
+                  type="url"
+                  placeholder="https://example.com/api/documents"
+                  value={config.downstreamUrl}
+                  onChange={(event) => onConfigChange({ ...config, downstreamUrl: event.target.value })}
+                />
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.deleteAfterDownstream}
+                  onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
+                />
+                <span>Delete document after sending to downstream</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.sendKeyValuePairs}
+                  onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
+                />
+                <span>Send key value pairs</span>
+              </label>
+              <p className="help-text">
+                When saved, validation submits will forward clean JSON data to the downstream system using this URL.
+              </p>
+            </div>
+          )}
+        </div>
         <div className="configuration-actions">
           <button className="secondary-button compact" type="button" onClick={refreshConfig}>
             <RefreshCw size={16} />
@@ -881,10 +968,6 @@ function ConfigurationScreen({
             <Save size={16} />
             Save
           </button>
-        </div>
-        <p className="help-text">
-          When saved, validation submits will forward clean JSON data to the downstream system using this URL.
-        </p>
         </div>
       </div>
     </div>
@@ -2391,6 +2474,17 @@ function ValidationScreen({
     await onValidated(message);
   }
 
+  async function reprocess() {
+    if (!document) return;
+    const updated = await api.reprocessDocument(document._id);
+    const message = `Document reprocessing started: ${document.originalName}`;
+    const normalizedValues = normalizeExtractedDataToSchema(updated.extractedData, documentTypeFor(updated));
+    setDocument({ ...updated, extractedData: normalizedValues });
+    setValues(normalizedValues);
+    onNotify(message, 'info');
+    await onRefresh();
+  }
+
   function downloadExtractedJson() {
     if (!document) return;
     const normalizedValues = normalizeExtractedDataToSchema(values, documentTypeFor(document));
@@ -2584,6 +2678,10 @@ function ValidationScreen({
               <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
                 <BrainCircuit size={16} />
                 Reclassify
+              </button>
+              <button className="secondary-button" type="button" onClick={reprocess}>
+                <RotateCcw size={16} />
+                Reprocess
               </button>
               <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
                 <X size={16} />
