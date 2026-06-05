@@ -26,7 +26,6 @@ function mockValue(label: string, type: string, index: number) {
   if (type === 'number') return index + 1;
   if (type === 'currency') return Number((250 + index * 125.5).toFixed(2));
   if (type === 'boolean') return true;
-  if (type === 'table') return [{ item: 'Sample line', quantity: 1, amount: 100 }];
   return `Extracted ${label}`;
 }
 
@@ -37,7 +36,12 @@ function mockExtractionFromSchema(docType: DocumentTypeDocument): ExtractedValue
       key: field.key,
       label: field.label,
       type: field.type,
-      value: mockValue(field.label, field.type, index),
+      value: field.type === 'table'
+        ? [(field.columns || []).reduce<Record<string, unknown>>((row, column) => {
+          row[column.key] = mockValue(column.label, column.type, index);
+          return row;
+        }, {})]
+        : mockValue(field.label, field.type, index),
       confidence: Number((0.82 + Math.min(index, 8) * 0.015).toFixed(2)),
       boundingBoxes: [],
     }));
