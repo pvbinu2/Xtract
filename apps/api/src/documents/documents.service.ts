@@ -122,6 +122,7 @@ export class DocumentsService {
         documentTypeName: docType?.name ?? 'Pending classification',
         classificationScore: docType ? 1 : undefined,
         classificationMethod: docType ? 'manual' : 'vector',
+        classificationModel: docType ? 'manual' : undefined,
         status: 'processing',
         extractedData: [],
       });
@@ -166,6 +167,10 @@ export class DocumentsService {
         docType.fields,
         docType.name,
         useOcrForDocumentProcessing,
+        {
+          model: docType.extractionModel,
+          reasoningEffort: docType.extractionReasoningEffort,
+        },
       );
       document.extractedData = await attachBoundingBoxes(
         localPath,
@@ -180,7 +185,17 @@ export class DocumentsService {
         estimatedCostUsd: 0,
         processedAt: new Date(),
       };
+      processingMetrics.extractionCostUsd = processingMetrics.estimatedCostUsd || 0;
+      processingMetrics.classificationCostUsd = 0;
+      processingMetrics.embeddingCostUsd = 0;
+      processingMetrics.estimatedCostUsd =
+        Number(processingMetrics.extractionCostUsd || 0) +
+        Number(processingMetrics.classificationCostUsd || 0) +
+        Number(processingMetrics.embeddingCostUsd || 0);
       document.processingMetrics = processingMetrics;
+      if (!document.classificationModel) {
+        document.classificationModel = document.classificationMethod === 'manual' ? 'manual' : 'unknown';
+      }
       document.processingMode = useOcrForDocumentProcessing ? 'ocr' : 'pdf';
       document.status = 'extracted';
       document.error = undefined;
@@ -261,47 +276,73 @@ export class DocumentsService {
 
   private async recordBusinessReviewProcessing(document: IncomingDocumentDocument, metrics: ProcessingMetrics) {
     const processedAt = metrics.processedAt ?? new Date();
-    await Promise.all([
-      this.businessReviewSummaryModel.findOneAndUpdate(
-        { key: 'global' },
-        {
-          $setOnInsert: { key: 'global' },
-          $inc: {
-            filesProcessed: 1,
-            inputTokens: Number(metrics.inputTokens || 0),
-            outputTokens: Number(metrics.outputTokens || 0),
-            totalTokens: Number(metrics.totalTokens || 0),
-            estimatedCostUsd: Number(metrics.estimatedCostUsd || 0),
-          },
+    const extractionCostUsd = Number(metrics.extractionCostUsd ?? metrics.estimatedCostUsd ?? 0);
+    const classificationCostUsd = Number(metrics.classificationCostUsd || 0);
+    const embeddingCostUsd = Number(metrics.embeddingCostUsd || 0);
+    const estimatedCostUsd = Number((extractionCostUsd + classificationCostUsd + embeddingCostUsd).toFixed(8));
+    await this.businessReviewSummaryModel.findOneAndUpdate(
+      { key: 'global' },
+      {
+        $setOnInsert: { key: 'global' },
+        $inc: {
+          filesProcessed: 1,
+          inputTokens: Number(metrics.inputTokens || 0),
+          outputTokens: Number(metrics.outputTokens || 0),
+          totalTokens: Number(metrics.totalTokens || 0),
+          estimatedCostUsd,
+          extractionCostUsd,
+          classificationCostUsd,
+          embeddingCostUsd,
         },
-        { upsert: true, new: true },
-      ),
-      this.businessReviewHistoryModel.create({
-        documentId: String(document._id),
-        fileName: document.originalName,
-        documentTypeName: document.documentTypeName,
-        category: document.category,
-        model: metrics.model,
-        inputTokens: Number(metrics.inputTokens || 0),
-        outputTokens: Number(metrics.outputTokens || 0),
-        totalTokens: Number(metrics.totalTokens || 0),
-        estimatedCostUsd: Number(metrics.estimatedCostUsd || 0),
-        processedAt,
-      }),
-    ]);
+      },
+      { upsert: true, new: true },
+    );
+
+    await this.businessReviewHistoryModel.create({
+      documentId: String(document._id),
+      fileName: document.originalName,
+      documentTypeName: document.documentTypeName,
+      category: document.category,
+      status: document.status,
+      model: metrics.model,
+      classificationModel: document.classificationModel,
+      extractionModel: metrics.model,
+      inputTokens: Number(metrics.inputTokens || 0),
+      outputTokens: Number(metrics.outputTokens || 0),
+      totalTokens: Number(metrics.totalTokens || 0),
+      estimatedCostUsd,
+      extractionCostUsd,
+      classificationCostUsd,
+      embeddingCostUsd,
+      processedAt,
+    });
+
+    const staleHistory = await this.businessReviewHistoryModel
+      .find()
+      .select('_id')
+      .sort({ processedAt: -1, _id: -1 })
+      .skip(5)
+      .lean();
+
+    if (staleHistory.length) {
+      await this.businessReviewHistoryModel.deleteMany({ _id: { $in: staleHistory.map((entry) => entry._id) } });
+    }
   }
 
   async businessReviewSummary() {
-    const processedStatuses = ['extracted', 'validated', 'rejected'];
-    const [totalFiles, filesProcessing, filesFailed, persistedSummary, processedDocuments] = await Promise.all([
+    const [totalFiles, filesProcessing, filesFailed, persistedSummary, recentDocuments] = await Promise.all([
       this.documentModel.countDocuments(),
       this.documentModel.countDocuments({ status: 'processing' }),
       this.documentModel.countDocuments({ status: 'failed' }),
-      this.businessReviewSummaryModel.findOne({ key: 'global' }).lean(),
-      this.documentModel
-        .find({ status: { $in: processedStatuses } })
-        .select('originalName status processingMetrics updatedAt')
-        .sort({ updatedAt: -1 })
+      this.businessReviewSummaryModel.findOneAndUpdate(
+        { key: 'global' },
+        { $setOnInsert: { key: 'global' } },
+        { upsert: true, new: true },
+      ),
+      this.businessReviewHistoryModel
+        .find()
+        .sort({ processedAt: -1, _id: -1 })
+        .limit(5)
         .lean(),
     ]);
 
@@ -316,16 +357,33 @@ export class DocumentsService {
         total: persistedSummary?.totalTokens || 0,
       },
       estimatedCostUsd: Number((persistedSummary?.estimatedCostUsd || 0).toFixed(8)),
+      extractionCostUsd: Number((persistedSummary?.extractionCostUsd || 0).toFixed(8)),
+      classificationCostUsd: Number((persistedSummary?.classificationCostUsd || 0).toFixed(8)),
+      embeddingCostUsd: Number((persistedSummary?.embeddingCostUsd || 0).toFixed(8)),
       documentsWithRecordedUsage: persistedSummary?.filesProcessed || 0,
-      recentDocuments: processedDocuments.slice(0, 8).map((doc) => ({
-        id: String(doc._id),
-        name: doc.originalName,
-        status: doc.status,
-        tokens: doc.processingMetrics?.totalTokens || 0,
-        estimatedCostUsd: doc.processingMetrics?.estimatedCostUsd || 0,
-        processedAt: doc.processingMetrics?.processedAt || (doc as unknown as { updatedAt?: Date }).updatedAt,
+      recentDocuments: recentDocuments.map((doc) => ({
+        id: doc.documentId,
+        name: doc.fileName,
+        status: doc.status || 'extracted',
+        tokens: doc.totalTokens || 0,
+        estimatedCostUsd: doc.estimatedCostUsd || 0,
+        extractionCostUsd: doc.extractionCostUsd ?? doc.estimatedCostUsd ?? 0,
+        classificationCostUsd: doc.classificationCostUsd || 0,
+        embeddingCostUsd: doc.embeddingCostUsd || 0,
+        classificationModel: doc.classificationModel,
+        extractionModel: doc.extractionModel || doc.model,
+        processedAt: doc.processedAt || (doc as unknown as { updatedAt?: Date }).updatedAt,
       })),
     };
+  }
+
+  async resetBusinessReview() {
+    await Promise.all([
+      this.businessReviewSummaryModel.deleteMany({}),
+      this.businessReviewHistoryModel.deleteMany({}),
+    ]);
+
+    return { reset: true };
   }
 
   private async getDownstreamConfig(overrideUrl?: string, overrideSendKeyValuePairs?: boolean) {

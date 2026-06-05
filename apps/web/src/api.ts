@@ -1,4 +1,13 @@
-import { BusinessReviewSummary, DocumentType, ExtractedValue, IncomingDocument, PagedResult } from './types';
+import { BusinessReviewSummary, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort } from './types';
+
+export type AppConfigPayload = {
+  downstreamUrl: string;
+  deleteAfterDownstream: boolean;
+  sendKeyValuePairs: boolean;
+  useOcrForDocumentProcessing: boolean;
+  classificationModel: string;
+  classificationReasoningEffort: ReasoningEffort;
+};
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
 
@@ -36,6 +45,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ includeInClassification }),
     }),
+  updateExtractionModel: (id: string, payload: { extractionModel: string; extractionReasoningEffort: ReasoningEffort }) =>
+    request<DocumentType>(`/document-types/${id}/extraction-model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   generateTemplate: (id: string, prompt: string) =>
     request<DocumentType>(`/document-types/${id}/generate-template`, {
       method: 'POST',
@@ -65,6 +80,7 @@ export const api = {
   listDocuments: (params: URLSearchParams) =>
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
   getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
+  resetBusinessReview: () => request<{ reset: boolean }>('/documents/business-review', { method: 'DELETE' }),
   deleteDocument: (id: string) => request(`/documents/${id}`, { method: 'DELETE' }),
   reprocessDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reprocess`, { method: 'POST' }),
   reclassifyDocument: (id: string, documentTypeId: string) =>
@@ -93,19 +109,9 @@ export const api = {
       body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
     }),
   getConfiguration: () =>
-    request<{ downstreamUrl: string; deleteAfterDownstream: boolean; sendKeyValuePairs?: boolean; useOcrForDocumentProcessing?: boolean }>('/configuration'),
-  saveConfiguration: (payload: {
-    downstreamUrl: string;
-    deleteAfterDownstream: boolean;
-    sendKeyValuePairs: boolean;
-    useOcrForDocumentProcessing: boolean;
-  }) =>
-    request<{
-      downstreamUrl: string;
-      deleteAfterDownstream: boolean;
-      sendKeyValuePairs: boolean;
-      useOcrForDocumentProcessing: boolean;
-    }>('/configuration', {
+    request<Partial<AppConfigPayload>>('/configuration'),
+  saveConfiguration: (payload: AppConfigPayload) =>
+    request<AppConfigPayload>('/configuration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

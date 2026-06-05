@@ -26,7 +26,21 @@ function getOpenAI() {
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  return process.env.OPENAI_MODEL || 'gpt-5-nano';
+}
+
+function supportsReasoningEffort(model) {
+  return /^(gpt-5|o\d|o\d-)/.test(model);
+}
+
+function openAIRequestConfig(options = {}) {
+  const model = options.model || modelName();
+  return {
+    model,
+    ...(options.reasoningEffort && supportsReasoningEffort(model)
+      ? { reasoning: { effort: options.reasoningEffort } }
+      : {}),
+  };
 }
 
 const modelPricingUsdPerMillion = {
@@ -99,9 +113,13 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false) {
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const documentText = useOcr ? await extractDocumentText(document.filePath) : '';
-  const model = modelName();
+  const requestConfig = openAIRequestConfig({
+    model: documentType.extractionModel,
+    reasoningEffort: documentType.extractionReasoningEffort,
+  });
+  const model = requestConfig.model;
   const response = await withOpenAIRetry(() => client.responses.create({
-    model,
+    ...requestConfig,
     input: [
       {
         role: 'user',
@@ -200,41 +218,63 @@ async function markDocumentFailed(documents, documentId, error) {
 
 async function recordBusinessReviewProcessing(db, document, documentType, metrics) {
   const processedAt = metrics?.processedAt || new Date();
+  const extractionCostUsd = Number(metrics?.extractionCostUsd ?? metrics?.estimatedCostUsd ?? 0);
+  const classificationCostUsd = Number(metrics?.classificationCostUsd || 0);
+  const embeddingCostUsd = Number(metrics?.embeddingCostUsd || 0);
+  const estimatedCostUsd = Number((extractionCostUsd + classificationCostUsd + embeddingCostUsd).toFixed(8));
   const normalizedMetrics = {
     model: metrics?.model || 'mock',
     inputTokens: Number(metrics?.inputTokens || 0),
     outputTokens: Number(metrics?.outputTokens || 0),
     totalTokens: Number(metrics?.totalTokens || 0),
-    estimatedCostUsd: Number(metrics?.estimatedCostUsd || 0),
+    estimatedCostUsd,
+    extractionCostUsd,
+    classificationCostUsd,
+    embeddingCostUsd,
     processedAt,
   };
 
-  await Promise.all([
-    db.collection('business_review_summaries').updateOne(
-      { key: 'global' },
-      {
-        $setOnInsert: { key: 'global', createdAt: new Date() },
-        $inc: {
-          filesProcessed: 1,
-          inputTokens: normalizedMetrics.inputTokens,
-          outputTokens: normalizedMetrics.outputTokens,
-          totalTokens: normalizedMetrics.totalTokens,
-          estimatedCostUsd: normalizedMetrics.estimatedCostUsd,
-        },
-        $set: { updatedAt: new Date() },
+  await db.collection('business_review_summaries').updateOne(
+    { key: 'global' },
+    {
+      $setOnInsert: { key: 'global', createdAt: new Date() },
+      $inc: {
+        filesProcessed: 1,
+        inputTokens: normalizedMetrics.inputTokens,
+        outputTokens: normalizedMetrics.outputTokens,
+        totalTokens: normalizedMetrics.totalTokens,
+        estimatedCostUsd: normalizedMetrics.estimatedCostUsd,
+        extractionCostUsd: normalizedMetrics.extractionCostUsd,
+        classificationCostUsd: normalizedMetrics.classificationCostUsd,
+        embeddingCostUsd: normalizedMetrics.embeddingCostUsd,
       },
-      { upsert: true },
-    ),
-    db.collection('business_review_history').insertOne({
-      documentId: String(document._id),
-      fileName: document.originalName,
-      documentTypeName: documentType?.name || document.documentTypeName,
-      category: documentType?.category || document.category,
-      ...normalizedMetrics,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }),
-  ]);
+      $set: { updatedAt: new Date() },
+    },
+    { upsert: true },
+  );
+
+  await db.collection('business_review_history').insertOne({
+    documentId: String(document._id),
+    fileName: document.originalName,
+    documentTypeName: documentType?.name || document.documentTypeName,
+    category: documentType?.category || document.category,
+    status: 'extracted',
+    classificationModel: document.classificationModel,
+    extractionModel: normalizedMetrics.model,
+    ...normalizedMetrics,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const staleHistory = await db.collection('business_review_history')
+    .find({}, { projection: { _id: 1 } })
+    .sort({ processedAt: -1, _id: -1 })
+    .skip(5)
+    .toArray();
+
+  if (staleHistory.length) {
+    await db.collection('business_review_history').deleteMany({ _id: { $in: staleHistory.map((entry) => entry._id) } });
+  }
 }
 
 async function processDocument(message, context) {
@@ -286,24 +326,32 @@ async function processDocument(message, context) {
 
     try {
       if (!documentType) {
-      const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
-      const classification = await classifyDocument(localDocument, allDocumentTypes, {
-        useOcr: useOcrForDocumentProcessing,
-      });
-      documentType = classification.documentType;
-      await documents.updateOne(
-        { _id: document._id },
-        {
-          $set: {
-            category: documentType.category,
-            documentTypeId: normalizeObjectId(documentType._id),
-            documentTypeName: documentType.name,
-            classificationScore: classification.score,
-            classificationMethod: classification.method || 'llm',
-            updatedAt: new Date(),
+        const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
+        const classification = await classifyDocument(localDocument, allDocumentTypes, {
+          useOcr: useOcrForDocumentProcessing,
+          model: configuration?.classificationModel,
+          reasoningEffort: configuration?.classificationReasoningEffort,
+        });
+        documentType = classification.documentType;
+        localDocument.classificationMetrics = classification.classificationMetrics;
+        localDocument.embeddingMetrics = classification.embeddingMetrics;
+        await documents.updateOne(
+          { _id: document._id },
+          {
+            $set: {
+              category: documentType.category,
+              documentTypeId: normalizeObjectId(documentType._id),
+              documentTypeName: documentType.name,
+              classificationScore: classification.score,
+              classificationMethod: classification.method || 'llm',
+              classificationModel: classification.model || 'unknown',
+              updatedAt: new Date(),
+            },
           },
-        },
-      );
+        );
+        localDocument.classificationModel = classification.model || 'unknown';
+      } else if (!localDocument.classificationModel) {
+        localDocument.classificationModel = localDocument.classificationMethod === 'manual' ? 'manual' : 'unknown';
       }
 
       const extraction = await extractValuesWithOpenAI(localDocument, documentType, useOcrForDocumentProcessing);
@@ -329,6 +377,39 @@ async function processDocument(message, context) {
         estimatedCostUsd: 0,
         processedAt: new Date(),
       };
+      const classificationMetrics = localDocument.classificationMetrics || {
+        model: localDocument.classificationModel || 'unknown',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+      };
+      const embeddingMetrics = localDocument.embeddingMetrics || {
+        model: 'none',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+      };
+      processingMetrics.extractionCostUsd = Number(processingMetrics.estimatedCostUsd || 0);
+      processingMetrics.classificationCostUsd = Number(classificationMetrics.estimatedCostUsd || 0);
+      processingMetrics.embeddingCostUsd = Number(embeddingMetrics.estimatedCostUsd || 0);
+      processingMetrics.inputTokens =
+        Number(processingMetrics.inputTokens || 0) +
+        Number(classificationMetrics.inputTokens || 0) +
+        Number(embeddingMetrics.inputTokens || 0);
+      processingMetrics.outputTokens =
+        Number(processingMetrics.outputTokens || 0) +
+        Number(classificationMetrics.outputTokens || 0);
+      processingMetrics.totalTokens =
+        Number(processingMetrics.totalTokens || 0) +
+        Number(classificationMetrics.totalTokens || 0) +
+        Number(embeddingMetrics.totalTokens || 0);
+      processingMetrics.estimatedCostUsd = Number((
+        processingMetrics.extractionCostUsd +
+        processingMetrics.classificationCostUsd +
+        processingMetrics.embeddingCostUsd
+      ).toFixed(8));
 
       await documents.updateOne(
         { _id: document._id },
@@ -337,13 +418,14 @@ async function processDocument(message, context) {
             status: 'extracted',
             extractedData,
             processingMetrics,
+            classificationModel: localDocument.classificationModel,
             processingMode: useOcrForDocumentProcessing ? 'ocr' : 'pdf',
             error: null,
             updatedAt: new Date(),
           },
         },
       );
-      await recordBusinessReviewProcessing(db, document, documentType, processingMetrics);
+      await recordBusinessReviewProcessing(db, localDocument, documentType, processingMetrics);
     } finally {
       if (document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
     }

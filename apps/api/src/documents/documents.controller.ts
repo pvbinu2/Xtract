@@ -28,6 +28,11 @@ export class DocumentsController {
     return this.service.businessReviewSummary();
   }
 
+  @Delete('business-review')
+  resetBusinessReview() {
+    return this.service.resetBusinessReview();
+  }
+
   @Post('upload')
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(

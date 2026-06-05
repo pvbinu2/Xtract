@@ -12,7 +12,19 @@ type ProcessingMetrics = {
   outputTokens: number;
   totalTokens: number;
   estimatedCostUsd: number;
+  extractionCostUsd?: number;
+  classificationCostUsd?: number;
+  embeddingCostUsd?: number;
   processedAt: Date;
+};
+type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+type OpenAIRequestOptions = {
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+};
+type OpenAIRequestConfig = {
+  model: string;
+  reasoning?: { effort: string };
 };
 
 let client: OpenAI | undefined;
@@ -24,7 +36,21 @@ function getClient() {
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  return process.env.OPENAI_MODEL || 'gpt-5-nano';
+}
+
+function supportsReasoningEffort(model: string) {
+  return /^(gpt-5|o\d|o\d-)/.test(model);
+}
+
+function openAIRequestConfig(options?: OpenAIRequestOptions): OpenAIRequestConfig {
+  const model = options?.model || modelName();
+  return {
+    model,
+    ...(options?.reasoningEffort && supportsReasoningEffort(model)
+      ? { reasoning: { effort: options.reasoningEffort } }
+      : {}),
+  };
 }
 
 const modelPricingUsdPerMillion: Record<string, { input: number; output: number }> = {
@@ -190,13 +216,19 @@ function normalizeSchemaField(field: SchemaField, prompt: string): SchemaField {
   };
 }
 
-export async function inferTemplateWithOpenAI(filePath: string, prompt: string, useOcr = false): Promise<SchemaField[] | undefined> {
+export async function inferTemplateWithOpenAI(
+  filePath: string,
+  prompt: string,
+  useOcr = false,
+  options?: OpenAIRequestOptions,
+): Promise<SchemaField[] | undefined> {
   const openai = getClient();
   if (!openai) return undefined;
   const documentText = useOcr ? await extractDocumentText(filePath) : '';
 
+  const requestConfig = openAIRequestConfig(options);
   const response = await withOpenAIRetry(() => openai.responses.create({
-    model: modelName(),
+    ...requestConfig,
     input: [
       {
         role: 'user',
@@ -223,7 +255,7 @@ export async function inferTemplateWithOpenAI(filePath: string, prompt: string, 
       },
     ],
     text: { format: { type: 'json_object' } },
-  }));
+  } as any));
 
   const parsed = parseJsonObject(response.output_text) as { fields?: SchemaField[] };
   return (parsed.fields || []).map((field) => normalizeSchemaField(field, prompt));
@@ -234,15 +266,17 @@ export async function extractValuesWithOpenAI(
   fields: SchemaField[],
   documentTypeName: string,
   useOcr = false,
+  options?: OpenAIRequestOptions,
 ): Promise<{ values: ExtractedValue[]; metrics: ProcessingMetrics } | undefined> {
   const openai = getClient();
   if (!openai) return undefined;
 
   const selectedFields = fields.filter((field) => field.selected);
-  const model = modelName();
+  const requestConfig = openAIRequestConfig(options);
+  const model = requestConfig.model;
   const documentText = useOcr ? await extractDocumentText(filePath) : '';
   const response = await withOpenAIRetry(() => openai.responses.create({
-    model,
+    ...requestConfig,
     input: [
       {
         role: 'user',
@@ -275,7 +309,7 @@ export async function extractValuesWithOpenAI(
       },
     ],
     text: { format: { type: 'json_object' } },
-  }));
+  } as any));
 
   const parsed = parseJsonObject(response.output_text) as {
     fields?: Array<{ key: string; value: unknown; confidence?: number }>;

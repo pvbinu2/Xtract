@@ -4,6 +4,7 @@ import { HydratedDocument } from 'mongoose';
 export type DocumentTypeDocument = HydratedDocument<DocumentType>;
 
 export type FieldType = 'string' | 'number' | 'date' | 'currency' | 'boolean' | 'table';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 @Schema({ _id: false })
 export class TableColumn {
@@ -64,6 +65,12 @@ export class DocumentType {
 
   @Prop({ type: [ExtractionFieldSchema], default: [] })
   fields!: ExtractionField[];
+
+  @Prop({ default: 'gpt-5-nano' })
+  extractionModel!: string;
+
+  @Prop({ default: 'low' })
+  extractionReasoningEffort!: ReasoningEffort;
 
   @Prop({ default: false })
   finalized!: boolean;

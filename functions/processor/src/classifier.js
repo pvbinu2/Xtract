@@ -15,11 +15,111 @@ function getOpenAI() {
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  return process.env.OPENAI_MODEL || 'gpt-5-nano';
+}
+
+function supportsReasoningEffort(model) {
+  return /^(gpt-5|o\d|o\d-)/.test(model);
+}
+
+function openAIRequestConfig(options = {}) {
+  const model = options.model || modelName();
+  return {
+    model,
+    ...(options.reasoningEffort && supportsReasoningEffort(model)
+      ? { reasoning: { effort: options.reasoningEffort } }
+      : {}),
+  };
 }
 
 function embeddingModelName() {
   return process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+}
+
+const modelPricingUsdPerMillion = {
+  'gpt-4o-mini': { input: 0.15, output: 0.60 },
+  'gpt-4o': { input: 2.50, output: 10.00 },
+  'gpt-4.1': { input: 2.00, output: 8.00 },
+  'gpt-4.1-mini': { input: 0.40, output: 1.60 },
+  'gpt-4.1-nano': { input: 0.10, output: 0.40 },
+  'gpt-5': { input: 1.25, output: 10.00 },
+  'gpt-5-mini': { input: 0.25, output: 2.00 },
+  'gpt-5-nano': { input: 0.05, output: 0.40 },
+};
+
+const embeddingPricingUsdPerMillion = {
+  'text-embedding-3-small': 0.02,
+  'text-embedding-3-large': 0.13,
+  'text-embedding-ada-002': 0.10,
+};
+
+function pricingForModel(model) {
+  return modelPricingUsdPerMillion[model] || { input: 0, output: 0 };
+}
+
+function pricingForEmbeddingModel(model) {
+  const configured = Number(process.env.OPENAI_EMBEDDING_COST_PER_1M_TOKENS);
+  if (Number.isFinite(configured)) return configured;
+  return embeddingPricingUsdPerMillion[model] || 0;
+}
+
+function tokenUsageFromResponse(response) {
+  const usage = response?.usage || {};
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
+
+  return {
+    inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0,
+    outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+    totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
+  };
+}
+
+function metricsFromResponse(response, model) {
+  const tokens = tokenUsageFromResponse(response);
+  const pricing = pricingForModel(model);
+  const estimatedCostUsd =
+    (tokens.inputTokens / 1_000_000) * pricing.input +
+    (tokens.outputTokens / 1_000_000) * pricing.output;
+
+  return {
+    model,
+    ...tokens,
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(8)),
+  };
+}
+
+function embeddingMetricsFromResponse(response, model) {
+  const tokens = tokenUsageFromResponse(response);
+  const estimatedCostUsd = (tokens.totalTokens / 1_000_000) * pricingForEmbeddingModel(model);
+  return {
+    model,
+    inputTokens: tokens.totalTokens,
+    outputTokens: 0,
+    totalTokens: tokens.totalTokens,
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(8)),
+  };
+}
+
+function emptyMetrics(model = 'none') {
+  return {
+    model,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCostUsd: 0,
+  };
+}
+
+function addMetrics(left = emptyMetrics(), right = emptyMetrics()) {
+  return {
+    model: left.model || right.model,
+    inputTokens: Number(left.inputTokens || 0) + Number(right.inputTokens || 0),
+    outputTokens: Number(left.outputTokens || 0) + Number(right.outputTokens || 0),
+    totalTokens: Number(left.totalTokens || 0) + Number(right.totalTokens || 0),
+    estimatedCostUsd: Number((Number(left.estimatedCostUsd || 0) + Number(right.estimatedCostUsd || 0)).toFixed(8)),
+  };
 }
 
 function vectorSize() {
@@ -132,6 +232,9 @@ function fallbackClassify(fileName, candidates) {
     documentType: scored[0].candidate,
     score: Number(scored[0].score.toFixed(2)),
     method: 'llm',
+    model: 'mock',
+    classificationMetrics: emptyMetrics('mock'),
+    embeddingMetrics: emptyMetrics(embeddingModelName()),
   };
 }
 
@@ -206,11 +309,15 @@ async function resetClassifierVectors() {
 async function embedText(text) {
   const client = getOpenAI();
   if (!client) throw new Error('OPENAI_API_KEY is required to create classifier embeddings.');
+  const model = embeddingModelName();
   const response = await withOpenAIRetry(() => client.embeddings.create({
-    model: embeddingModelName(),
+    model,
     input: text || 'empty document',
   }), 'Classifier embedding');
-  return response.data[0].embedding;
+  return {
+    embedding: response.data[0].embedding,
+    metrics: embeddingMetricsFromResponse(response, model),
+  };
 }
 
 async function deleteDocumentTypeVectors(documentTypeId) {
@@ -245,7 +352,7 @@ async function upsertDocumentTypeVectors(documentType, samples) {
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
         points.push({
           id: pointId(documentType._id, sampleFileName, chunkIndex),
-          vector: await embedText(chunks[chunkIndex]),
+          vector: (await embedText(chunks[chunkIndex])).embedding,
           payload: {
             documentTypeId: String(documentType._id),
             documentTypeName: documentType.name,
@@ -275,13 +382,15 @@ async function searchDocumentTypeVectors(document) {
     text,
   ].join('\n'), embeddingTextLimit(), maxQueryChunksPerDocument());
   const hitsByPoint = new Map();
+  let embeddingMetrics = emptyMetrics(embeddingModelName());
 
   for (const chunk of chunks) {
-    const vector = await embedText(chunk);
+    const embedded = await embedText(chunk);
+    embeddingMetrics = addMetrics(embeddingMetrics, embedded.metrics);
     const response = await qdrantRequest(`/collections/${qdrantCollection()}/points/search`, {
       method: 'POST',
       body: JSON.stringify({
-        vector,
+        vector: embedded.embedding,
         limit: Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5),
         with_payload: true,
       }),
@@ -293,7 +402,10 @@ async function searchDocumentTypeVectors(document) {
     }
   }
 
-  return Array.from(hitsByPoint.values()).sort((a, b) => b.score - a.score);
+  return {
+    hits: Array.from(hitsByPoint.values()).sort((a, b) => b.score - a.score),
+    metrics: embeddingMetrics,
+  };
 }
 
 async function trainClassifierProfile(documentType, sampleFileName) {
@@ -331,9 +443,12 @@ async function classifyDocument(document, documentTypes, options = {}) {
 
   const useOcr = Boolean(options.useOcr);
   let vectorHits = [];
+  let embeddingMetrics = emptyMetrics(embeddingModelName());
   if (useOcr) {
     try {
-      vectorHits = await searchDocumentTypeVectors(document);
+      const vectorSearch = await searchDocumentTypeVectors(document);
+      vectorHits = vectorSearch.hits;
+      embeddingMetrics = vectorSearch.metrics;
     } catch (error) {
       vectorHits = [];
     }
@@ -347,6 +462,9 @@ async function classifyDocument(document, documentTypes, options = {}) {
       documentType: vectorDocumentType,
       score: Number(clampScore(topHit.score).toFixed(2)),
       method: 'vector',
+      model: embeddingModelName(),
+      classificationMetrics: emptyMetrics('vector'),
+      embeddingMetrics,
     };
   }
 
@@ -360,6 +478,10 @@ async function classifyDocument(document, documentTypes, options = {}) {
   ].slice(0, Number(process.env.CLASSIFIER_LLM_CANDIDATE_LIMIT || 8));
 
   const documentText = useOcr ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000)) : '';
+  const requestConfig = openAIRequestConfig({
+    model: options.model,
+    reasoningEffort: options.reasoningEffort,
+  });
   const content = [
     ...(useOcr ? [] : [pdfInput(document.filePath)]),
     {
@@ -386,10 +508,11 @@ async function classifyDocument(document, documentTypes, options = {}) {
   ];
 
   const response = await withOpenAIRetry(() => client.responses.create({
-    model: modelName(),
+    ...requestConfig,
     input: [{ role: 'user', content }],
     text: { format: { type: 'json_object' } },
   }), `Classifier LLM fallback for ${document._id || document.fileName}`);
+  const classificationMetrics = metricsFromResponse(response, requestConfig.model);
 
   const parsed = parseJsonObject(response.output_text);
   const selected = llmCandidates.find((candidate) => String(candidate._id) === parsed.documentTypeId) || llmCandidates[0];
@@ -397,6 +520,9 @@ async function classifyDocument(document, documentTypes, options = {}) {
     documentType: selected,
     score: Number(clampScore(parsed.score).toFixed(2)),
     method: 'llm',
+    model: requestConfig.model,
+    classificationMetrics,
+    embeddingMetrics,
   };
 }
 

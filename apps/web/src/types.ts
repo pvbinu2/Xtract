@@ -1,4 +1,5 @@
 export type FieldType = 'string' | 'number' | 'date' | 'currency' | 'boolean' | 'table';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 export type TableColumn = {
   key: string;
@@ -25,6 +26,8 @@ export type DocumentType = {
   classifierTrainedAt?: string;
   classifierTrainingError?: string;
   fields: ExtractionField[];
+  extractionModel?: string;
+  extractionReasoningEffort?: ReasoningEffort;
   finalized: boolean;
 };
 
@@ -52,7 +55,11 @@ export type IncomingDocument = {
   documentTypeName: string;
   classificationScore?: number;
   classificationMethod?: 'manual' | 'vector' | 'llm';
+  classificationModel?: string;
   processingMode?: 'ocr' | 'pdf';
+  processingMetrics?: {
+    model?: string;
+  };
   status: 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
   extractedData: ExtractedValue[];
   createdAt: string;
@@ -70,6 +77,9 @@ export type BusinessReviewSummary = {
     total: number;
   };
   estimatedCostUsd: number;
+  extractionCostUsd?: number;
+  classificationCostUsd?: number;
+  embeddingCostUsd?: number;
   documentsWithRecordedUsage: number;
   recentDocuments: Array<{
     id: string;
@@ -77,6 +87,11 @@ export type BusinessReviewSummary = {
     status: IncomingDocument['status'];
     tokens: number;
     estimatedCostUsd: number;
+    extractionCostUsd?: number;
+    classificationModel?: string;
+    extractionModel?: string;
+    classificationCostUsd?: number;
+    embeddingCostUsd?: number;
     processedAt: string;
   }>;
 };
