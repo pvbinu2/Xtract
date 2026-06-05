@@ -7,6 +7,13 @@ import { promisify } from 'util';
 const execFileAsync = promisify(execFile);
 let pdfjsPromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | undefined;
 
+export type DocumentTextMode = 'ocr' | 'markdown';
+export type DocumentTextOptions = {
+  mode?: DocumentTextMode;
+  markdownServiceUrl?: string;
+  fileName?: string;
+};
+
 async function loadPdfJs() {
   if (!pdfjsPromise) {
     pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((module) => {
@@ -67,7 +74,45 @@ async function ocrPdfText(filePath: string) {
   }
 }
 
-export async function extractDocumentText(filePath: string, limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000)) {
+async function extractMarkdownText(filePath: string, options: DocumentTextOptions = {}) {
+  const serviceUrl = options.markdownServiceUrl || process.env.DOCLING_MARKDOWN_SERVICE_URL || '';
+  if (!serviceUrl.trim()) {
+    throw new Error('Markdown extraction selected but no Docling markdown service URL is configured.');
+  }
+
+  const fileBuffer = await readFile(filePath);
+  const response = await fetch(serviceUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileName: options.fileName || filePath.split(/[\\/]/).pop() || 'document.pdf',
+      fileBase64: fileBuffer.toString('base64'),
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Docling markdown extraction failed: ${message || response.statusText}`);
+  }
+
+  const payload = await response.json() as { markdown?: unknown; text?: unknown };
+  const markdown = typeof payload.markdown === 'string' ? payload.markdown : payload.text;
+  if (typeof markdown !== 'string') {
+    throw new Error('Docling markdown extraction response did not include markdown text.');
+  }
+
+  return markdown;
+}
+
+export async function extractDocumentText(
+  filePath: string,
+  limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000),
+  options: DocumentTextOptions = {},
+) {
+  if (options.mode === 'markdown') {
+    return (await extractMarkdownText(filePath, options)).replace(/\s+\n/g, '\n').trim().slice(0, limit);
+  }
+
   const minTextLength = Number(process.env.OCR_MIN_TEXT_LENGTH || 80);
   const embeddedText = await extractPdfText(filePath);
   const text = embeddedText.trim().length >= minTextLength ? embeddedText : await ocrPdfText(filePath);

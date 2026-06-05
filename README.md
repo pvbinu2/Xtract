@@ -112,6 +112,8 @@ docker compose up -d mongo azurite qdrant
 
 Use `QDRANT_URL=http://127.0.0.1:6333` for local vector search. Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`. To use the Azure Function worker, run the API with `PROCESSING_MODE=queue` and set `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage`, then start `npm run dev:function`.
 
+The Docker `docling-markdown` service runs the Docling markdown function app on port `7072`. The app container calls it at `http://docling-markdown:7072/api/extract-markdown`; from the host browser, use `http://127.0.0.1:7072/api/extract-markdown` in the Configuration page.
+
 OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts. The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.
 
 ## Document Reclassification

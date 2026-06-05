@@ -66,7 +66,40 @@ async function ocrPdfText(filePath) {
   }
 }
 
-async function extractDocumentText(filePath, limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000)) {
+async function extractMarkdownText(filePath, options = {}) {
+  const serviceUrl = options.markdownServiceUrl || process.env.DOCLING_MARKDOWN_SERVICE_URL || '';
+  if (!serviceUrl.trim()) {
+    throw new Error('Markdown extraction selected but no Docling markdown service URL is configured.');
+  }
+
+  const response = await fetch(serviceUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileName: options.fileName || path.basename(filePath),
+      fileBase64: fs.readFileSync(filePath).toString('base64'),
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Docling markdown extraction failed: ${message || response.statusText}`);
+  }
+
+  const payload = await response.json();
+  const markdown = typeof payload.markdown === 'string' ? payload.markdown : payload.text;
+  if (typeof markdown !== 'string') {
+    throw new Error('Docling markdown extraction response did not include markdown text.');
+  }
+
+  return markdown;
+}
+
+async function extractDocumentText(filePath, limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000), options = {}) {
+  if (options.mode === 'markdown') {
+    return (await extractMarkdownText(filePath, options)).replace(/\s+\n/g, '\n').trim().slice(0, limit);
+  }
+
   const minTextLength = Number(process.env.OCR_MIN_TEXT_LENGTH || 80);
   const embeddedText = await extractPdfText(filePath);
   const text = embeddedText.trim().length >= minTextLength ? embeddedText : await ocrPdfText(filePath);

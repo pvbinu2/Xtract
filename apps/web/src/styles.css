@@ -610,7 +610,7 @@ textarea {
 }
 
 .document-open {
-  grid-template-columns: minmax(0, 1fr) 120px 90px 86px 190px;
+  grid-template-columns: minmax(0, 1fr) 120px 90px 118px 190px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -693,6 +693,9 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  justify-self: stretch;
+  width: 118px;
+  flex-shrink: 0;
   gap: 6px;
   min-height: 28px;
   border-radius: 8px;
@@ -702,6 +705,7 @@ textarea {
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .processing-mode-icon {
@@ -716,6 +720,10 @@ textarea {
 
 .processing-mode-icon.pdf {
   color: #7c3aed;
+}
+
+.processing-mode-icon.markdown {
+  color: #0369a1;
 }
 
 .classification-score-line {

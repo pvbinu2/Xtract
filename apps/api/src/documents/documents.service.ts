@@ -174,6 +174,8 @@ export class DocumentsService {
         {
           model: docType.extractionModel,
           reasoningEffort: docType.extractionReasoningEffort,
+          documentTextMode: configuration.documentTextMode,
+          markdownServiceUrl: configuration.markdownServiceUrl,
         },
       );
       document.extractedData = await attachBoundingBoxes(
@@ -200,7 +202,7 @@ export class DocumentsService {
       if (!document.classificationModel) {
         document.classificationModel = document.classificationMethod === 'manual' ? 'manual' : 'unknown';
       }
-      document.processingMode = useOcrForDocumentProcessing ? 'ocr' : 'pdf';
+      document.processingMode = useOcrForDocumentProcessing && configuration.documentTextMode === 'markdown' ? 'markdown' : useOcrForDocumentProcessing ? 'ocr' : 'pdf';
       document.status = 'extracted';
       document.error = undefined;
       const saved = await document.save();

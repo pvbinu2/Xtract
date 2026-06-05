@@ -3,6 +3,10 @@ set -e
 
 cd /app
 npm install
+FUNC_BIN="/app/functions/processor/node_modules/.bin/func"
+if [ ! -x "$FUNC_BIN" ]; then
+  FUNC_BIN="/app/node_modules/.bin/func"
+fi
 
 cd /app/apps/web
 npm run dev -- --host 0.0.0.0 &
@@ -11,6 +15,6 @@ cd /app/apps/api
 npm run dev -- --watch --host 0.0.0.0 &
 
 cd /app/functions/processor
-npx func start --javascript --host 0.0.0.0
+"$FUNC_BIN" start --javascript --host 0.0.0.0
 
 wait

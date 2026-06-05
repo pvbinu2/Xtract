@@ -5,6 +5,8 @@ export type AppConfigPayload = {
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
   useOcrForDocumentProcessing: boolean;
+  documentTextMode: 'ocr' | 'markdown';
+  markdownServiceUrl: string;
   classificationModel: string;
   classificationReasoningEffort: ReasoningEffort;
 };

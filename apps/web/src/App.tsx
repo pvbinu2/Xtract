@@ -161,6 +161,13 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
       </span>
     );
   }
+  if (mode === 'markdown') {
+    return (
+      <span className="processing-mode-icon markdown" title="Processed using markdown" aria-label="Processed using markdown">
+        <FileText size={14} />
+      </span>
+    );
+  }
   return null;
 }
 
@@ -286,6 +293,8 @@ export function App() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    documentTextMode: 'ocr',
+    markdownServiceUrl: '',
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
   });
@@ -298,6 +307,8 @@ export function App() {
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+        markdownServiceUrl: saved.markdownServiceUrl || '',
         classificationModel: saved.classificationModel || lowCostOpenAIModel,
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
       });
@@ -311,6 +322,8 @@ export function App() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+            markdownServiceUrl: parsed.markdownServiceUrl || '',
             classificationModel: parsed.classificationModel || lowCostOpenAIModel,
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
           });
@@ -836,12 +849,33 @@ function ConfigurationScreen({
               onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
             />
             <span>
-              Use OCR for document processing
-              <small>Extract text locally with on-prem OCR before classification and extraction.</small>
+              Use extracted text for document processing
+              <small>Extract text before classification, schema generation, and extraction.</small>
             </span>
           </label>
+          <label>
+            Text extraction engine
+            <select
+              value={config.documentTextMode}
+              onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
+              disabled={!config.useOcrForDocumentProcessing}
+            >
+              <option value="ocr">OCR</option>
+              <option value="markdown">Markdown (Docling service)</option>
+            </select>
+          </label>
+          <label>
+            Docling markdown service URL
+            <input
+              type="url"
+              placeholder="https://your-function-app.azurewebsites.net/api/extract-markdown"
+              value={config.markdownServiceUrl}
+              onChange={(event) => onConfigChange({ ...config, markdownServiceUrl: event.target.value })}
+              disabled={!config.useOcrForDocumentProcessing || config.documentTextMode !== 'markdown'}
+            />
+          </label>
           <p className="warning-text">
-            Processing PDFs directly can cost more because the full PDF is sent to the model instead of locally extracted text.
+            Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
           </p>
         </div>
 
