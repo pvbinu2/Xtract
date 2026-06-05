@@ -23,6 +23,15 @@ export class BusinessReviewSummary {
 
   @Prop({ default: 0 })
   estimatedCostUsd!: number;
+
+  @Prop({ default: 0 })
+  extractionCostUsd!: number;
+
+  @Prop({ default: 0 })
+  classificationCostUsd!: number;
+
+  @Prop({ default: 0 })
+  embeddingCostUsd!: number;
 }
 
 export const BusinessReviewSummarySchema = SchemaFactory.createForClass(BusinessReviewSummary);
@@ -42,7 +51,16 @@ export class BusinessReviewHistory {
   category?: string;
 
   @Prop()
+  status?: string;
+
+  @Prop()
   model?: string;
+
+  @Prop()
+  classificationModel?: string;
+
+  @Prop()
+  extractionModel?: string;
 
   @Prop({ default: 0 })
   inputTokens!: number;
@@ -55,6 +73,15 @@ export class BusinessReviewHistory {
 
   @Prop({ default: 0 })
   estimatedCostUsd!: number;
+
+  @Prop({ default: 0 })
+  extractionCostUsd!: number;
+
+  @Prop({ default: 0 })
+  classificationCostUsd!: number;
+
+  @Prop({ default: 0 })
+  embeddingCostUsd!: number;
 
   @Prop()
   processedAt?: Date;

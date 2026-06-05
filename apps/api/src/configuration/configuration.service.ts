@@ -16,6 +16,8 @@ export class ConfigurationService {
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
       useOcrForDocumentProcessing: false,
+      classificationModel: 'gpt-5-nano',
+      classificationReasoningEffort: 'low',
     };
   }
 
@@ -24,6 +26,8 @@ export class ConfigurationService {
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
     useOcrForDocumentProcessing?: boolean;
+    classificationModel?: string;
+    classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
   }): Promise<Configuration> {
     const updated = await this.configModel
       .findOneAndUpdate(
@@ -32,6 +36,8 @@ export class ConfigurationService {
           ...config,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
+          classificationModel: config.classificationModel || 'gpt-5-nano',
+          classificationReasoningEffort: config.classificationReasoningEffort || 'low',
         },
         {
           new: true,

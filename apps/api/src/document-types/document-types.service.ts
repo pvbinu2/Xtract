@@ -5,7 +5,7 @@ import { unlink } from 'fs/promises';
 import { Model } from 'mongoose';
 import { join } from 'path';
 import { inferTemplateWithOpenAI } from '../openai-document-ai';
-import { DocumentType, DocumentTypeDocument, ExtractionField, TableColumn } from '../schemas/document-type.schema';
+import { DocumentType, DocumentTypeDocument, ExtractionField, ReasoningEffort, TableColumn } from '../schemas/document-type.schema';
 import { BlobStorageService, TRAIN_CONTAINER } from '../storage/blob-storage.service';
 import { ConfigurationService } from '../configuration/configuration.service';
 
@@ -104,6 +104,8 @@ export class DocumentTypesService {
       name: payload.name,
       prompt: payload.prompt ?? '',
       fields: [],
+      extractionModel: 'gpt-5-nano',
+      extractionReasoningEffort: 'low',
       includeInClassification: false,
       finalized: false,
     });
@@ -207,6 +209,19 @@ export class DocumentTypesService {
     return updated;
   }
 
+  async updateExtractionModel(id: string, payload: { extractionModel?: string; extractionReasoningEffort?: ReasoningEffort }) {
+    const updated = await this.model.findByIdAndUpdate(
+      id,
+      {
+        extractionModel: payload.extractionModel || 'gpt-5-nano',
+        extractionReasoningEffort: payload.extractionReasoningEffort || 'low',
+      },
+      { new: true },
+    );
+    if (!updated) throw new NotFoundException('Document type not found');
+    return updated;
+  }
+
   private hasQueueConnection() {
     return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
   }
@@ -232,6 +247,10 @@ export class DocumentTypesService {
           samplePath,
           prompt,
           Boolean(configuration.useOcrForDocumentProcessing),
+          {
+            model: docType.extractionModel,
+            reasoningEffort: docType.extractionReasoningEffort,
+          },
         );
         if (openAiFields?.length) {
           docType.prompt = prompt;

@@ -28,21 +28,40 @@ import {
   Upload,
   FileText,
 } from 'lucide-react';
-import { api } from './api';
-import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult } from './types';
+import { api, AppConfigPayload } from './api';
+import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
 type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review';
 
-type AppConfig = {
-  downstreamUrl: string;
-  deleteAfterDownstream: boolean;
-  sendKeyValuePairs: boolean;
-  useOcrForDocumentProcessing: boolean;
-};
+type AppConfig = AppConfigPayload;
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
+const lowCostOpenAIModel = 'gpt-5-nano';
+const openAIModelOptions = [
+  { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
+  { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
+  { value: 'gpt-5', label: 'GPT-5' },
+  { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+  { value: 'gpt-4.1', label: 'GPT-4.1' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+  { value: 'gpt-4o', label: 'GPT-4o' },
+];
+const reasoningEffortOptions: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+
+function supportsReasoningEffort(model: string) {
+  return /^(gpt-5|o\d|o\d-)/.test(model);
+}
+
+function modelLabel(model?: string) {
+  return openAIModelOptions.find((option) => option.value === model)?.label || model || 'OpenAI model';
+}
+
+function displayModel(model?: string) {
+  return modelLabel(model || 'N/A');
+}
 
 function defaultTableColumns() {
   return [
@@ -133,6 +152,49 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
   return null;
 }
 
+function OpenAIModelControls({
+  model,
+  reasoningEffort,
+  onModelChange,
+  onReasoningEffortChange,
+}: {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  onModelChange: (model: string) => void;
+  onReasoningEffortChange: (effort: ReasoningEffort) => void;
+}) {
+  const hasReasoning = supportsReasoningEffort(model);
+
+  return (
+    <div className="model-controls">
+      <label>
+        Model
+        <select value={model} onChange={(event) => onModelChange(event.target.value)}>
+          {openAIModelOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Reasoning effort
+        <select
+          value={reasoningEffort}
+          disabled={!hasReasoning}
+          onChange={(event) => onReasoningEffortChange(event.target.value as ReasoningEffort)}
+        >
+          {reasoningEffortOptions.map((effort) => (
+            <option key={effort} value={effort}>
+              {effort}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 function asTableRows(value: unknown): Record<string, unknown>[] {
   if (Array.isArray(value)) {
     return value.map((row) => (row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : { value: row }));
@@ -173,16 +235,20 @@ export function App() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    classificationModel: lowCostOpenAIModel,
+    classificationReasoningEffort: 'low',
   });
 
   async function loadConfiguration() {
     try {
       const saved = await api.getConfiguration();
       setConfig({
-        downstreamUrl: saved.downstreamUrl,
-        deleteAfterDownstream: saved.deleteAfterDownstream,
+        downstreamUrl: saved.downstreamUrl || '',
+        deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        classificationModel: saved.classificationModel || lowCostOpenAIModel,
+        classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
       });
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
@@ -194,6 +260,8 @@ export function App() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            classificationModel: parsed.classificationModel || lowCostOpenAIModel,
+            classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
           });
         } catch {
           // ignore invalid saved config
@@ -411,6 +479,9 @@ export function App() {
         {view === 'classification' && (
           <ClassificationScreen
             documentTypes={documentTypes}
+            config={config}
+            onConfigChange={setConfig}
+            onSaveConfig={saveConfiguration}
             onRun={run}
             onRefresh={refreshDocumentTypes}
           />
@@ -491,6 +562,7 @@ function ReviewMetric({ label, value, helper }: { label: string; value: string; 
 function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   async function loadSummary() {
     setLoadingSummary(true);
@@ -506,6 +578,20 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
   useEffect(() => {
     loadSummary();
   }, []);
+
+  async function resetBusinessReview() {
+    setShowResetConfirm(false);
+    setLoadingSummary(true);
+    try {
+      await api.resetBusinessReview();
+      setSummary(await api.getBusinessReviewSummary());
+      onNotify('Business review data reset', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to reset business review', 'error');
+    } finally {
+      setLoadingSummary(false);
+    }
+  }
 
   if (loadingSummary && !summary) {
     return (
@@ -526,13 +612,18 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
             <h2>Processing Summary</h2>
             <p>Persisted processing volume, token usage, and estimated OpenAI processing cost.</p>
           </div>
-          <button className="icon-button" title="Refresh business review" onClick={loadSummary}>
-            {loadingSummary ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          </button>
+          <div className="toolbar-actions">
+            <button className="icon-button danger" title="Reset business review data" onClick={() => setShowResetConfirm(true)}>
+              <Trash2 size={16} />
+            </button>
+            <button className="icon-button" title="Refresh business review" onClick={loadSummary}>
+              {loadingSummary ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            </button>
+          </div>
         </div>
         <div className="review-metric-grid">
           <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} helper={`${formatNumber(summary.totalFiles)} total files`} />
-          <ReviewMetric label="Estimated cost" value={formatCurrency(summary.estimatedCostUsd)} helper="USD" />
+          <ReviewMetric label="Estimated cost" value={formatCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
           <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} helper={`${formatNumber(summary.filesProcessed)} persisted processing events`} />
           <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
           <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
@@ -547,7 +638,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
         <div className="panel-heading">
           <div>
             <h2>Recent Processed Files</h2>
-            <p>Latest documents with recorded processing totals when available.</p>
+            <p>Last five processed documents persisted by the business review.</p>
           </div>
         </div>
         <div className="business-review-table">
@@ -555,8 +646,12 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
             <thead>
               <tr>
                 <th>File</th>
-                <th>Status</th>
+                <th>Classification Model</th>
+                <th>Extraction Model</th>
                 <th>Tokens</th>
+                <th>Extraction Cost</th>
+                <th>Classification Cost</th>
+                <th>Embedding Cost</th>
                 <th>Cost</th>
                 <th>Processed</th>
               </tr>
@@ -565,8 +660,12 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
               {summary.recentDocuments.map((document) => (
                 <tr key={document.id}>
                   <td>{document.name}</td>
-                  <td><span className={`pill ${document.status}`}>{document.status}</span></td>
+                  <td>{displayModel(document.classificationModel)}</td>
+                  <td>{displayModel(document.extractionModel)}</td>
                   <td>{formatNumber(document.tokens)}</td>
+                  <td>{formatCurrency(document.extractionCostUsd || 0)}</td>
+                  <td>{formatCurrency(document.classificationCostUsd || 0)}</td>
+                  <td>{formatCurrency(document.embeddingCostUsd || 0)}</td>
                   <td>{formatCurrency(document.estimatedCostUsd)}</td>
                   <td>{new Date(document.processedAt).toLocaleString()}</td>
                 </tr>
@@ -576,6 +675,17 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
           {!summary.recentDocuments.length && <div className="empty-table">No processed files yet.</div>}
         </div>
       </section>
+
+      {showResetConfirm && (
+        <ConfirmDialog
+          title="Reset Business Review"
+          body={<>Clear all persisted business review totals and recent processed file history? <span className="danger-copy">This cannot be undone.</span></>}
+          confirmLabel="Reset"
+          confirmIcon={<RotateCcw size={16} />}
+          onCancel={() => setShowResetConfirm(false)}
+          onConfirm={resetBusinessReview}
+        />
+      )}
     </div>
   );
 }
@@ -684,10 +794,16 @@ function classifierStatus(type: DocumentType) {
 
 function ClassificationScreen({
   documentTypes,
+  config,
+  onConfigChange,
+  onSaveConfig,
   onRun,
   onRefresh,
 }: {
   documentTypes: DocumentType[];
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+  onSaveConfig: (config: AppConfig) => Promise<AppConfig>;
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
@@ -729,6 +845,17 @@ function ClassificationScreen({
             </div>
           </div>
           <div className="panel-heading-actions">
+            <button
+              className="secondary-button"
+              onClick={() =>
+                onRun(async () => {
+                  await onSaveConfig(config);
+                }, 'Classification model saved')
+              }
+            >
+              <Save size={16} />
+              Save Model
+            </button>
             <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
               <RefreshCw size={16} />
             </button>
@@ -759,6 +886,19 @@ function ClassificationScreen({
               Train
             </button>
           </div>
+        </div>
+
+        <div className="model-settings-band">
+          <div>
+            <strong>{modelLabel(config.classificationModel)}</strong>
+            <small>Used when vector classification falls back to OpenAI.</small>
+          </div>
+          <OpenAIModelControls
+            model={config.classificationModel || lowCostOpenAIModel}
+            reasoningEffort={config.classificationReasoningEffort || 'low'}
+            onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
+            onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
+          />
         </div>
 
         <div className="classification-table">
@@ -902,6 +1042,35 @@ function DocumentTypeManagement({
                 Classifier training: {activeType.classifierTrainingStatus || 'untrained'} with {activeType.sampleFiles.length} sample
                 {activeType.sampleFiles.length === 1 ? '' : 's'}
               </span>
+            </div>
+
+            <div className="model-settings-band">
+              <div>
+                <strong>{modelLabel(activeType.extractionModel || lowCostOpenAIModel)}</strong>
+                <small>Used for template generation and extraction for this document type.</small>
+              </div>
+              <OpenAIModelControls
+                model={activeType.extractionModel || lowCostOpenAIModel}
+                reasoningEffort={activeType.extractionReasoningEffort || 'low'}
+                onModelChange={(extractionModel) =>
+                  onRun(async () => {
+                    await api.updateExtractionModel(activeType._id, {
+                      extractionModel,
+                      extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                    });
+                    await onRefresh();
+                  }, 'Extraction model saved')
+                }
+                onReasoningEffortChange={(extractionReasoningEffort) =>
+                  onRun(async () => {
+                    await api.updateExtractionModel(activeType._id, {
+                      extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                      extractionReasoningEffort,
+                    });
+                    await onRefresh();
+                  }, 'Extraction reasoning effort saved')
+                }
+              />
             </div>
 
             <label className="checkbox-row">
@@ -1740,6 +1909,9 @@ function DocumentList({
                 <small>
                   {doc.category} / {doc.documentTypeName}
                 </small>
+                <small>
+                  Classification: {displayModel(doc.classificationModel)} | Extraction: {displayModel(doc.processingMetrics?.model)}
+                </small>
               </span>
               <span className={`pill ${doc.status}`}>{doc.status}</span>
               <span className="score-badge">
@@ -1902,7 +2074,7 @@ function ConfirmDialog({
   onConfirm,
 }: {
   title: string;
-  body: string;
+  body: string | JSX.Element;
   confirmLabel: string;
   confirmIcon?: JSX.Element;
   isDanger?: boolean;
@@ -2125,6 +2297,10 @@ function ValidationScreen({
                 <span>Classification score</span>
                 <strong>{formatScore(document.classificationScore)}</strong>
                 <ClassificationMethodIcon method={document.classificationMethod} />
+              </div>
+              <div className="document-model-line">
+                <span>Classification: {displayModel(document.classificationModel)}</span>
+                <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
               </div>
             </div>
             <div className="panel-heading-actions">

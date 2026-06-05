@@ -64,6 +64,15 @@ export class ProcessingMetrics {
   @Prop({ default: 0 })
   estimatedCostUsd?: number;
 
+  @Prop({ default: 0 })
+  extractionCostUsd?: number;
+
+  @Prop({ default: 0 })
+  classificationCostUsd?: number;
+
+  @Prop({ default: 0 })
+  embeddingCostUsd?: number;
+
   @Prop()
   processedAt?: Date;
 }
@@ -101,6 +110,9 @@ export class IncomingDocument {
 
   @Prop({ default: 'manual' })
   classificationMethod!: 'manual' | 'vector' | 'llm';
+
+  @Prop()
+  classificationModel?: string;
 
   @Prop()
   processingMode?: 'ocr' | 'pdf';

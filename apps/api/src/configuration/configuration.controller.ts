@@ -19,6 +19,8 @@ export class ConfigurationController {
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;
       useOcrForDocumentProcessing?: boolean;
+      classificationModel?: string;
+      classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     },
   ): Promise<Configuration> {
     return this.configurationService.save(body);

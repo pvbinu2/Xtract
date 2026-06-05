@@ -53,6 +53,14 @@ export class DocumentTypesController {
     return this.service.updateClassificationInclusion(id, Boolean(body.includeInClassification));
   }
 
+  @Post(':id/extraction-model')
+  updateExtractionModel(
+    @Param('id') id: string,
+    @Body() body: { extractionModel?: string; extractionReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' },
+  ) {
+    return this.service.updateExtractionModel(id, body);
+  }
+
   @Post(':id/generate-template')
   generateTemplate(@Param('id') id: string, @Body() body: { prompt: string }) {
     return this.service.generateTemplate(id, body.prompt);

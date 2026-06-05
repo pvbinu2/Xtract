@@ -16,6 +16,12 @@ export class Configuration {
 
   @Prop({ default: false })
   useOcrForDocumentProcessing!: boolean;
+
+  @Prop({ default: 'gpt-5-nano' })
+  classificationModel!: string;
+
+  @Prop({ default: 'low' })
+  classificationReasoningEffort!: 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 export const ConfigurationSchema = SchemaFactory.createForClass(Configuration);
