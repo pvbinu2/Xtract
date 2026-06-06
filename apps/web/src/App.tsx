@@ -44,6 +44,7 @@ type OperationsMetrics = {
   filesProcessing: number;
   filesReady: number;
 };
+type DocumentStatusFilter = IncomingDocument['status'] | '';
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 const lowCostOpenAIModel = 'gpt-5-nano';
@@ -300,6 +301,10 @@ export function App() {
   });
   const [activeTypeId, setActiveTypeId] = useState('');
   const [activeDocumentId, setActiveDocumentId] = useState('');
+  const [documentListStatusTarget, setDocumentListStatusTarget] = useState<{
+    status: DocumentStatusFilter;
+    version: number;
+  }>({ status: '', version: 0 });
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
@@ -422,6 +427,14 @@ export function App() {
 
   function showToast(text: string, type: 'success' | 'error' | 'info' = 'info') {
     setToast({ text, type });
+  }
+
+  function openDocuments(status: DocumentStatusFilter = '') {
+    setDocumentListStatusTarget((target) => ({
+      status,
+      version: target.version + 1,
+    }));
+    setView('documents');
   }
 
   async function refresh() {
@@ -566,7 +579,7 @@ export function App() {
     <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">X</div>
+          <img className="brand-mark" src="/icon-192.png" alt="" aria-hidden="true" />
           <div className="brand-copy">
             <strong>Xtract</strong>
             <span>Document intake</span>
@@ -578,7 +591,7 @@ export function App() {
             title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
           >
-            {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+            {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
           </button>
         </div>
         <nav>
@@ -608,9 +621,21 @@ export function App() {
           <div className="topbar-actions">
             <div className="status-strip">
               <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
-              <StatusMetric label="Total cost" value={formatCurrency(operationsMetrics.totalCostUsd)} />
-              <StatusMetric label="Processing" value={operationsMetrics.filesProcessing} />
-              <StatusMetric label="Ready" value={operationsMetrics.filesReady} />
+              <StatusMetric
+                label="Total cost"
+                value={formatCurrency(operationsMetrics.totalCostUsd)}
+                onClick={() => setView('business-review')}
+              />
+              <StatusMetric
+                label="Processing"
+                value={operationsMetrics.filesProcessing}
+                onClick={() => openDocuments('processing')}
+              />
+              <StatusMetric
+                label="Extracted"
+                value={operationsMetrics.filesReady}
+                onClick={() => openDocuments('extracted')}
+              />
             </div>
             <button
               type="button"
@@ -659,7 +684,7 @@ export function App() {
             documentTypes={documentTypes}
             onRun={run}
             onRefresh={refreshDocumentTypes}
-            openDocuments={() => setView('documents')}
+            openDocuments={() => openDocuments()}
           />
         )}
         {view === 'documents' && (
@@ -667,6 +692,7 @@ export function App() {
             documents={documents}
             documentTypes={documentTypes}
             pagination={documentPage}
+            statusTarget={documentListStatusTarget}
             onOpen={(id) => {
               setActiveDocumentId(id);
               setView('validation');
@@ -711,11 +737,25 @@ export function App() {
   );
 }
 
-function StatusMetric({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="metric">
+function StatusMetric({ label, value, onClick }: { label: string; value: number | string; onClick?: () => void }) {
+  const content = (
+    <>
       <span>{label}</span>
       <strong>{value}</strong>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button type="button" className="metric metric-button" onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className="metric">
+      {content}
     </div>
   );
 }
@@ -1989,16 +2029,18 @@ function DocumentList({
   documents,
   documentTypes,
   pagination,
+  statusTarget,
   onOpen,
   onPage,
 }: {
   documents: IncomingDocument[];
   documentTypes: DocumentType[];
   pagination: PagedResult<IncomingDocument>;
+  statusTarget: { status: DocumentStatusFilter; version: number };
   onOpen: (id: string) => void;
   onPage: (page: PagedResult<IncomingDocument>) => void;
 }) {
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<DocumentStatusFilter>('');
   const [category, setCategory] = useState('');
   const [nameFilter, setNameFilter] = useState('');
   const [sort, setSort] = useState('latest');
@@ -2027,6 +2069,27 @@ function DocumentList({
   async function applyFilters() {
     await loadPage(1);
   }
+
+  useEffect(() => {
+    if (statusTarget.version === 0) return;
+
+    const nextStatus = statusTarget.status;
+    setStatus(nextStatus);
+    setCategory('');
+    setNameFilter('');
+    setSort('latest');
+    setPageSize(10);
+
+    const params = new URLSearchParams({
+      sort: 'latest',
+      page: '1',
+      pageSize: '10',
+    });
+    if (nextStatus) params.set('status', nextStatus);
+    api.listDocuments(params).then(onPage).catch(() => {
+      // The regular refresh path will surface API errors elsewhere.
+    });
+  }, [statusTarget.version]);
 
   async function deleteDocument(document: IncomingDocument) {
     await api.deleteDocument(document._id);
@@ -2085,7 +2148,7 @@ function DocumentList({
       <div className="filters">
         <label>
           Status
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+          <select value={status} onChange={(event) => setStatus(event.target.value as DocumentStatusFilter)}>
             <option value="">All</option>
             <option value="processing">Processing</option>
             <option value="extracted">Extracted</option>
