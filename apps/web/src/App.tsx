@@ -38,6 +38,12 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs'
 type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review';
 
 type AppConfig = AppConfigPayload;
+type OperationsMetrics = {
+  filesProcessed: number;
+  totalCostUsd: number;
+  filesProcessing: number;
+  filesReady: number;
+};
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 const lowCostOpenAIModel = 'gpt-5-nano';
@@ -297,6 +303,13 @@ export function App() {
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [operationsMetrics, setOperationsMetrics] = useState<OperationsMetrics>({
+    filesProcessed: 0,
+    totalCostUsd: 0,
+    filesProcessing: 0,
+    filesReady: 0,
+  });
   const [config, setConfig] = useState<AppConfig>({
     downstreamUrl: '',
     deleteAfterDownstream: false,
@@ -374,6 +387,26 @@ export function App() {
     return docs;
   }
 
+  async function refreshOperationsMetrics() {
+    const [summary, readyDocuments] = await Promise.all([
+      api.getBusinessReviewSummary(),
+      api.listDocuments(
+        new URLSearchParams({
+          status: 'extracted',
+          page: '1',
+          pageSize: '5',
+        }),
+      ),
+    ]);
+
+    setOperationsMetrics({
+      filesProcessed: summary.filesProcessed,
+      totalCostUsd: summary.estimatedCostUsd,
+      filesProcessing: summary.filesProcessing,
+      filesReady: readyDocuments.total,
+    });
+  }
+
   async function loadDocumentsPage(page: number) {
     const docs = await api.listDocuments(
       new URLSearchParams({
@@ -392,7 +425,7 @@ export function App() {
   }
 
   async function refresh() {
-    await Promise.all([refreshDocumentTypes(), refreshDocuments()]);
+    await Promise.all([refreshDocumentTypes(), refreshDocuments(), refreshOperationsMetrics()]);
   }
 
   async function moveToNextDocument(currentId: string) {
@@ -473,6 +506,7 @@ export function App() {
   useEffect(() => {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
+    setSidebarCollapsed(localStorage.getItem('xtract-sidebar-collapsed') === 'true');
     loadConfiguration().catch(() => {
       // fallback to local storage if remote config is unavailable
     });
@@ -486,6 +520,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('xtract-config', JSON.stringify(config));
   }, [config]);
+
+  useEffect(() => {
+    localStorage.setItem('xtract-sidebar-collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (!toast) return;
@@ -525,14 +563,23 @@ export function App() {
       (validationDocumentIndex >= 0 && validationDocumentIndex < documents.length - 1));
 
   return (
-    <main className="app-shell">
+    <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">X</div>
-          <div>
+          <div className="brand-copy">
             <strong>Xtract</strong>
             <span>Document intake</span>
           </div>
+          <button
+            type="button"
+            className="icon-button sidebar-toggle"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          </button>
         </div>
         <nav>
           {navigation.map((item) => {
@@ -560,10 +607,10 @@ export function App() {
           </div>
           <div className="topbar-actions">
             <div className="status-strip">
-              <StatusMetric label="Processing" value={documents.filter((doc) => doc.status === 'processing').length} />
-              <StatusMetric label="Ready" value={documents.filter((doc) => doc.status === 'extracted').length} />
-              <StatusMetric label="Validated" value={documents.filter((doc) => doc.status === 'validated').length} />
-              <StatusMetric label="Rejected" value={documents.filter((doc) => doc.status === 'rejected').length} />
+              <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
+              <StatusMetric label="Total cost" value={formatCurrency(operationsMetrics.totalCostUsd)} />
+              <StatusMetric label="Processing" value={operationsMetrics.filesProcessing} />
+              <StatusMetric label="Ready" value={operationsMetrics.filesReady} />
             </div>
             <button
               type="button"
@@ -664,7 +711,7 @@ export function App() {
   );
 }
 
-function StatusMetric({ label, value }: { label: string; value: number }) {
+function StatusMetric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="metric">
       <span>{label}</span>
