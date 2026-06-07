@@ -184,7 +184,7 @@ The API runs on:
 http://localhost:3000
 ```
 
-Document processing always runs through the Azure Function worker. Make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set for the API and function app, then start:
+Document processing always runs through the Azure Function worker. The API enqueues work on `document-processing`; the classification function then enqueues extraction work on `document-extraction`. Make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set for the API and function app, then start:
 
 ```bash
 npm run dev:function
