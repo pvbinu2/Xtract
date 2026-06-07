@@ -10,6 +10,13 @@ export type AppConfigPayload = {
   classificationModel: string;
   classificationReasoningEffort: ReasoningEffort;
 };
+export type ReprocessDocumentPayload = {
+  documentTypeId?: string;
+  extractionModel?: string;
+  useOcrForDocumentProcessing?: boolean;
+  documentTextMode?: 'ocr' | 'markdown';
+  forceClassification?: boolean;
+};
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
 
@@ -84,7 +91,12 @@ export const api = {
   getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
   resetBusinessReview: () => request<{ reset: boolean }>('/documents/business-review', { method: 'DELETE' }),
   deleteDocument: (id: string) => request(`/documents/${id}`, { method: 'DELETE' }),
-  reprocessDocument: (id: string) => request<IncomingDocument>(`/documents/${id}/reprocess`, { method: 'POST' }),
+  reprocessDocument: (id: string, payload: ReprocessDocumentPayload = {}) =>
+    request<IncomingDocument>(`/documents/${id}/reprocess`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   reclassifyDocument: (id: string, documentTypeId: string) =>
     request<IncomingDocument>(`/documents/${id}/reprocess`, {
       method: 'POST',

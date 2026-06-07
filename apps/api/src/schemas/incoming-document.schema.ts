@@ -3,6 +3,13 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type IncomingDocumentDocument = HydratedDocument<IncomingDocument>;
 export type DocumentStatus = 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
+export type ReprocessOptions = {
+  documentTypeId?: string;
+  extractionModel?: string;
+  useOcrForDocumentProcessing?: boolean;
+  documentTextMode?: 'ocr' | 'markdown';
+  forceClassification?: boolean;
+};
 
 @Schema({ _id: false })
 export class BoundingBox {
@@ -125,6 +132,9 @@ export class IncomingDocument {
 
   @Prop({ type: ProcessingMetricsSchema })
   processingMetrics?: ProcessingMetrics;
+
+  @Prop({ type: Object })
+  reprocessOptions?: ReprocessOptions;
 
   @Prop()
   error?: string;

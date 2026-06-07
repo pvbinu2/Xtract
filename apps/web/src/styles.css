@@ -89,6 +89,11 @@ button {
   grid-template-columns: 264px minmax(0, 1fr);
   min-height: 100vh;
   background: var(--bg);
+  transition: grid-template-columns 160ms ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 84px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -107,15 +112,18 @@ button {
   min-height: 44px;
 }
 
+.brand-copy {
+  min-width: 0;
+}
+
 .brand-mark {
-  display: grid;
-  place-items: center;
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  background: #2dd4bf;
-  color: #082f49;
-  font-weight: 800;
+  border: 2px solid rgba(45, 212, 191, 0.85);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+  object-fit: cover;
+  flex: 0 0 40px;
 }
 
 .brand span,
@@ -130,6 +138,21 @@ button {
 
 .sidebar .brand span {
   color: var(--sidebar-muted);
+}
+
+.sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin-left: auto;
+  margin-right: 0;
+  flex: 0 0 28px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--sidebar-text);
+}
+
+.sidebar-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 nav {
@@ -159,6 +182,10 @@ nav {
   color: var(--sidebar-text);
 }
 
+.nav-item svg {
+  flex: 0 0 auto;
+}
+
 .nav-item.active,
 .nav-item:hover {
   background: rgba(255, 255, 255, 0.08);
@@ -169,6 +196,46 @@ nav {
   margin-top: auto;
   background: var(--ghost-bg);
   color: var(--sidebar-text);
+}
+
+.sidebar-collapsed .sidebar {
+  align-items: center;
+  padding: 24px 14px;
+}
+
+.sidebar-collapsed .brand {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-collapsed .brand-copy,
+.sidebar-collapsed .nav-item span {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-toggle {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  flex-basis: 24px;
+  margin-left: 0;
+}
+
+.sidebar-collapsed .sidebar-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sidebar-collapsed nav {
+  width: 100%;
+}
+
+.sidebar-collapsed .nav-item {
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  justify-content: center;
+  margin-right: 0;
 }
 
 .workspace {
@@ -213,6 +280,27 @@ nav {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.metric-button {
+  margin: 0;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.metric-button:hover {
+  border-color: var(--primary);
+  background: var(--surface-strong);
+  transform: translateY(-1px);
+}
+
+.metric-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .metric span {
@@ -707,6 +795,30 @@ textarea {
   font-size: 12px;
   font-weight: 800;
   text-align: center;
+}
+
+.score-badge.low-score,
+.classification-score-line strong.low-score {
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger);
+}
+
+.score-badge.high-score,
+.classification-score-line strong.high-score {
+  border: 1px solid rgba(15, 118, 110, 0.35);
+  background: rgba(20, 184, 166, 0.14);
+  color: var(--primary);
+}
+
+.classification-score-line strong.low-score {
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.classification-score-line strong.high-score {
+  border-radius: 8px;
+  padding: 4px 8px;
 }
 
 .method-icon {
@@ -1243,6 +1355,12 @@ textarea {
   float: right;
 }
 
+.extraction-form em.low-score {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger);
+}
+
 .value-link {
   border: 0;
   background: transparent;
@@ -1410,6 +1528,15 @@ textarea {
   overflow: visible;
 }
 
+.reprocess-modal {
+  width: min(520px, 100%);
+}
+
+.reprocess-options {
+  display: grid;
+  gap: 12px;
+}
+
 .modal-heading {
   display: flex;
   align-items: flex-start;
@@ -1554,6 +1681,7 @@ textarea {
 
 @media (max-width: 980px) {
   .app-shell,
+  .app-shell.sidebar-collapsed,
   .two-column,
   .review-metric-grid,
   .validation-layout {
@@ -1571,6 +1699,35 @@ textarea {
 
   .sidebar nav {
     display: flex;
+  }
+
+  .sidebar-collapsed .sidebar {
+    align-items: center;
+    padding: 24px 18px;
+  }
+
+  .sidebar-collapsed .brand {
+    flex-direction: row;
+  }
+
+  .sidebar-collapsed .brand-copy,
+  .sidebar-collapsed .nav-item span {
+    display: block;
+  }
+
+  .sidebar-collapsed .sidebar-toggle {
+    margin-left: auto;
+  }
+
+  .sidebar-collapsed nav {
+    width: auto;
+  }
+
+  .sidebar-collapsed .nav-item {
+    width: auto;
+    min-height: 40px;
+    padding: 0 12px;
+    justify-content: flex-start;
   }
 
   .ghost-button {

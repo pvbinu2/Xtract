@@ -184,7 +184,7 @@ The API runs on:
 http://localhost:3000
 ```
 
-For queue-based processing with the Azure Function worker, run the API with `PROCESSING_MODE=queue`, make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set, then start:
+Document processing always runs through the Azure Function worker. Make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set for the API and function app, then start:
 
 ```bash
 npm run dev:function

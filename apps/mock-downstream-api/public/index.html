@@ -572,8 +572,7 @@
   <script>
     const themeToggle = document.getElementById('themeToggle');
     const storedTheme = localStorage.getItem('mockDownstreamTheme');
-    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    let currentTheme = storedTheme || (prefersDark ? 'dark' : 'light');
+    let currentTheme = storedTheme || 'light';
 
     function applyTheme(theme) {
       currentTheme = theme;

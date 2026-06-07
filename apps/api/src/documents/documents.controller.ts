@@ -100,8 +100,17 @@ export class DocumentsController {
   }
 
   @Post(':id/reprocess')
-  reprocess(@Param('id') id: string, @Body() body?: { documentTypeId?: string }) {
-    return this.service.reprocess(id, body?.documentTypeId);
+  reprocess(
+    @Param('id') id: string,
+    @Body() body?: {
+      documentTypeId?: string;
+      extractionModel?: string;
+      useOcrForDocumentProcessing?: boolean;
+      documentTextMode?: 'ocr' | 'markdown';
+      forceClassification?: boolean;
+    },
+  ) {
+    return this.service.reprocess(id, body);
   }
 
   @Delete(':id')

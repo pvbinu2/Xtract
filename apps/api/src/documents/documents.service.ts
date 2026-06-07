@@ -3,14 +3,13 @@ import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
 import { Model } from 'mongoose';
-import { attachBoundingBoxes } from '../pdf-bounding-box';
-import { extractValuesWithOpenAI } from '../openai-document-ai';
 import { DocumentType, DocumentTypeDocument } from '../schemas/document-type.schema';
 import {
   ExtractedValue,
   IncomingDocument,
   IncomingDocumentDocument,
   ProcessingMetrics,
+  ReprocessOptions,
 } from '../schemas/incoming-document.schema';
 import {
   BusinessReviewHistory,
@@ -20,32 +19,6 @@ import {
 } from '../schemas/business-review.schema';
 import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
-
-function mockValue(label: string, type: string, index: number) {
-  if (type === 'date') return new Date().toISOString().slice(0, 10);
-  if (type === 'number') return index + 1;
-  if (type === 'currency') return Number((250 + index * 125.5).toFixed(2));
-  if (type === 'boolean') return true;
-  return `Extracted ${label}`;
-}
-
-function mockExtractionFromSchema(docType: DocumentTypeDocument): ExtractedValue[] {
-  return docType.fields
-    .filter((field) => field.selected)
-    .map((field, index) => ({
-      key: field.key,
-      label: field.label,
-      type: field.type,
-      value: field.type === 'table'
-        ? [(field.columns || []).reduce<Record<string, unknown>>((row, column) => {
-          row[column.key] = mockValue(column.label, column.type, index);
-          return row;
-        }, {})]
-        : mockValue(field.label, field.type, index),
-      confidence: Number((0.82 + Math.min(index, 8) * 0.015).toFixed(2)),
-      boundingBoxes: [],
-    }));
-}
 
 @Injectable()
 export class DocumentsService {
@@ -102,15 +75,12 @@ export class DocumentsService {
     category?: string;
     documentTypeId?: string;
   }[]) {
+    this.queueConnectionString();
     const documents = [] as IncomingDocumentDocument[];
 
     for (const item of payload) {
       const docType = item.documentTypeId ? await this.documentTypeModel.findById(item.documentTypeId) : undefined;
       if (item.documentTypeId && !docType) throw new NotFoundException('Document type not found');
-      const autoClassify = !docType;
-      if (autoClassify && !this.hasQueueConnection()) {
-        throw new BadRequestException('Automatic classification requires Azure queue storage and the function worker.');
-      }
 
       const blobName = this.blobStorage.createBlobName(item.originalName);
       await this.blobStorage.uploadBuffer(PROCESSING_CONTAINER, blobName, item.buffer, item.mimeType);
@@ -132,92 +102,33 @@ export class DocumentsService {
       });
 
       documents.push(document);
-      if (autoClassify || process.env.PROCESSING_MODE === 'queue') {
-        await this.enqueueProcessing(document.id);
-      } else {
-        await this.processDocument(document.id);
-      }
+      await this.enqueueProcessing(document.id);
     }
 
     return Promise.all(documents.map((document) => this.findById(document.id)));
   }
 
-  private hasQueueConnection() {
-    return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
+  private queueConnectionString() {
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
+    if (!connectionString) {
+      throw new BadRequestException('Document processing requires AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage for the function queue.');
+    }
+    return connectionString;
   }
 
   private async enqueueProcessing(documentId: string) {
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
-    if (!connectionString) {
-      throw new Error('Queue processing requires AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage');
-    }
+    const connectionString = this.queueConnectionString();
     const queue = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('document-processing');
     await queue.createIfNotExists();
     await queue.sendMessage(Buffer.from(JSON.stringify({ documentId })).toString('base64'));
   }
 
-  async processDocument(id: string) {
-    const document = await this.documentModel.findById(id);
-    if (!document) throw new NotFoundException('Document not found');
-    const docType = await this.documentTypeModel.findById(document.documentTypeId);
-    if (!docType) throw new NotFoundException('Document type not found');
-
-    const localPath = await this.resolveDocumentPath(document);
-    try {
-      const configuration = await this.configurationService.get();
-      const useOcrForDocumentProcessing = Boolean(configuration.useOcrForDocumentProcessing);
-      const extraction = await extractValuesWithOpenAI(
-        localPath,
-        docType.fields,
-        docType.name,
-        useOcrForDocumentProcessing,
-        {
-          model: docType.extractionModel,
-          reasoningEffort: docType.extractionReasoningEffort,
-          documentTextMode: configuration.documentTextMode,
-          markdownServiceUrl: configuration.markdownServiceUrl,
-        },
-      );
-      document.extractedData = await attachBoundingBoxes(
-        localPath,
-        extraction?.values ??
-        mockExtractionFromSchema(docType),
-      );
-      const processingMetrics = extraction?.metrics ?? {
-        model: 'mock',
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        estimatedCostUsd: 0,
-        processedAt: new Date(),
-      };
-      processingMetrics.extractionCostUsd = processingMetrics.estimatedCostUsd || 0;
-      processingMetrics.classificationCostUsd = 0;
-      processingMetrics.embeddingCostUsd = 0;
-      processingMetrics.estimatedCostUsd =
-        Number(processingMetrics.extractionCostUsd || 0) +
-        Number(processingMetrics.classificationCostUsd || 0) +
-        Number(processingMetrics.embeddingCostUsd || 0);
-      document.processingMetrics = processingMetrics;
-      if (!document.classificationModel) {
-        document.classificationModel = document.classificationMethod === 'manual' ? 'manual' : 'unknown';
-      }
-      document.processingMode = useOcrForDocumentProcessing && configuration.documentTextMode === 'markdown' ? 'markdown' : useOcrForDocumentProcessing ? 'ocr' : 'pdf';
-      document.status = 'extracted';
-      document.error = undefined;
-      const saved = await document.save();
-      await this.recordBusinessReviewProcessing(saved, processingMetrics);
-      return saved;
-    } finally {
-      if (document.storageContainer && document.storageBlobName) await this.blobStorage.removeTempFile(localPath);
-    }
-  }
-
-  async reprocess(id: string, newDocumentTypeId?: string) {
+  async reprocess(id: string, options: ReprocessOptions = {}) {
     const document = await this.documentModel.findById(id);
     if (!document) throw new NotFoundException('Document not found');
 
     // If a new document type is provided, update it
+    const newDocumentTypeId = options.documentTypeId;
     if (newDocumentTypeId) {
       const newDocType = await this.documentTypeModel.findById(newDocumentTypeId);
       if (!newDocType) throw new NotFoundException('Document type not found');
@@ -227,21 +138,23 @@ export class DocumentsService {
       document.category = newDocType.category;
     }
 
+    this.queueConnectionString();
+    const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     document.status = 'processing';
     document.extractedData = [];
     document.error = undefined;
+    if (forceClassification) {
+      document.classificationScore = undefined;
+    }
+    document.reprocessOptions = {
+      extractionModel: options.extractionModel,
+      useOcrForDocumentProcessing: options.useOcrForDocumentProcessing,
+      documentTextMode: options.documentTextMode,
+      forceClassification,
+    };
     await document.save();
 
-    const documentWasAutoClassified = document.classificationMethod !== 'manual';
-    const shouldQueue = process.env.PROCESSING_MODE === 'queue' || documentWasAutoClassified;
-    if (shouldQueue) {
-      if (!this.hasQueueConnection()) {
-        throw new BadRequestException('Automatic classification requires Azure queue storage and the function worker.');
-      }
-      await this.enqueueProcessing(document.id);
-    } else {
-      await this.processDocument(document.id);
-    }
+    await this.enqueueProcessing(document.id);
 
     return this.findById(document.id);
   }
@@ -577,12 +490,5 @@ export class DocumentsService {
     await this.documentModel.deleteOne({ _id: document._id });
 
     return { deleted: true };
-  }
-
-  private async resolveDocumentPath(document: IncomingDocumentDocument) {
-    if (document.storageContainer && document.storageBlobName) {
-      return this.blobStorage.downloadToTemp(document.storageContainer, document.storageBlobName);
-    }
-    return document.filePath;
   }
 }
