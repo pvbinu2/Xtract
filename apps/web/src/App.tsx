@@ -30,7 +30,7 @@ import {
   Download,
   FileText,
 } from 'lucide-react';
-import { api, AppConfigPayload } from './api';
+import { api, AppConfigPayload, ReprocessDocumentPayload } from './api';
 import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
@@ -45,6 +45,7 @@ type OperationsMetrics = {
   filesReady: number;
 };
 type DocumentStatusFilter = IncomingDocument['status'] | '';
+type ReprocessProcessingMode = 'pdf' | 'ocr' | 'markdown';
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 const lowCostOpenAIModel = 'gpt-5-nano';
@@ -122,6 +123,16 @@ function coerceValue(value: unknown) {
 
 function formatScore(score?: number) {
   return typeof score === 'number' ? `${Math.round(score * 100)}%` : 'N/A';
+}
+
+function isLowClassificationScore(score?: number) {
+  return typeof score === 'number' && score < 0.8;
+}
+
+function scoreToneClass(score?: number) {
+  if (isLowClassificationScore(score)) return ' low-score';
+  if (typeof score === 'number' && score >= 0.8) return ' high-score';
+  return '';
 }
 
 function formatNumber(value: number) {
@@ -693,6 +704,7 @@ export function App() {
             documentTypes={documentTypes}
             pagination={documentPage}
             statusTarget={documentListStatusTarget}
+            config={config}
             onOpen={(id) => {
               setActiveDocumentId(id);
               setView('validation');
@@ -713,6 +725,7 @@ export function App() {
             downstreamUrl={config.downstreamUrl}
             defaultDeleteAfterDownstream={config.deleteAfterDownstream}
             sendKeyValuePairs={config.sendKeyValuePairs}
+            config={config}
             canNavigatePrevious={canNavigatePreviousDocument}
             canNavigateNext={canNavigateNextDocument}
             onNavigatePrevious={() => moveToAdjacentDocument(validationDocumentId, 'previous')}
@@ -849,16 +862,13 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
           </div>
         </div>
         <div className="review-metric-grid">
-          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} helper={`${formatNumber(summary.totalFiles)} total files`} />
+          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} />
           <ReviewMetric label="Estimated cost" value={formatReviewCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
           <ReviewMetric label="Avg cost / document" value={formatReviewCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} />
-          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} helper={`${formatNumber(summary.filesProcessed)} persisted processing events`} />
+          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} />
           <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
           <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
         </div>
-        <p className="help-text">
-          Summary totals are consolidated when processing completes and are stored separately from document records.
-        </p>
       </section>
 
       <section className="panel">
@@ -2030,6 +2040,7 @@ function DocumentList({
   documentTypes,
   pagination,
   statusTarget,
+  config,
   onOpen,
   onPage,
 }: {
@@ -2037,6 +2048,7 @@ function DocumentList({
   documentTypes: DocumentType[];
   pagination: PagedResult<IncomingDocument>;
   statusTarget: { status: DocumentStatusFilter; version: number };
+  config: AppConfig;
   onOpen: (id: string) => void;
   onPage: (page: PagedResult<IncomingDocument>) => void;
 }) {
@@ -2098,8 +2110,9 @@ function DocumentList({
     await loadPage(nextPage);
   }
 
-  async function reprocessDocument(document: IncomingDocument) {
-    await api.reprocessDocument(document._id);
+  async function reprocessDocument(document: IncomingDocument, payload: ReprocessDocumentPayload) {
+    await api.reprocessDocument(document._id, payload);
+    setReprocessTarget(null);
     await loadPage(pagination.page);
   }
 
@@ -2213,7 +2226,7 @@ function DocumentList({
                 </small>
               </span>
               <span className={`pill ${doc.status}`}>{doc.status}</span>
-              <span className="score-badge">
+              <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
                 <ClassificationMethodIcon method={doc.classificationMethod} />
               </span>
@@ -2273,15 +2286,12 @@ function DocumentList({
       )}
 
       {reprocessTarget && (
-        <ConfirmDialog
-          title="Reprocess Document"
-          body={`Reprocess "${reprocessTarget.originalName}"? This will re-run the extraction on this document.`}
-          confirmLabel="Reprocess"
+        <ReprocessDialog
+          document={reprocessTarget}
+          documentType={documentTypes.find((type) => type._id === reprocessTarget.documentTypeId)}
+          config={config}
           onCancel={() => setReprocessTarget(null)}
-          onConfirm={() => {
-            reprocessDocument(reprocessTarget);
-            setReprocessTarget(null);
-          }}
+          onConfirm={(payload) => reprocessDocument(reprocessTarget, payload)}
         />
       )}
 
@@ -2406,12 +2416,101 @@ function ConfirmDialog({
   );
 }
 
+function ReprocessDialog({
+  document,
+  documentType,
+  config,
+  onCancel,
+  onConfirm,
+}: {
+  document: IncomingDocument;
+  documentType?: DocumentType;
+  config: AppConfig;
+  onCancel: () => void;
+  onConfirm: (payload: ReprocessDocumentPayload) => Promise<void> | void;
+}) {
+  const initialMode: ReprocessProcessingMode =
+    document.processingMode || (config.useOcrForDocumentProcessing
+      ? config.documentTextMode === 'markdown' ? 'markdown' : 'ocr'
+      : 'pdf');
+  const [extractionModel, setExtractionModel] = useState(
+    document.processingMetrics?.model || documentType?.extractionModel || lowCostOpenAIModel,
+  );
+  const [processingMode, setProcessingMode] = useState<ReprocessProcessingMode>(initialMode);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function confirm() {
+    setSubmitting(true);
+    try {
+      await onConfirm({
+        extractionModel,
+        useOcrForDocumentProcessing: processingMode !== 'pdf',
+        documentTextMode: processingMode === 'markdown' ? 'markdown' : 'ocr',
+        forceClassification: true,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onCancel}>
+      <section className="confirm-modal reprocess-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>Reprocess Document</h2>
+            <p>{document.originalName}</p>
+          </div>
+          <button className="icon-button" title="Close" onClick={onCancel}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="reprocess-options">
+          <label>
+            Extraction model
+            <select value={extractionModel} onChange={(event) => setExtractionModel(event.target.value)}>
+              {openAIModelOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            OCR / text engine
+            <select value={processingMode} onChange={(event) => setProcessingMode(event.target.value as ReprocessProcessingMode)}>
+              <option value="pdf">PDF direct</option>
+              <option value="ocr">Built in OCR/text</option>
+              <option value="markdown">Markdown (Docling service)</option>
+            </select>
+          </label>
+        </div>
+        {processingMode === 'markdown' && !config.markdownServiceUrl && (
+          <p className="warning-text">
+            Markdown processing uses the configured Docling service URL. Configure it before using this option.
+          </p>
+        )}
+        <div className="modal-footer">
+          <button className="secondary-button" type="button" disabled={submitting} onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="primary-button" type="button" disabled={submitting} onClick={confirm}>
+            {submitting ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
+            Reprocess
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ValidationScreen({
   documentId,
   documentTypes,
   downstreamUrl,
   defaultDeleteAfterDownstream = false,
   sendKeyValuePairs = false,
+  config,
   canNavigatePrevious = false,
   canNavigateNext = false,
   onNavigatePrevious,
@@ -2425,6 +2524,7 @@ function ValidationScreen({
   downstreamUrl: string;
   defaultDeleteAfterDownstream?: boolean;
   sendKeyValuePairs?: boolean;
+  config: AppConfig;
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
   onNavigatePrevious: () => Promise<void>;
@@ -2441,20 +2541,26 @@ function ValidationScreen({
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
+  const [showReprocessDialog, setShowReprocessDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
   const [pendingValidationAction, setPendingValidationAction] = useState<'validate' | 'reject' | null>(null);
   const documentTypeFor = (doc: IncomingDocument) => documentTypes.find((type) => type._id === doc.documentTypeId);
 
+  function applyDocumentState(nextDocument: IncomingDocument) {
+    const normalizedValues = normalizeExtractedDataToSchema(nextDocument.extractedData, documentTypeFor(nextDocument));
+    setDocument({ ...nextDocument, extractedData: normalizedValues });
+    setValues(normalizedValues);
+    setReclassifyCategory(nextDocument.category);
+    setReclassifyDocumentType(nextDocument.documentTypeId || '');
+    return normalizedValues;
+  }
+
   async function refreshPage() {
     if (!documentId) return;
     const refreshed = await api.getDocument(documentId);
-    const normalizedValues = normalizeExtractedDataToSchema(refreshed.extractedData, documentTypeFor(refreshed));
-    setDocument({ ...refreshed, extractedData: normalizedValues });
-    setValues(normalizedValues);
-    setReclassifyCategory(refreshed.category);
-    setReclassifyDocumentType(refreshed.documentTypeId || '');
+    applyDocumentState(refreshed);
     await onRefresh();
     onNotify('Validation page refreshed');
   }
@@ -2493,14 +2599,10 @@ function ValidationScreen({
   useEffect(() => {
     if (!documentId) return;
     api.getDocument(documentId).then((doc) => {
-      const normalizedValues = normalizeExtractedDataToSchema(doc.extractedData, documentTypeFor(doc));
-      setDocument({ ...doc, extractedData: normalizedValues });
-      setValues(normalizedValues);
+      applyDocumentState(doc);
       setEditingValueKey(null);
       setEditingValueDraft('');
       setSavingValueKey(null);
-      setReclassifyCategory(doc.category);
-      setReclassifyDocumentType(doc.documentTypeId || '');
     });
   }, [documentId, documentTypes]);
 
@@ -2584,13 +2686,12 @@ function ValidationScreen({
     await onValidated(message);
   }
 
-  async function reprocess() {
+  async function reprocess(payload: ReprocessDocumentPayload) {
     if (!document) return;
-    const updated = await api.reprocessDocument(document._id);
+    const updated = await api.reprocessDocument(document._id, payload);
+    setShowReprocessDialog(false);
     const message = `Document reprocessing started: ${document.originalName}`;
-    const normalizedValues = normalizeExtractedDataToSchema(updated.extractedData, documentTypeFor(updated));
-    setDocument({ ...updated, extractedData: normalizedValues });
-    setValues(normalizedValues);
+    applyDocumentState(updated);
     onNotify(message, 'info');
     await onRefresh();
   }
@@ -2638,7 +2739,9 @@ function ValidationScreen({
               <p>{document.category} / {document.documentTypeName}</p>
               <div className="classification-score-line">
                 <span>Classification score</span>
-                <strong>{formatScore(document.classificationScore)}</strong>
+                <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
+                  {formatScore(document.classificationScore)}
+                </strong>
                 <ClassificationMethodIcon method={document.classificationMethod} />
               </div>
               <div className="document-model-line">
@@ -2689,7 +2792,11 @@ function ValidationScreen({
                     <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
+                    {item.confidence && (
+                      <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
+                        {Math.round(item.confidence * 100)}%
+                      </em>
+                    )}
                   </div>
                   <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
                 </div>
@@ -2703,7 +2810,11 @@ function ValidationScreen({
                     <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {item.confidence && <em>{Math.round(item.confidence * 100)}%</em>}
+                    {item.confidence && (
+                      <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
+                        {Math.round(item.confidence * 100)}%
+                      </em>
+                    )}
                   </div>
                   <div className="value-editor">
                     <input
@@ -2789,7 +2900,7 @@ function ValidationScreen({
                 <BrainCircuit size={16} />
                 Reclassify
               </button>
-              <button className="secondary-button" type="button" onClick={reprocess}>
+              <button className="secondary-button" type="button" onClick={() => setShowReprocessDialog(true)}>
                 <RotateCcw size={16} />
                 Reprocess
               </button>
@@ -2834,6 +2945,15 @@ function ValidationScreen({
           isDanger={pendingValidationAction === 'reject'}
           onCancel={() => setPendingValidationAction(null)}
           onConfirm={pendingValidationAction === 'validate' ? submit : reject}
+        />
+      )}
+      {showReprocessDialog && document && (
+        <ReprocessDialog
+          document={document}
+          documentType={documentTypeFor(document)}
+          config={config}
+          onCancel={() => setShowReprocessDialog(false)}
+          onConfirm={reprocess}
         />
       )}
       {showReclassifyDialog && document && (

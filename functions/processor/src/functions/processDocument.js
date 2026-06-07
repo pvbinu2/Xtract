@@ -253,7 +253,10 @@ async function resolveDocumentFile(document) {
 async function markDocumentFailed(documents, documentId, error) {
   await documents.updateOne(
     { _id: documentId },
-    { $set: { status: 'failed', error, updatedAt: new Date() } },
+    {
+      $set: { status: 'failed', error, updatedAt: new Date() },
+      $unset: { reprocessOptions: '' },
+    },
   );
 }
 
@@ -329,19 +332,29 @@ async function processDocument(message, context) {
   const db = client.db();
   const documents = db.collection('incomingdocuments');
   const documentTypes = db.collection('documenttypes');
-  const configuration = await db.collection('configuration').findOne({});
-  const useOcrForDocumentProcessing = Boolean(configuration?.useOcrForDocumentProcessing);
-  const documentTextMode = configuration?.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
-  const textOptions = {
-    mode: documentTextMode,
-    markdownServiceUrl: configuration?.markdownServiceUrl,
-  };
-
   const document = await documents.findOne({ _id: new ObjectId(documentId) });
   if (!document) {
     context.error(`Document ${documentId} not found`);
     return;
   }
+  const configuration = await db.collection('configuration').findOne({});
+  const reprocessOptions = document.reprocessOptions || {};
+  const forceClassification = reprocessOptions.forceClassification === true;
+  const useOcrForDocumentProcessing =
+    typeof reprocessOptions.useOcrForDocumentProcessing === 'boolean'
+      ? reprocessOptions.useOcrForDocumentProcessing
+      : Boolean(configuration?.useOcrForDocumentProcessing);
+  const documentTextMode = reprocessOptions.documentTextMode === 'markdown'
+    ? 'markdown'
+    : reprocessOptions.documentTextMode === 'ocr'
+      ? 'ocr'
+      : configuration?.documentTextMode === 'markdown'
+        ? 'markdown'
+        : 'ocr';
+  const textOptions = {
+    mode: documentTextMode,
+    markdownServiceUrl: configuration?.markdownServiceUrl,
+  };
 
   const documentTypeId =
     document.documentTypeId instanceof ObjectId
@@ -358,8 +371,8 @@ async function processDocument(message, context) {
   }
 
   try {
-    let documentType = documentTypeId ? await documentTypes.findOne({ _id: documentTypeId }) : null;
-    if (documentTypeId && !documentType) {
+    let documentType = !forceClassification && documentTypeId ? await documentTypes.findOne({ _id: documentTypeId }) : null;
+    if (!forceClassification && documentTypeId && !documentType) {
       await documents.updateOne(
         { _id: document._id },
         { $set: { status: 'failed', error: 'Document type not found', updatedAt: new Date() } },
@@ -371,6 +384,7 @@ async function processDocument(message, context) {
     const localDocument = { ...document, filePath: localFilePath };
 
     try {
+      let classificationUpdate = {};
       if (!documentType) {
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
         const classification = await classifyDocument(localDocument, allDocumentTypes, {
@@ -383,26 +397,35 @@ async function processDocument(message, context) {
         documentType = classification.documentType;
         localDocument.classificationMetrics = classification.classificationMetrics;
         localDocument.embeddingMetrics = classification.embeddingMetrics;
+        classificationUpdate = {
+          category: documentType.category,
+          documentTypeId: normalizeObjectId(documentType._id),
+          documentTypeName: documentType.name,
+          classificationScore: classification.score,
+          classificationMethod: classification.method || 'llm',
+          classificationModel: classification.model || 'unknown',
+        };
         await documents.updateOne(
           { _id: document._id },
           {
             $set: {
-              category: documentType.category,
-              documentTypeId: normalizeObjectId(documentType._id),
-              documentTypeName: documentType.name,
-              classificationScore: classification.score,
-              classificationMethod: classification.method || 'llm',
-              classificationModel: classification.model || 'unknown',
+              ...classificationUpdate,
               updatedAt: new Date(),
             },
           },
         );
         localDocument.classificationModel = classification.model || 'unknown';
+        localDocument.classificationScore = classification.score;
+        localDocument.classificationMethod = classification.method || 'llm';
       } else if (!localDocument.classificationModel) {
         localDocument.classificationModel = localDocument.classificationMethod === 'manual' ? 'manual' : 'unknown';
       }
 
-      const extraction = await extractValuesWithOpenAI(localDocument, documentType, useOcrForDocumentProcessing, textOptions);
+      const effectiveDocumentType = {
+        ...documentType,
+        extractionModel: reprocessOptions.extractionModel || documentType.extractionModel,
+      };
+      const extraction = await extractValuesWithOpenAI(localDocument, effectiveDocumentType, useOcrForDocumentProcessing, textOptions);
       const extractedData = await attachBoundingBoxes(
         localFilePath,
         extraction?.values ||
@@ -469,6 +492,7 @@ async function processDocument(message, context) {
         {
           $set: {
             status: 'extracted',
+            ...classificationUpdate,
             extractedData,
             processingMetrics,
             classificationModel: localDocument.classificationModel,
@@ -476,6 +500,7 @@ async function processDocument(message, context) {
             error: null,
             updatedAt: new Date(),
           },
+          $unset: { reprocessOptions: '' },
         },
       );
       await recordBusinessReviewProcessing(db, localDocument, documentType, processingMetrics);

@@ -797,6 +797,30 @@ textarea {
   text-align: center;
 }
 
+.score-badge.low-score,
+.classification-score-line strong.low-score {
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger);
+}
+
+.score-badge.high-score,
+.classification-score-line strong.high-score {
+  border: 1px solid rgba(15, 118, 110, 0.35);
+  background: rgba(20, 184, 166, 0.14);
+  color: var(--primary);
+}
+
+.classification-score-line strong.low-score {
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.classification-score-line strong.high-score {
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
 .method-icon {
   display: inline-flex;
   align-items: center;
@@ -1331,6 +1355,12 @@ textarea {
   float: right;
 }
 
+.extraction-form em.low-score {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger);
+}
+
 .value-link {
   border: 0;
   background: transparent;
@@ -1496,6 +1526,15 @@ textarea {
   width: min(460px, 100%);
   max-height: none;
   overflow: visible;
+}
+
+.reprocess-modal {
+  width: min(520px, 100%);
+}
+
+.reprocess-options {
+  display: grid;
+  gap: 12px;
 }
 
 .modal-heading {
