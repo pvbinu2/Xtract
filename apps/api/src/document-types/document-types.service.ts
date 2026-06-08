@@ -106,6 +106,7 @@ export class DocumentTypesService {
       fields: [],
       extractionModel: 'gpt-5-nano',
       extractionReasoningEffort: 'low',
+      extractionVerification: false,
       includeInClassification: false,
       finalized: false,
     });
@@ -209,15 +210,23 @@ export class DocumentTypesService {
     return updated;
   }
 
-  async updateExtractionModel(id: string, payload: { extractionModel?: string; extractionReasoningEffort?: ReasoningEffort }) {
-    const updated = await this.model.findByIdAndUpdate(
-      id,
-      {
-        extractionModel: payload.extractionModel || 'gpt-5-nano',
-        extractionReasoningEffort: payload.extractionReasoningEffort || 'low',
-      },
-      { new: true },
-    );
+  async updateExtractionModel(
+    id: string,
+    payload: { extractionModel?: string; extractionReasoningEffort?: ReasoningEffort; extractionVerification?: boolean },
+  ) {
+    const updates: {
+      extractionModel: string;
+      extractionReasoningEffort: ReasoningEffort;
+      extractionVerification?: boolean;
+    } = {
+      extractionModel: payload.extractionModel || 'gpt-5-nano',
+      extractionReasoningEffort: payload.extractionReasoningEffort || 'low',
+    };
+    if (typeof payload.extractionVerification === 'boolean') {
+      updates.extractionVerification = payload.extractionVerification;
+    }
+
+    const updated = await this.model.findByIdAndUpdate(id, { $set: updates }, { new: true });
     if (!updated) throw new NotFoundException('Document type not found');
     return updated;
   }

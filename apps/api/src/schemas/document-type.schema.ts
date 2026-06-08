@@ -73,6 +73,9 @@ export class DocumentType {
   extractionReasoningEffort!: ReasoningEffort;
 
   @Prop({ default: false })
+  extractionVerification!: boolean;
+
+  @Prop({ default: false })
   finalized!: boolean;
 }
 

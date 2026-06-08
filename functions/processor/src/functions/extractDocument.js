@@ -133,12 +133,151 @@ function coerceTableRowsToSchema(value, columns = []) {
   });
 }
 
+function schemaForFields(fields) {
+  return fields.map((field) => ({
+    key: field.key,
+    label: field.label,
+    type: field.type,
+    description: field.description,
+    columns: field.type === 'table' ? field.columns || [] : undefined,
+  }));
+}
+
+function valuesFromParsedFields(fields, selectedFields) {
+  const byKey = new Map((fields || []).map((field) => [field.key, field]));
+  return selectedFields.map((field) => {
+    const extracted = byKey.get(field.key);
+    return {
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      value: field.type === 'table'
+        ? coerceTableRowsToSchema(extracted?.value, field.columns || [])
+        : extracted?.value ?? '',
+      confidence: typeof extracted?.confidence === 'number' ? extracted.confidence : undefined,
+    };
+  });
+}
+
+function combineMetrics(primary, additional) {
+  if (!additional) return primary;
+  return {
+    ...primary,
+    inputTokens: Number(primary.inputTokens || 0) + Number(additional.inputTokens || 0),
+    outputTokens: Number(primary.outputTokens || 0) + Number(additional.outputTokens || 0),
+    totalTokens: Number(primary.totalTokens || 0) + Number(additional.totalTokens || 0),
+    estimatedCostUsd: Number((Number(primary.estimatedCostUsd || 0) + Number(additional.estimatedCostUsd || 0)).toFixed(8)),
+    processedAt: new Date(),
+  };
+}
+
 function pdfInput(filePath) {
   const data = fs.readFileSync(filePath).toString('base64');
   return {
     type: 'input_file',
     filename: path.basename(filePath),
     file_data: `data:application/pdf;base64,${data}`,
+  };
+}
+
+async function verifyExtractionWithOpenAI({
+  client,
+  requestConfig,
+  model,
+  document,
+  documentType,
+  selectedFields,
+  values,
+  useOcr,
+  documentText,
+  textSourceLabel,
+}) {
+  const response = await withOpenAIRetry(() => client.responses.create({
+    ...requestConfig,
+    input: [
+      {
+        role: 'user',
+        content: [
+          ...(useOcr ? [] : [pdfInput(document.filePath)]),
+          {
+            type: 'input_text',
+            text: [
+              useOcr
+                ? `Verify extracted values from this ${documentType.name} document using the ${textSourceLabel} below.`
+                : `Verify extracted values from this ${documentType.name} PDF.`,
+              'Compare the extracted data against the document content and schema.',
+              'Return JSON only. Do not include markdown.',
+              'Set needsCorrection to true only when a value is missing, incorrect, assigned to the wrong field, or a table row/column is inconsistent with the document.',
+              'Return this exact shape:',
+              '{"needsCorrection":true,"issues":[{"key":"field_key","problem":"brief issue"}]}',
+              `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
+              `Extracted data: ${JSON.stringify(values)}`,
+              useOcr ? `Document text:\n${documentText}` : '',
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+    text: { format: { type: 'json_object' } },
+  }), `Extraction verification for document ${document._id || document.fileName}`);
+
+  const parsed = parseJsonObject(response.output_text);
+  return {
+    needsCorrection: Boolean(parsed.needsCorrection),
+    issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+    metrics: processingMetricsFromResponse(response, model),
+  };
+}
+
+async function correctExtractionWithOpenAI({
+  client,
+  requestConfig,
+  model,
+  document,
+  documentType,
+  selectedFields,
+  values,
+  issues,
+  useOcr,
+  documentText,
+  textSourceLabel,
+}) {
+  const response = await withOpenAIRetry(() => client.responses.create({
+    ...requestConfig,
+    input: [
+      {
+        role: 'user',
+        content: [
+          ...(useOcr ? [] : [pdfInput(document.filePath)]),
+          {
+            type: 'input_text',
+            text: [
+              useOcr
+                ? `Correct extracted values from this ${documentType.name} document using the ${textSourceLabel} below.`
+                : `Correct extracted values from this ${documentType.name} PDF.`,
+              'The verification pass found issues in the extracted data.',
+              'Return one corrected full extraction result for every schema field.',
+              'Return JSON only. Do not include markdown.',
+              'If a value is missing, return an empty string and low confidence.',
+              'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
+              'Return this exact shape:',
+              '{"fields":[{"key":"field_key","value":"corrected value","confidence":0.92}]}',
+              `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
+              `Verification issues: ${JSON.stringify(issues)}`,
+              `Original extracted data: ${JSON.stringify(values)}`,
+              useOcr ? `Document text:\n${documentText}` : '',
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+    text: { format: { type: 'json_object' } },
+  }), `Extraction correction for document ${document._id || document.fileName}`);
+
+  const parsed = parseJsonObject(response.output_text);
+  return {
+    values: valuesFromParsedFields(parsed.fields || [], selectedFields),
+    metrics: processingMetricsFromResponse(response, model),
   };
 }
 
@@ -177,15 +316,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
               'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
               'Return this exact shape:',
               '{"fields":[{"key":"field_key","value":"extracted value","confidence":0.92}]}',
-              `Schema: ${JSON.stringify(
-                selectedFields.map((field) => ({
-                  key: field.key,
-                  label: field.label,
-                  type: field.type,
-                  description: field.description,
-                  columns: field.type === 'table' ? field.columns || [] : undefined,
-                })),
-              )}`,
+              `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
               useOcr ? `Document text:\n${documentText}` : '',
             ].join('\n'),
           },
@@ -196,23 +327,46 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
   }), `Extraction for document ${document._id || document.fileName}`);
 
   const parsed = parseJsonObject(response.output_text);
-  const byKey = new Map((parsed.fields || []).map((field) => [field.key, field]));
-  const values = selectedFields.map((field) => {
-    const extracted = byKey.get(field.key);
-    return {
-      key: field.key,
-      label: field.label,
-      type: field.type,
-      value: field.type === 'table'
-        ? coerceTableRowsToSchema(extracted?.value, field.columns || [])
-        : extracted?.value ?? '',
-      confidence: typeof extracted?.confidence === 'number' ? extracted.confidence : undefined,
-    };
-  });
+  let values = valuesFromParsedFields(parsed.fields || [], selectedFields);
+  let metrics = processingMetricsFromResponse(response, model);
+
+  if (documentType.extractionVerification) {
+    const verification = await verifyExtractionWithOpenAI({
+      client,
+      requestConfig,
+      model,
+      document,
+      documentType,
+      selectedFields,
+      values,
+      useOcr,
+      documentText,
+      textSourceLabel,
+    });
+    metrics = combineMetrics(metrics, verification.metrics);
+
+    if (verification.needsCorrection) {
+      const correction = await correctExtractionWithOpenAI({
+        client,
+        requestConfig,
+        model,
+        document,
+        documentType,
+        selectedFields,
+        values,
+        issues: verification.issues,
+        useOcr,
+        documentText,
+        textSourceLabel,
+      });
+      values = correction.values;
+      metrics = combineMetrics(metrics, correction.metrics);
+    }
+  }
 
   return {
     values,
-    metrics: processingMetricsFromResponse(response, model),
+    metrics,
   };
 }
 

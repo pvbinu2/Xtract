@@ -677,6 +677,9 @@ export function App() {
             categories={categories}
             onRun={run}
             onRefresh={refreshDocumentTypes}
+            onDocumentTypeSaved={(documentType) =>
+              setDocumentTypes((items) => items.map((item) => (item._id === documentType._id ? documentType : item)))
+            }
           />
         )}
         {view === 'classification' && (
@@ -1215,6 +1218,7 @@ function DocumentTypeManagement({
   categories,
   onRun,
   onRefresh,
+  onDocumentTypeSaved,
 }: {
   documentTypes: DocumentType[];
   activeType?: DocumentType;
@@ -1222,6 +1226,7 @@ function DocumentTypeManagement({
   categories: string[];
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
+  onDocumentTypeSaved: (documentType: DocumentType) => void;
 }) {
   const [prompt, setPrompt] = useState('Invoice number, invoice date, supplier name, subtotal, tax amount, total amount');
   const [sample, setSample] = useState<File | null>(null);
@@ -1340,24 +1345,56 @@ function DocumentTypeManagement({
                 reasoningEffort={activeType.extractionReasoningEffort || 'low'}
                 onModelChange={(extractionModel) =>
                   onRun(async () => {
-                    await api.updateExtractionModel(activeType._id, {
+                    const updated = await api.updateExtractionModel(activeType._id, {
                       extractionModel,
                       extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                      extractionVerification: Boolean(activeType.extractionVerification),
                     });
+                    onDocumentTypeSaved(updated);
                     await onRefresh();
                   }, 'Extraction model saved')
                 }
                 onReasoningEffortChange={(extractionReasoningEffort) =>
                   onRun(async () => {
-                    await api.updateExtractionModel(activeType._id, {
+                    const updated = await api.updateExtractionModel(activeType._id, {
                       extractionModel: activeType.extractionModel || lowCostOpenAIModel,
                       extractionReasoningEffort,
+                      extractionVerification: Boolean(activeType.extractionVerification),
                     });
+                    onDocumentTypeSaved(updated);
                     await onRefresh();
                   }, 'Extraction reasoning effort saved')
                 }
               />
             </div>
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={Boolean(activeType.extractionVerification)}
+                onChange={(event) => {
+                  const extractionVerification = event.currentTarget.checked;
+                  const successMessage = extractionVerification
+                    ? 'Extraction verification enabled'
+                    : 'Extraction verification disabled';
+                  return onRun(async () => {
+                    const updated = await api.updateExtractionModel(activeType._id, {
+                      extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                      extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                      extractionVerification,
+                    });
+                    onDocumentTypeSaved({
+                      ...updated,
+                      extractionVerification,
+                    });
+                  }, successMessage);
+                }}
+              />
+              <span>
+                Extraction verification
+                <small>Have the LLM verify extracted data against the document content and correct mismatches.</small>
+              </span>
+            </label>
 
             <label className="checkbox-row">
               <input

@@ -28,6 +28,7 @@ export type DocumentType = {
   fields: ExtractionField[];
   extractionModel?: string;
   extractionReasoningEffort?: ReasoningEffort;
+  extractionVerification?: boolean;
   finalized: boolean;
 };
 
