@@ -529,15 +529,16 @@ export function App() {
   }
 
   async function moveToAdjacentDocument(currentId: string, direction: 'previous' | 'next') {
-    if (!currentId) return;
+    if (!currentId) return false;
 
     const adjacent = await findAdjacentDocument(currentId, direction);
-    if (!adjacent?.document) return;
+    if (!adjacent?.document) return false;
 
     openValidationDocument(adjacent.document._id);
     if (adjacent.page !== documentPage.page) {
       await loadDocumentsPage(adjacent.page);
     }
+    return true;
   }
 
   useEffect(() => {
@@ -2581,8 +2582,8 @@ function ValidationScreen({
   config: AppConfig;
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
-  onNavigatePrevious: (currentDocumentId: string) => Promise<void>;
-  onNavigateNext: (currentDocumentId: string) => Promise<void>;
+  onNavigatePrevious: (currentDocumentId: string) => Promise<boolean>;
+  onNavigateNext: (currentDocumentId: string) => Promise<boolean>;
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
@@ -2675,9 +2676,16 @@ function ValidationScreen({
   async function navigateDocument(direction: 'previous' | 'next') {
     if (!document) return;
     if (navigationPending) return;
+    const currentDocumentId = document._id;
     setNavigationPending(true);
+    setDocument(null);
+    setValues([]);
     try {
-      await (direction === 'previous' ? onNavigatePrevious(document._id) : onNavigateNext(document._id));
+      const moved = await (direction === 'previous' ? onNavigatePrevious(currentDocumentId) : onNavigateNext(currentDocumentId));
+      if (!moved) {
+        const currentDocument = await api.getDocument(currentDocumentId);
+        applyDocumentState(currentDocument);
+      }
     } finally {
       setNavigationPending(false);
     }
@@ -2959,7 +2967,11 @@ function ValidationScreen({
                 className="secondary-button"
                 type="button"
                 disabled={!canNavigatePrevious || navigationPending}
-                onClick={() => navigateDocument('previous')}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigateDocument('previous');
+                }}
               >
                 <ChevronLeft size={16} />
                 Previous
@@ -2968,7 +2980,11 @@ function ValidationScreen({
                 className="secondary-button"
                 type="button"
                 disabled={!canNavigateNext || navigationPending}
-                onClick={() => navigateDocument('next')}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigateDocument('next');
+                }}
               >
                 Next
                 <ChevronRight size={16} />
