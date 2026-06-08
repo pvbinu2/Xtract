@@ -436,6 +436,49 @@ export function App() {
     return docs;
   }
 
+  function openValidationDocument(documentId: string) {
+    setActiveDocumentId(documentId);
+    setView('validation');
+  }
+
+  async function findAdjacentDocument(currentId: string, direction: 'previous' | 'next') {
+    const pageSize = documentPage.pageSize;
+    let page = documentPage.page;
+    let items = documents;
+    let totalPages = documentPage.totalPages;
+
+    for (let attempts = 0; attempts < Math.max(totalPages, 1); attempts += 1) {
+      const currentIndex = items.findIndex((item) => item._id === currentId);
+      if (currentIndex >= 0) {
+        if (direction === 'previous') {
+          if (currentIndex > 0) return { page, document: items[currentIndex - 1] };
+          if (page <= 1) return null;
+          const previousPage = await api.listDocuments(
+            new URLSearchParams({ sort: 'latest', page: String(page - 1), pageSize: String(pageSize) }),
+          );
+          return { page: previousPage.page, document: previousPage.items.at(-1) };
+        }
+
+        if (currentIndex < items.length - 1) return { page, document: items[currentIndex + 1] };
+        if (page >= totalPages) return null;
+        const nextPage = await api.listDocuments(
+          new URLSearchParams({ sort: 'latest', page: String(page + 1), pageSize: String(pageSize) }),
+        );
+        return { page: nextPage.page, document: nextPage.items[0] };
+      }
+
+      const nextSearchPage = attempts === 0 ? documentPage.page : attempts;
+      const refreshed = await api.listDocuments(
+        new URLSearchParams({ sort: 'latest', page: String(nextSearchPage), pageSize: String(pageSize) }),
+      );
+      page = refreshed.page;
+      items = refreshed.items;
+      totalPages = refreshed.totalPages;
+    }
+
+    return null;
+  }
+
   function showToast(text: string, type: 'success' | 'error' | 'info' = 'info') {
     setToast({ text, type });
   }
@@ -486,41 +529,16 @@ export function App() {
   }
 
   async function moveToAdjacentDocument(currentId: string, direction: 'previous' | 'next') {
-    if (!currentId) return;
+    if (!currentId) return false;
 
-    const currentIndex = documents.findIndex((item) => item._id === currentId);
-    if (direction === 'previous') {
-      if (currentIndex > 0) {
-        setActiveDocumentId(documents[currentIndex - 1]._id);
-        setView('validation');
-        return;
-      }
+    const adjacent = await findAdjacentDocument(currentId, direction);
+    if (!adjacent?.document) return false;
 
-      if (currentIndex === 0 && documentPage.page > 1) {
-        const previousPage = await loadDocumentsPage(documentPage.page - 1);
-        const previousDocument = previousPage.items.at(-1);
-        if (previousDocument) {
-          setActiveDocumentId(previousDocument._id);
-          setView('validation');
-        }
-      }
-      return;
+    openValidationDocument(adjacent.document._id);
+    if (adjacent.page !== documentPage.page) {
+      await loadDocumentsPage(adjacent.page);
     }
-
-    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
-      setActiveDocumentId(documents[currentIndex + 1]._id);
-      setView('validation');
-      return;
-    }
-
-    if (currentIndex === documents.length - 1 && documentPage.page < documentPage.totalPages) {
-      const nextPage = await loadDocumentsPage(documentPage.page + 1);
-      const nextDocument = nextPage.items[0];
-      if (nextDocument) {
-        setActiveDocumentId(nextDocument._id);
-        setView('validation');
-      }
-    }
+    return true;
   }
 
   useEffect(() => {
@@ -677,6 +695,9 @@ export function App() {
             categories={categories}
             onRun={run}
             onRefresh={refreshDocumentTypes}
+            onDocumentTypeSaved={(documentType) =>
+              setDocumentTypes((items) => items.map((item) => (item._id === documentType._id ? documentType : item)))
+            }
           />
         )}
         {view === 'classification' && (
@@ -728,8 +749,8 @@ export function App() {
             config={config}
             canNavigatePrevious={canNavigatePreviousDocument}
             canNavigateNext={canNavigateNextDocument}
-            onNavigatePrevious={() => moveToAdjacentDocument(validationDocumentId, 'previous')}
-            onNavigateNext={() => moveToAdjacentDocument(validationDocumentId, 'next')}
+            onNavigatePrevious={(currentDocumentId) => moveToAdjacentDocument(currentDocumentId, 'previous')}
+            onNavigateNext={(currentDocumentId) => moveToAdjacentDocument(currentDocumentId, 'next')}
             onRefresh={refreshDocumentTypes}
             onValidated={async (_notification: string) => {
               await moveToNextDocument(validationDocumentId);
@@ -1215,6 +1236,7 @@ function DocumentTypeManagement({
   categories,
   onRun,
   onRefresh,
+  onDocumentTypeSaved,
 }: {
   documentTypes: DocumentType[];
   activeType?: DocumentType;
@@ -1222,6 +1244,7 @@ function DocumentTypeManagement({
   categories: string[];
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
+  onDocumentTypeSaved: (documentType: DocumentType) => void;
 }) {
   const [prompt, setPrompt] = useState('Invoice number, invoice date, supplier name, subtotal, tax amount, total amount');
   const [sample, setSample] = useState<File | null>(null);
@@ -1340,24 +1363,56 @@ function DocumentTypeManagement({
                 reasoningEffort={activeType.extractionReasoningEffort || 'low'}
                 onModelChange={(extractionModel) =>
                   onRun(async () => {
-                    await api.updateExtractionModel(activeType._id, {
+                    const updated = await api.updateExtractionModel(activeType._id, {
                       extractionModel,
                       extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                      extractionVerification: Boolean(activeType.extractionVerification),
                     });
+                    onDocumentTypeSaved(updated);
                     await onRefresh();
                   }, 'Extraction model saved')
                 }
                 onReasoningEffortChange={(extractionReasoningEffort) =>
                   onRun(async () => {
-                    await api.updateExtractionModel(activeType._id, {
+                    const updated = await api.updateExtractionModel(activeType._id, {
                       extractionModel: activeType.extractionModel || lowCostOpenAIModel,
                       extractionReasoningEffort,
+                      extractionVerification: Boolean(activeType.extractionVerification),
                     });
+                    onDocumentTypeSaved(updated);
                     await onRefresh();
                   }, 'Extraction reasoning effort saved')
                 }
               />
             </div>
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={Boolean(activeType.extractionVerification)}
+                onChange={(event) => {
+                  const extractionVerification = event.currentTarget.checked;
+                  const successMessage = extractionVerification
+                    ? 'Extraction verification enabled'
+                    : 'Extraction verification disabled';
+                  return onRun(async () => {
+                    const updated = await api.updateExtractionModel(activeType._id, {
+                      extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                      extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                      extractionVerification,
+                    });
+                    onDocumentTypeSaved({
+                      ...updated,
+                      extractionVerification,
+                    });
+                  }, successMessage);
+                }}
+              />
+              <span>
+                Extraction verification
+                <small>Have the LLM verify extracted data against the document content and correct mismatches.</small>
+              </span>
+            </label>
 
             <label className="checkbox-row">
               <input
@@ -2527,8 +2582,8 @@ function ValidationScreen({
   config: AppConfig;
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
-  onNavigatePrevious: () => Promise<void>;
-  onNavigateNext: () => Promise<void>;
+  onNavigatePrevious: (currentDocumentId: string) => Promise<boolean>;
+  onNavigateNext: (currentDocumentId: string) => Promise<boolean>;
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
@@ -2546,6 +2601,7 @@ function ValidationScreen({
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
   const [pendingValidationAction, setPendingValidationAction] = useState<'validate' | 'reject' | null>(null);
+  const [navigationPending, setNavigationPending] = useState(false);
   const documentTypeFor = (doc: IncomingDocument) => documentTypes.find((type) => type._id === doc.documentTypeId);
 
   function applyDocumentState(nextDocument: IncomingDocument) {
@@ -2598,13 +2654,42 @@ function ValidationScreen({
 
   useEffect(() => {
     if (!documentId) return;
+    let cancelled = false;
+    setDocument(null);
+    setValues([]);
+    setActiveFieldKey(null);
+    setEditingValueKey(null);
+    setEditingValueDraft('');
+    setSavingValueKey(null);
     api.getDocument(documentId).then((doc) => {
+      if (cancelled) return;
       applyDocumentState(doc);
-      setEditingValueKey(null);
-      setEditingValueDraft('');
-      setSavingValueKey(null);
+    }).catch((error) => {
+      if (!cancelled) onNotify(error instanceof Error ? error.message : 'Failed to load document', 'error');
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [documentId, documentTypes]);
+
+  async function navigateDocument(direction: 'previous' | 'next') {
+    if (!document) return;
+    if (navigationPending) return;
+    const currentDocumentId = document._id;
+    setNavigationPending(true);
+    setDocument(null);
+    setValues([]);
+    try {
+      const moved = await (direction === 'previous' ? onNavigatePrevious(currentDocumentId) : onNavigateNext(currentDocumentId));
+      if (!moved) {
+        const currentDocument = await api.getDocument(currentDocumentId);
+        applyDocumentState(currentDocument);
+      }
+    } finally {
+      setNavigationPending(false);
+    }
+  }
 
   function startValueEdit(item: ExtractedValue) {
     setActiveFieldKey(item.key);
@@ -2881,8 +2966,12 @@ function ValidationScreen({
               <button
                 className="secondary-button"
                 type="button"
-                disabled={!canNavigatePrevious}
-                onClick={onNavigatePrevious}
+                disabled={!canNavigatePrevious || navigationPending}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigateDocument('previous');
+                }}
               >
                 <ChevronLeft size={16} />
                 Previous
@@ -2890,8 +2979,12 @@ function ValidationScreen({
               <button
                 className="secondary-button"
                 type="button"
-                disabled={!canNavigateNext}
-                onClick={onNavigateNext}
+                disabled={!canNavigateNext || navigationPending}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigateDocument('next');
+                }}
               >
                 Next
                 <ChevronRight size={16} />

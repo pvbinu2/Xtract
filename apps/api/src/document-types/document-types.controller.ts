@@ -56,7 +56,11 @@ export class DocumentTypesController {
   @Post(':id/extraction-model')
   updateExtractionModel(
     @Param('id') id: string,
-    @Body() body: { extractionModel?: string; extractionReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' },
+    @Body() body: {
+      extractionModel?: string;
+      extractionReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+      extractionVerification?: boolean;
+    },
   ) {
     return this.service.updateExtractionModel(id, body);
   }

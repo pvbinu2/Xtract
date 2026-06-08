@@ -54,7 +54,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ includeInClassification }),
     }),
-  updateExtractionModel: (id: string, payload: { extractionModel: string; extractionReasoningEffort: ReasoningEffort }) =>
+  updateExtractionModel: (
+    id: string,
+    payload: { extractionModel: string; extractionReasoningEffort: ReasoningEffort; extractionVerification?: boolean },
+  ) =>
     request<DocumentType>(`/document-types/${id}/extraction-model`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
