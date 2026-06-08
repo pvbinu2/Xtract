@@ -436,6 +436,49 @@ export function App() {
     return docs;
   }
 
+  function openValidationDocument(documentId: string) {
+    setActiveDocumentId(documentId);
+    setView('validation');
+  }
+
+  async function findAdjacentDocument(currentId: string, direction: 'previous' | 'next') {
+    const pageSize = documentPage.pageSize;
+    let page = documentPage.page;
+    let items = documents;
+    let totalPages = documentPage.totalPages;
+
+    for (let attempts = 0; attempts < Math.max(totalPages, 1); attempts += 1) {
+      const currentIndex = items.findIndex((item) => item._id === currentId);
+      if (currentIndex >= 0) {
+        if (direction === 'previous') {
+          if (currentIndex > 0) return { page, document: items[currentIndex - 1] };
+          if (page <= 1) return null;
+          const previousPage = await api.listDocuments(
+            new URLSearchParams({ sort: 'latest', page: String(page - 1), pageSize: String(pageSize) }),
+          );
+          return { page: previousPage.page, document: previousPage.items.at(-1) };
+        }
+
+        if (currentIndex < items.length - 1) return { page, document: items[currentIndex + 1] };
+        if (page >= totalPages) return null;
+        const nextPage = await api.listDocuments(
+          new URLSearchParams({ sort: 'latest', page: String(page + 1), pageSize: String(pageSize) }),
+        );
+        return { page: nextPage.page, document: nextPage.items[0] };
+      }
+
+      const nextSearchPage = attempts === 0 ? documentPage.page : attempts;
+      const refreshed = await api.listDocuments(
+        new URLSearchParams({ sort: 'latest', page: String(nextSearchPage), pageSize: String(pageSize) }),
+      );
+      page = refreshed.page;
+      items = refreshed.items;
+      totalPages = refreshed.totalPages;
+    }
+
+    return null;
+  }
+
   function showToast(text: string, type: 'success' | 'error' | 'info' = 'info') {
     setToast({ text, type });
   }
@@ -488,38 +531,12 @@ export function App() {
   async function moveToAdjacentDocument(currentId: string, direction: 'previous' | 'next') {
     if (!currentId) return;
 
-    const currentIndex = documents.findIndex((item) => item._id === currentId);
-    if (direction === 'previous') {
-      if (currentIndex > 0) {
-        setActiveDocumentId(documents[currentIndex - 1]._id);
-        setView('validation');
-        return;
-      }
+    const adjacent = await findAdjacentDocument(currentId, direction);
+    if (!adjacent?.document) return;
 
-      if (currentIndex === 0 && documentPage.page > 1) {
-        const previousPage = await loadDocumentsPage(documentPage.page - 1);
-        const previousDocument = previousPage.items.at(-1);
-        if (previousDocument) {
-          setActiveDocumentId(previousDocument._id);
-          setView('validation');
-        }
-      }
-      return;
-    }
-
-    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
-      setActiveDocumentId(documents[currentIndex + 1]._id);
-      setView('validation');
-      return;
-    }
-
-    if (currentIndex === documents.length - 1 && documentPage.page < documentPage.totalPages) {
-      const nextPage = await loadDocumentsPage(documentPage.page + 1);
-      const nextDocument = nextPage.items[0];
-      if (nextDocument) {
-        setActiveDocumentId(nextDocument._id);
-        setView('validation');
-      }
+    openValidationDocument(adjacent.document._id);
+    if (adjacent.page !== documentPage.page) {
+      await loadDocumentsPage(adjacent.page);
     }
   }
 
@@ -731,8 +748,8 @@ export function App() {
             config={config}
             canNavigatePrevious={canNavigatePreviousDocument}
             canNavigateNext={canNavigateNextDocument}
-            onNavigatePrevious={() => moveToAdjacentDocument(validationDocumentId, 'previous')}
-            onNavigateNext={() => moveToAdjacentDocument(validationDocumentId, 'next')}
+            onNavigatePrevious={(currentDocumentId) => moveToAdjacentDocument(currentDocumentId, 'previous')}
+            onNavigateNext={(currentDocumentId) => moveToAdjacentDocument(currentDocumentId, 'next')}
             onRefresh={refreshDocumentTypes}
             onValidated={async (_notification: string) => {
               await moveToNextDocument(validationDocumentId);
@@ -2564,8 +2581,8 @@ function ValidationScreen({
   config: AppConfig;
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
-  onNavigatePrevious: () => Promise<void>;
-  onNavigateNext: () => Promise<void>;
+  onNavigatePrevious: (currentDocumentId: string) => Promise<void>;
+  onNavigateNext: (currentDocumentId: string) => Promise<void>;
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
@@ -2583,6 +2600,7 @@ function ValidationScreen({
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
   const [pendingValidationAction, setPendingValidationAction] = useState<'validate' | 'reject' | null>(null);
+  const [navigationPending, setNavigationPending] = useState(false);
   const documentTypeFor = (doc: IncomingDocument) => documentTypes.find((type) => type._id === doc.documentTypeId);
 
   function applyDocumentState(nextDocument: IncomingDocument) {
@@ -2635,13 +2653,35 @@ function ValidationScreen({
 
   useEffect(() => {
     if (!documentId) return;
+    let cancelled = false;
+    setDocument(null);
+    setValues([]);
+    setActiveFieldKey(null);
+    setEditingValueKey(null);
+    setEditingValueDraft('');
+    setSavingValueKey(null);
     api.getDocument(documentId).then((doc) => {
+      if (cancelled) return;
       applyDocumentState(doc);
-      setEditingValueKey(null);
-      setEditingValueDraft('');
-      setSavingValueKey(null);
+    }).catch((error) => {
+      if (!cancelled) onNotify(error instanceof Error ? error.message : 'Failed to load document', 'error');
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [documentId, documentTypes]);
+
+  async function navigateDocument(direction: 'previous' | 'next') {
+    if (!document) return;
+    if (navigationPending) return;
+    setNavigationPending(true);
+    try {
+      await (direction === 'previous' ? onNavigatePrevious(document._id) : onNavigateNext(document._id));
+    } finally {
+      setNavigationPending(false);
+    }
+  }
 
   function startValueEdit(item: ExtractedValue) {
     setActiveFieldKey(item.key);
@@ -2918,8 +2958,8 @@ function ValidationScreen({
               <button
                 className="secondary-button"
                 type="button"
-                disabled={!canNavigatePrevious}
-                onClick={onNavigatePrevious}
+                disabled={!canNavigatePrevious || navigationPending}
+                onClick={() => navigateDocument('previous')}
               >
                 <ChevronLeft size={16} />
                 Previous
@@ -2927,8 +2967,8 @@ function ValidationScreen({
               <button
                 className="secondary-button"
                 type="button"
-                disabled={!canNavigateNext}
-                onClick={onNavigateNext}
+                disabled={!canNavigateNext || navigationPending}
+                onClick={() => navigateDocument('next')}
               >
                 Next
                 <ChevronRight size={16} />
