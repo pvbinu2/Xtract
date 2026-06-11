@@ -3003,7 +3003,7 @@ function ValidationScreen({
               </button>
               <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
                 <CheckCircle2 size={16} />
-                Submit Validation
+                Validate
               </button>
             </div>
           </div>
