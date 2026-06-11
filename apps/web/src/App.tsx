@@ -4,6 +4,7 @@ import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
   BarChart3,
+  Building2,
   BrainCircuit,
   ChevronLeft,
   ChevronRight,
@@ -30,15 +31,20 @@ import {
   Upload,
   Download,
   FileText,
+  Mail,
+  Phone,
+  ShieldCheck,
+  Sparkles,
+  TrendingUp,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import { api, AppConfigPayload, ReprocessDocumentPayload } from './api';
-import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
+import { BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests';
 
 type AppConfig = AppConfigPayload;
 type OperationsMetrics = {
@@ -303,6 +309,14 @@ function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?:
 }
 
 export function App() {
+  if (window.location.pathname === '/xtractor') {
+    return <MarketingSite />;
+  }
+
+  return <OperationsApp />;
+}
+
+function OperationsApp() {
   const [view, setView] = useState<View>('documents');
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documents, setDocuments] = useState<IncomingDocument[]>([]);
@@ -596,6 +610,7 @@ export function App() {
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
+    { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
   ];
   const validationDocumentId = activeDocumentId || documents[0]?._id || '';
   const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
@@ -742,6 +757,9 @@ export function App() {
         {view === 'business-review' && (
           <BusinessReviewScreen onNotify={showToast} />
         )}
+        {view === 'demo-requests' && (
+          <DemoRequestsScreen onNotify={showToast} />
+        )}
         {view === 'validation' && (
           <ValidationScreen
             documentId={validationDocumentId}
@@ -794,6 +812,226 @@ function StatusMetric({ label, value, onClick }: { label: string; value: number 
     <div className="metric">
       {content}
     </div>
+  );
+}
+
+function MarketingSite() {
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submitDemoRequest(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      await api.createDemoRequest({ email, phone, source: 'xtractor-marketing-site' });
+      setEmail('');
+      setPhone('');
+      setStatus({ type: 'success', text: 'Demo request received. We will contact you shortly.' });
+    } catch (error) {
+      setStatus({ type: 'error', text: error instanceof Error ? error.message : 'Failed to submit request.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function focusRequestForm() {
+    document.getElementById('demo-request-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => document.getElementById('marketing-email')?.focus(), 350);
+  }
+
+  return (
+    <main className="marketing-site">
+      <section className="marketing-hero">
+        <div className="marketing-workflow-bg" aria-hidden="true">
+          <span title="Intake"><Upload size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Classification"><BrainCircuit size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Extraction"><ScanText size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Validation"><ClipboardCheck size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Downstream"><Network size={22} /></span>
+        </div>
+        <div className="marketing-nav">
+          <div className="marketing-brand">
+            <img src="/icon-192.png" alt="" />
+            <strong>Xtractor</strong>
+          </div>
+          <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>
+            Open app
+          </button>
+        </div>
+        <div className="marketing-hero-content">
+          <div className="marketing-copy">
+            <span className="marketing-kicker">AI document intake for business teams</span>
+            <h1>Turn document-heavy operations into validated structured data.</h1>
+            <p>
+              Xtractor classifies PDFs, extracts business fields, routes exceptions for human validation, and sends clean JSON to your downstream systems.
+            </p>
+            <div className="marketing-actions">
+              <button type="button" className="marketing-primary-button" onClick={focusRequestForm}>
+                Request a demo
+                <ChevronRight size={18} />
+              </button>
+              <a className="marketing-text-link" href="#business-applications">Explore use cases</a>
+            </div>
+          </div>
+          <div className="marketing-product-visual" aria-label="Xtractor workflow preview">
+            <div className="visual-toolbar">
+              <span>Processing queue</span>
+              <strong>Live validation</strong>
+            </div>
+            <div className="visual-grid">
+              <div className="visual-panel primary">
+                <FileText size={24} />
+                <strong>Invoice_0428.pdf</strong>
+                <span>Classified as Accounts Payable</span>
+              </div>
+              <div className="visual-panel">
+                <ShieldCheck size={22} />
+                <strong>96%</strong>
+                <span>Validation confidence</span>
+              </div>
+              <div className="visual-panel">
+                <TrendingUp size={22} />
+                <strong>JSON ready</strong>
+                <span>ERP payload prepared</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="marketing-section" id="business-applications">
+        <div className="marketing-section-heading">
+          <span className="marketing-kicker">Business applications</span>
+          <h2>Built for repeatable document operations.</h2>
+        </div>
+        <div className="marketing-card-grid">
+          <article>
+            <Building2 size={22} />
+            <h3>Finance and AP</h3>
+            <p>Capture invoice totals, vendor details, tax, due dates, and line items before sending clean data downstream.</p>
+          </article>
+          <article>
+            <ClipboardCheck size={22} />
+            <h3>Compliance review</h3>
+            <p>Validate extracted fields side by side with the original PDF and preserve clear operational visibility.</p>
+          </article>
+          <article>
+            <Sparkles size={22} />
+            <h3>Template flexibility</h3>
+            <p>Create extraction schemas for new document classes and reprocess files as business needs change.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="marketing-demo-band">
+        <div>
+          <span className="marketing-kicker">Request a walkthrough</span>
+          <h2>See how Xtractor fits your intake workflow.</h2>
+          <p>Share your email and optional phone number. Your request will be saved for the Xtract team to follow up.</p>
+        </div>
+        <form className="marketing-demo-form" id="demo-request-form" onSubmit={submitDemoRequest}>
+          <label>
+            Work email
+            <div className="marketing-input-wrap">
+              <Mail size={16} />
+              <input
+                id="marketing-email"
+                type="email"
+                required
+                placeholder="you@company.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </div>
+          </label>
+          <label>
+            Phone <span>optional</span>
+            <div className="marketing-input-wrap">
+              <Phone size={16} />
+              <input
+                type="tel"
+                placeholder="+1 555 0100"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+              />
+            </div>
+          </label>
+          <button className="marketing-primary-button" type="submit" disabled={submitting}>
+            {submitting ? <Loader2 size={18} className="spin" /> : <Mail size={18} />}
+            Request demo
+          </button>
+          {status && <div className={`marketing-form-status ${status.type}`}>{status.text}</div>}
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [requests, setRequests] = useState<DemoRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+
+  async function loadRequests() {
+    setLoadingRequests(true);
+    try {
+      setRequests(await api.listDemoRequests());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load demo requests', 'error');
+    } finally {
+      setLoadingRequests(false);
+    }
+  }
+
+  useEffect(() => {
+    loadRequests();
+  }, []);
+
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Demo Requests</h2>
+          <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
+        </div>
+        <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
+          {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+        </button>
+      </div>
+      <div className="business-review-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Source</th>
+              <th>Requested</th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((request) => (
+              <tr key={request._id}>
+                <td>{request.email}</td>
+                <td>{request.phone || 'N/A'}</td>
+                <td>{request.source}</td>
+                <td>{new Date(request.createdAt).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!requests.length && (
+          <div className="empty-table">
+            {loadingRequests ? 'Loading demo requests.' : 'No demo requests yet.'}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
