@@ -316,6 +316,7 @@ nav {
 .business-review {
   display: grid;
   gap: 18px;
+  min-width: 0;
 }
 
 .review-metric-grid {
@@ -327,6 +328,7 @@ nav {
 .review-metric {
   display: grid;
   gap: 5px;
+  min-width: 0;
   min-height: 106px;
   align-content: center;
   border: 1px solid var(--border);
@@ -346,11 +348,59 @@ nav {
   color: var(--text);
   font-size: 28px;
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .review-metric small {
   color: var(--muted);
   font-weight: 700;
+}
+
+.review-chart-card {
+  min-width: 0;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 14px;
+}
+
+.review-chart-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.review-chart-heading h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.review-chart-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-chart-heading strong {
+  color: var(--text);
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.review-chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  min-height: 220px;
+}
+
+.review-chart-wrap canvas {
+  display: block;
+  max-width: 100%;
 }
 
 .business-review-table {
@@ -386,6 +436,7 @@ nav {
 }
 
 .panel {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -1736,6 +1787,10 @@ textarea {
   .review-metric-grid,
   .validation-layout {
     grid-template-columns: 1fr;
+  }
+
+  .review-chart-heading {
+    flex-direction: column;
   }
 
   .sidebar {

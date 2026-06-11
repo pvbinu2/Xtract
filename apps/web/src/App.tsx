@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
   BarChart3,
@@ -806,6 +807,147 @@ function ReviewMetric({ label, value, helper }: { label: string; value: string; 
   );
 }
 
+function MonthlyCostProjectionChart({
+  averageCostPerDocument,
+  formatReviewCurrency,
+}: {
+  averageCostPerDocument: number;
+  formatReviewCurrency: (value: number) => string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maxFiles = 1_000_000;
+  const projectedCost = maxFiles * averageCostPerDocument;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const styles = getComputedStyle(document.documentElement);
+    const primary = styles.getPropertyValue('--primary').trim() || '#4f46e5';
+    const muted = styles.getPropertyValue('--muted').trim() || '#64748b';
+    const border = styles.getPropertyValue('--border').trim() || '#e2e8f0';
+    const surface = styles.getPropertyValue('--surface').trim() || '#ffffff';
+    const volumePoints = Array.from({ length: 21 }, (_item, index) => index * 50_000);
+    const chart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Projected cost',
+            data: volumePoints.map((files) => ({
+              x: files,
+              y: files * averageCostPerDocument,
+            })),
+            borderColor: primary,
+            backgroundColor: 'rgba(79, 70, 229, 0.12)',
+            borderWidth: 1.5,
+            pointRadius: 2,
+            pointHoverRadius: 4,
+            pointBackgroundColor: surface,
+            pointBorderColor: primary,
+            pointBorderWidth: 1,
+            fill: true,
+            tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: {
+          intersect: false,
+          mode: 'index',
+        },
+        plugins: {
+          legend: {
+            display: false,
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => `${formatNumber(Number(items[0]?.parsed.x || 0))} files/month`,
+              label: (item) => formatReviewCurrency(Number(item.parsed.y || 0)),
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: 0,
+            max: maxFiles,
+            grid: {
+              color: border,
+              lineWidth: 0.5,
+            },
+            border: {
+              color: border,
+            },
+            ticks: {
+              color: muted,
+              font: {
+                size: 11,
+                weight: 700,
+              },
+              maxTicksLimit: 5,
+              callback: (value) => {
+                const files = Number(value);
+                if (files === 0) return '0';
+                if (files === maxFiles) return '1M';
+                return `${files / 1000}k`;
+              },
+            },
+            title: {
+              display: true,
+              text: 'Files/month',
+              color: muted,
+              font: {
+                size: 11,
+                weight: 700,
+              },
+            },
+          },
+          y: {
+            beginAtZero: true,
+            grid: {
+              color: border,
+              lineWidth: 0.5,
+            },
+            border: {
+              color: border,
+            },
+            ticks: {
+              color: muted,
+              font: {
+                size: 11,
+                weight: 700,
+              },
+              maxTicksLimit: 4,
+              callback: (value) => formatReviewCurrency(Number(value)),
+            },
+          },
+        },
+      },
+    });
+
+    return () => chart.destroy();
+  }, [averageCostPerDocument, formatReviewCurrency]);
+
+  return (
+    <section className="review-chart-card" aria-label="Monthly files and cost projection">
+      <div className="review-chart-heading">
+        <div>
+          <h3>Monthly Volume Projection</h3>
+          <p>Estimated cost from current average cost per file, scaled up to 1,000,000 files/month.</p>
+        </div>
+        <strong>{formatReviewCurrency(projectedCost)}</strong>
+      </div>
+      <div className="review-chart-wrap">
+        <canvas ref={canvasRef} aria-label="Cost projection by monthly file volume" role="img" />
+      </div>
+    </section>
+  );
+}
+
 function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
@@ -892,6 +1034,10 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
           <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
           <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
         </div>
+        <MonthlyCostProjectionChart
+          averageCostPerDocument={averageCostPerDocument}
+          formatReviewCurrency={formatReviewCurrency}
+        />
       </section>
 
       <section className="panel">
@@ -918,7 +1064,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
             </thead>
             <tbody>
               {summary.recentDocuments.map((document) => (
-                <tr key={document.id}>
+                <tr key={`${document.id}-${document.processedAt}`}>
                   <td>{document.name}</td>
                   <td>{displayModel(document.classificationModel)}</td>
                   <td>{displayModel(document.extractionModel)}</td>

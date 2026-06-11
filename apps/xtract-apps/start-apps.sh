@@ -3,6 +3,7 @@ set -e
 
 cd /app
 npm install
+npm install --workspace apps/web
 FUNC_BIN="/app/functions/processor/node_modules/.bin/func"
 if [ ! -x "$FUNC_BIN" ]; then
   FUNC_BIN="/app/node_modules/.bin/func"
