@@ -369,8 +369,43 @@
     .docling-panel h2,
     .markdown-card h2 {
       font-size: 18px;
-      margin-bottom: 6px;
+      margin-bottom: 0;
       color: var(--text);
+    }
+
+    .markdown-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .download-button {
+      border: 1px solid var(--primary);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--primary-text);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 8px 12px;
+      transition: all 0.2s;
+    }
+
+    .download-button:hover:not(:disabled) {
+      background: var(--primary);
+      color: white;
+    }
+
+    .download-button:disabled {
+      border-color: var(--border);
+      color: var(--subtle);
+      cursor: not-allowed;
+    }
+
+    .docling-panel h2 {
+      margin-bottom: 6px;
     }
 
     .docling-panel p {
@@ -416,9 +451,7 @@
     }
 
     .markdown-layout {
-      display: grid;
-      gap: 16px;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      display: block;
     }
 
     .markdown-viewer {
@@ -470,26 +503,7 @@
       vertical-align: top;
     }
 
-    .raw-markdown {
-      background: var(--surface-code);
-      border: 1px solid var(--border-code);
-      color: var(--text);
-      border-radius: 6px;
-      font-size: 12px;
-      line-height: 1.45;
-      max-height: 600px;
-      min-height: 260px;
-      overflow: auto;
-      padding: 16px;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
     @media (max-width: 900px) {
-      .markdown-layout {
-        grid-template-columns: 1fr;
-      }
-
       .header-content {
         align-items: flex-start;
       }
@@ -560,16 +574,21 @@
       </div>
 
       <div class="markdown-card">
-        <h2>Markdown Response</h2>
+        <div class="markdown-card-header">
+          <h2>Markdown Response</h2>
+          <button class="download-button" id="downloadMarkdown" type="button" disabled>Download Markdown</button>
+        </div>
         <div class="markdown-layout">
           <div class="markdown-viewer" id="markdownViewer"></div>
-          <pre class="raw-markdown" id="rawMarkdown"></pre>
         </div>
       </div>
     </section>
   </div>
 
   <script>
+    let currentMarkdown = '';
+    let currentMarkdownFileName = 'docling-markdown.md';
+
     const themeToggle = document.getElementById('themeToggle');
     const storedTheme = localStorage.getItem('mockDownstreamTheme');
     let currentTheme = storedTheme || 'light';
@@ -750,6 +769,24 @@
       return html.join('');
     }
 
+    function markdownFileName(fileName) {
+      const baseName = fileName.replace(/\.[^.]+$/, '') || 'docling-markdown';
+      return `${baseName.replace(/[^a-z0-9_-]+/gi, '-')}.md`;
+    }
+
+    document.getElementById('downloadMarkdown').addEventListener('click', () => {
+      if (!currentMarkdown) return;
+      const blob = new Blob([currentMarkdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = currentMarkdownFileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+
     document.getElementById('doclingForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const fileInput = document.getElementById('doclingFile');
@@ -757,7 +794,7 @@
       const status = document.getElementById('doclingStatus');
       const submit = document.getElementById('doclingSubmit');
       const viewer = document.getElementById('markdownViewer');
-      const raw = document.getElementById('rawMarkdown');
+      const download = document.getElementById('downloadMarkdown');
       const file = fileInput.files[0];
 
       status.className = 'status-line';
@@ -772,8 +809,9 @@
       formData.append('serviceUrl', serviceUrlInput.value || 'http://docling-markdown:7072/api/extract-markdown');
       status.textContent = 'Sending document to Docling...';
       submit.disabled = true;
+      download.disabled = true;
+      currentMarkdown = '';
       viewer.innerHTML = '';
-      raw.textContent = '';
 
       try {
         const response = await fetch('/api/docling/extract', {
@@ -786,7 +824,9 @@
         }
         const markdown = data.markdown || '';
         status.textContent = `Markdown extracted from ${data.fileName || file.name}`;
-        raw.textContent = markdown;
+        currentMarkdown = markdown;
+        currentMarkdownFileName = markdownFileName(data.fileName || file.name);
+        download.disabled = !markdown;
         viewer.innerHTML = markdown ? renderMarkdown(markdown) : '<p>No markdown returned.</p>';
       } catch (error) {
         status.className = 'status-line error';

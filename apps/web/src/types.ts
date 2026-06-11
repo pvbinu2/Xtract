@@ -97,6 +97,15 @@ export type BusinessReviewSummary = {
   }>;
 };
 
+export type DemoRequest = {
+  _id: string;
+  email: string;
+  phone?: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type PagedResult<T> = {
   items: T[];
   total: number;

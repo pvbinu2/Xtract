@@ -1,4 +1,4 @@
-import { BusinessReviewSummary, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort } from './types';
+import { BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort } from './types';
 
 export type AppConfigPayload = {
   downstreamUrl: string;
@@ -93,6 +93,13 @@ export const api = {
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
   getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
   resetBusinessReview: () => request<{ reset: boolean }>('/documents/business-review', { method: 'DELETE' }),
+  createDemoRequest: (payload: { email: string; phone?: string; source?: string }) =>
+    request<DemoRequest>('/demo-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  listDemoRequests: () => request<DemoRequest[]>('/demo-requests'),
   deleteDocument: (id: string) => request(`/documents/${id}`, { method: 'DELETE' }),
   reprocessDocument: (id: string, payload: ReprocessDocumentPayload = {}) =>
     request<IncomingDocument>(`/documents/${id}/reprocess`, {

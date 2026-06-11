@@ -40,6 +40,7 @@ Xtract is designed for organizations that need to automate document processing w
 - Sample PDF upload for template generation and classifier training.
 - Automatic document classification using vector search with LLM fallback.
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
+- Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
 - Validation screen with source PDF preview and editable extracted fields.
 - Reclassification and reprocessing when a document was assigned to the wrong type or a schema changes.
 - Business review dashboard with processed-file counts, token usage, estimated cost, and display currency conversion.
@@ -66,6 +67,10 @@ The document processing configuration supports three modes:
 - **Built in text extraction**: Check **Use extracted text for document processing** and select **Built in** as the text extraction engine.
 - **Docling markdown extraction**: Check **Use extracted text for document processing**, select **Markdown (Docling service)**, and provide the Docling service URL.
 
+### Blob Trigger Ingestion
+
+The processor Function app includes a blob trigger for the `trigger` storage container. When a new file is uploaded to `trigger`, the function moves it to the `processing` container, creates an `IncomingDocument` record with `status: processing`, and enqueues the existing `document-processing` queue. The document then appears in the UI through the normal Documents and Validation screens as it moves through classification and extraction.
+
 ### Docling Markdown Extraction
 
 The Docling service lives in `functions/docling-markdown`. It is a Python Azure Function exposed at `/api/extract-markdown`. It accepts JSON containing a PDF as base64 and returns markdown that can be used for document classification, schema generation, and extraction.
@@ -89,7 +94,7 @@ Successful response shape:
 }
 ```
 
-The mock downstream API includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL and show both rendered markdown and raw markdown output.
+The mock downstream API includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL, show rendered markdown, and download the markdown output.
 
 ### Reclassification and Reprocessing
 

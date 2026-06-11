@@ -1,8 +1,10 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
   BarChart3,
+  Building2,
   BrainCircuit,
   ChevronLeft,
   ChevronRight,
@@ -29,13 +31,20 @@ import {
   Upload,
   Download,
   FileText,
+  Mail,
+  Phone,
+  ShieldCheck,
+  Sparkles,
+  TrendingUp,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { api, AppConfigPayload, ReprocessDocumentPayload } from './api';
-import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
+import { BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests';
 
 type AppConfig = AppConfigPayload;
 type OperationsMetrics = {
@@ -300,6 +309,14 @@ function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?:
 }
 
 export function App() {
+  if (window.location.pathname === '/xtractor') {
+    return <MarketingSite />;
+  }
+
+  return <OperationsApp />;
+}
+
+function OperationsApp() {
   const [view, setView] = useState<View>('documents');
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documents, setDocuments] = useState<IncomingDocument[]>([]);
@@ -593,6 +610,7 @@ export function App() {
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
+    { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
   ];
   const validationDocumentId = activeDocumentId || documents[0]?._id || '';
   const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
@@ -739,6 +757,9 @@ export function App() {
         {view === 'business-review' && (
           <BusinessReviewScreen onNotify={showToast} />
         )}
+        {view === 'demo-requests' && (
+          <DemoRequestsScreen onNotify={showToast} />
+        )}
         {view === 'validation' && (
           <ValidationScreen
             documentId={validationDocumentId}
@@ -794,6 +815,226 @@ function StatusMetric({ label, value, onClick }: { label: string; value: number 
   );
 }
 
+function MarketingSite() {
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submitDemoRequest(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      await api.createDemoRequest({ email, phone, source: 'xtractor-marketing-site' });
+      setEmail('');
+      setPhone('');
+      setStatus({ type: 'success', text: 'Demo request received. We will contact you shortly.' });
+    } catch (error) {
+      setStatus({ type: 'error', text: error instanceof Error ? error.message : 'Failed to submit request.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function focusRequestForm() {
+    document.getElementById('demo-request-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => document.getElementById('marketing-email')?.focus(), 350);
+  }
+
+  return (
+    <main className="marketing-site">
+      <section className="marketing-hero">
+        <div className="marketing-workflow-bg" aria-hidden="true">
+          <span title="Intake"><Upload size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Classification"><BrainCircuit size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Extraction"><ScanText size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Validation"><ClipboardCheck size={22} /></span>
+          <ChevronRight size={26} />
+          <span title="Downstream"><Network size={22} /></span>
+        </div>
+        <div className="marketing-nav">
+          <div className="marketing-brand">
+            <img src="/icon-192.png" alt="" />
+            <strong>Xtractor</strong>
+          </div>
+          <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>
+            Open app
+          </button>
+        </div>
+        <div className="marketing-hero-content">
+          <div className="marketing-copy">
+            <span className="marketing-kicker">AI document intake for business teams</span>
+            <h1>Turn document-heavy operations into validated structured data.</h1>
+            <p>
+              Xtractor classifies PDFs, extracts business fields, routes exceptions for human validation, and sends clean JSON to your downstream systems.
+            </p>
+            <div className="marketing-actions">
+              <button type="button" className="marketing-primary-button" onClick={focusRequestForm}>
+                Request a demo
+                <ChevronRight size={18} />
+              </button>
+              <a className="marketing-text-link" href="#business-applications">Explore use cases</a>
+            </div>
+          </div>
+          <div className="marketing-product-visual" aria-label="Xtractor workflow preview">
+            <div className="visual-toolbar">
+              <span>Processing queue</span>
+              <strong>Live validation</strong>
+            </div>
+            <div className="visual-grid">
+              <div className="visual-panel primary">
+                <FileText size={24} />
+                <strong>Invoice_0428.pdf</strong>
+                <span>Classified as Accounts Payable</span>
+              </div>
+              <div className="visual-panel">
+                <ShieldCheck size={22} />
+                <strong>96%</strong>
+                <span>Validation confidence</span>
+              </div>
+              <div className="visual-panel">
+                <TrendingUp size={22} />
+                <strong>JSON ready</strong>
+                <span>ERP payload prepared</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="marketing-section" id="business-applications">
+        <div className="marketing-section-heading">
+          <span className="marketing-kicker">Business applications</span>
+          <h2>Built for repeatable document operations.</h2>
+        </div>
+        <div className="marketing-card-grid">
+          <article>
+            <Building2 size={22} />
+            <h3>Finance and AP</h3>
+            <p>Capture invoice totals, vendor details, tax, due dates, and line items before sending clean data downstream.</p>
+          </article>
+          <article>
+            <ClipboardCheck size={22} />
+            <h3>Compliance review</h3>
+            <p>Validate extracted fields side by side with the original PDF and preserve clear operational visibility.</p>
+          </article>
+          <article>
+            <Sparkles size={22} />
+            <h3>Template flexibility</h3>
+            <p>Create extraction schemas for new document classes and reprocess files as business needs change.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="marketing-demo-band">
+        <div>
+          <span className="marketing-kicker">Request a walkthrough</span>
+          <h2>See how Xtractor fits your intake workflow.</h2>
+          <p>Share your email and optional phone number. Your request will be saved for the Xtract team to follow up.</p>
+        </div>
+        <form className="marketing-demo-form" id="demo-request-form" onSubmit={submitDemoRequest}>
+          <label>
+            Work email
+            <div className="marketing-input-wrap">
+              <Mail size={16} />
+              <input
+                id="marketing-email"
+                type="email"
+                required
+                placeholder="you@company.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </div>
+          </label>
+          <label>
+            Phone <span>optional</span>
+            <div className="marketing-input-wrap">
+              <Phone size={16} />
+              <input
+                type="tel"
+                placeholder="+1 555 0100"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+              />
+            </div>
+          </label>
+          <button className="marketing-primary-button" type="submit" disabled={submitting}>
+            {submitting ? <Loader2 size={18} className="spin" /> : <Mail size={18} />}
+            Request demo
+          </button>
+          {status && <div className={`marketing-form-status ${status.type}`}>{status.text}</div>}
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [requests, setRequests] = useState<DemoRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+
+  async function loadRequests() {
+    setLoadingRequests(true);
+    try {
+      setRequests(await api.listDemoRequests());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load demo requests', 'error');
+    } finally {
+      setLoadingRequests(false);
+    }
+  }
+
+  useEffect(() => {
+    loadRequests();
+  }, []);
+
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Demo Requests</h2>
+          <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
+        </div>
+        <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
+          {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+        </button>
+      </div>
+      <div className="business-review-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Source</th>
+              <th>Requested</th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((request) => (
+              <tr key={request._id}>
+                <td>{request.email}</td>
+                <td>{request.phone || 'N/A'}</td>
+                <td>{request.source}</td>
+                <td>{new Date(request.createdAt).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!requests.length && (
+          <div className="empty-table">
+            {loadingRequests ? 'Loading demo requests.' : 'No demo requests yet.'}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function ReviewMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
   return (
     <div className="review-metric">
@@ -801,6 +1042,147 @@ function ReviewMetric({ label, value, helper }: { label: string; value: string; 
       <strong>{value}</strong>
       {helper && <small>{helper}</small>}
     </div>
+  );
+}
+
+function MonthlyCostProjectionChart({
+  averageCostPerDocument,
+  formatReviewCurrency,
+}: {
+  averageCostPerDocument: number;
+  formatReviewCurrency: (value: number) => string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maxFiles = 1_000_000;
+  const projectedCost = maxFiles * averageCostPerDocument;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const styles = getComputedStyle(document.documentElement);
+    const primary = styles.getPropertyValue('--primary').trim() || '#4f46e5';
+    const muted = styles.getPropertyValue('--muted').trim() || '#64748b';
+    const border = styles.getPropertyValue('--border').trim() || '#e2e8f0';
+    const surface = styles.getPropertyValue('--surface').trim() || '#ffffff';
+    const volumePoints = Array.from({ length: 21 }, (_item, index) => index * 50_000);
+    const chart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Projected cost',
+            data: volumePoints.map((files) => ({
+              x: files,
+              y: files * averageCostPerDocument,
+            })),
+            borderColor: primary,
+            backgroundColor: 'rgba(79, 70, 229, 0.12)',
+            borderWidth: 1.5,
+            pointRadius: 2,
+            pointHoverRadius: 4,
+            pointBackgroundColor: surface,
+            pointBorderColor: primary,
+            pointBorderWidth: 1,
+            fill: true,
+            tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: {
+          intersect: false,
+          mode: 'index',
+        },
+        plugins: {
+          legend: {
+            display: false,
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => `${formatNumber(Number(items[0]?.parsed.x || 0))} files/month`,
+              label: (item) => formatReviewCurrency(Number(item.parsed.y || 0)),
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: 0,
+            max: maxFiles,
+            grid: {
+              color: border,
+              lineWidth: 0.5,
+            },
+            border: {
+              color: border,
+            },
+            ticks: {
+              color: muted,
+              font: {
+                size: 11,
+                weight: 700,
+              },
+              maxTicksLimit: 5,
+              callback: (value) => {
+                const files = Number(value);
+                if (files === 0) return '0';
+                if (files === maxFiles) return '1M';
+                return `${files / 1000}k`;
+              },
+            },
+            title: {
+              display: true,
+              text: 'Files/month',
+              color: muted,
+              font: {
+                size: 11,
+                weight: 700,
+              },
+            },
+          },
+          y: {
+            beginAtZero: true,
+            grid: {
+              color: border,
+              lineWidth: 0.5,
+            },
+            border: {
+              color: border,
+            },
+            ticks: {
+              color: muted,
+              font: {
+                size: 11,
+                weight: 700,
+              },
+              maxTicksLimit: 4,
+              callback: (value) => formatReviewCurrency(Number(value)),
+            },
+          },
+        },
+      },
+    });
+
+    return () => chart.destroy();
+  }, [averageCostPerDocument, formatReviewCurrency]);
+
+  return (
+    <section className="review-chart-card" aria-label="Monthly files and cost projection">
+      <div className="review-chart-heading">
+        <div>
+          <h3>Monthly Volume Projection</h3>
+          <p>Estimated cost from current average cost per file, scaled up to 1,000,000 files/month.</p>
+        </div>
+        <strong>{formatReviewCurrency(projectedCost)}</strong>
+      </div>
+      <div className="review-chart-wrap">
+        <canvas ref={canvasRef} aria-label="Cost projection by monthly file volume" role="img" />
+      </div>
+    </section>
   );
 }
 
@@ -890,6 +1272,10 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
           <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
           <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
         </div>
+        <MonthlyCostProjectionChart
+          averageCostPerDocument={averageCostPerDocument}
+          formatReviewCurrency={formatReviewCurrency}
+        />
       </section>
 
       <section className="panel">
@@ -916,7 +1302,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
             </thead>
             <tbody>
               {summary.recentDocuments.map((document) => (
-                <tr key={document.id}>
+                <tr key={`${document.id}-${document.processedAt}`}>
                   <td>{document.name}</td>
                   <td>{displayModel(document.classificationModel)}</td>
                   <td>{displayModel(document.extractionModel)}</td>
@@ -3003,7 +3389,7 @@ function ValidationScreen({
               </button>
               <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
                 <CheckCircle2 size={16} />
-                Submit Validation
+                Validate
               </button>
             </div>
           </div>
@@ -3123,27 +3509,76 @@ function PdfViewer({
   activeFieldKey: string | null;
 }) {
   const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
+  const [zoom, setZoom] = useState(100);
+  const [isPanning, setIsPanning] = useState(false);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
+  const panStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+  const minZoom = 60;
+  const maxZoom = 180;
+  const zoomStep = 20;
 
   function centerHighlightInPdfPane(highlightElement: HTMLElement) {
-    const pdfPane = pdfContainerRef.current?.closest('.pdf-pane') as HTMLElement | null;
-    if (!pdfPane) {
+    const pagesContainer = pdfContainerRef.current;
+    if (!pagesContainer) {
       highlightElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
       return;
     }
 
-    const paneRect = pdfPane.getBoundingClientRect();
+    const paneRect = pagesContainer.getBoundingClientRect();
     const highlightRect = highlightElement.getBoundingClientRect();
     const scrollTop =
-      pdfPane.scrollTop + highlightRect.top - paneRect.top - pdfPane.clientHeight / 2 + highlightRect.height / 2;
+      pagesContainer.scrollTop + highlightRect.top - paneRect.top - pagesContainer.clientHeight / 2 + highlightRect.height / 2;
     const scrollLeft =
-      pdfPane.scrollLeft + highlightRect.left - paneRect.left - pdfPane.clientWidth / 2 + highlightRect.width / 2;
+      pagesContainer.scrollLeft + highlightRect.left - paneRect.left - pagesContainer.clientWidth / 2 + highlightRect.width / 2;
 
-    pdfPane.scrollTo({
+    pagesContainer.scrollTo({
       top: Math.max(0, scrollTop),
       left: Math.max(0, scrollLeft),
       behavior: 'smooth',
     });
+  }
+
+  function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const pagesContainer = pdfContainerRef.current;
+    if (!pagesContainer) return;
+
+    panStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: pagesContainer.scrollLeft,
+      scrollTop: pagesContainer.scrollTop,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPanning(true);
+  }
+
+  function movePan(event: ReactPointerEvent<HTMLDivElement>) {
+    const panState = panStateRef.current;
+    if (!panState || panState.pointerId !== event.pointerId) return;
+    const pagesContainer = pdfContainerRef.current;
+    if (!pagesContainer) return;
+
+    pagesContainer.scrollLeft = panState.scrollLeft - (event.clientX - panState.startX);
+    pagesContainer.scrollTop = panState.scrollTop - (event.clientY - panState.startY);
+    event.preventDefault();
+  }
+
+  function stopPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (panStateRef.current?.pointerId === event.pointerId) {
+      panStateRef.current = null;
+      setIsPanning(false);
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   useEffect(() => {
@@ -3195,36 +3630,79 @@ function PdfViewer({
         }
       }, 100);
     }
-  }, [highlights, activeFieldKey]);
+  }, [highlights, activeFieldKey, zoom]);
 
   return (
-    <div className="pdf-pages" ref={pdfContainerRef}>
-      {pages.map((page, index) => (
-        <div className="pdf-page" key={index} style={{ aspectRatio: `${page.width} / ${page.height}` }}>
-          <img alt={`PDF page ${index + 1}`} src={page.dataUrl} />
-          {highlights
-            .filter((box) => box.page === index)
-            .map((box, boxIndex) => {
-              const isActive = box.fieldKey === activeFieldKey;
-              return (
-                <div
-                  className={`pdf-highlight${isActive ? ' active' : ''}`}
-                  key={`${index}-${boxIndex}`}
-                  style={{
-                    left: `${box.x * 100}%`,
-                    top: `${box.y * 100}%`,
-                    width: `${box.width * 100}%`,
-                    height: `${box.height * 100}%`,
-                    borderColor: box.color,
-                    backgroundColor: isActive ? box.activeFill : 'transparent',
-                    boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
-                  }}
-                  tabIndex={isActive ? 0 : -1}
-                />
-              );
-            })}
-        </div>
-      ))}
+    <div className="pdf-viewer">
+      <div className="pdf-toolbar" aria-label="PDF zoom controls">
+        <button
+          className="icon-button"
+          type="button"
+          title="Zoom out"
+          disabled={zoom <= minZoom}
+          onClick={() => setZoom((value) => Math.max(minZoom, value - zoomStep))}
+        >
+          <ZoomOut size={16} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          title="Reset zoom"
+          disabled={zoom === 100}
+          onClick={() => setZoom(100)}
+        >
+          <RotateCcw size={16} />
+        </button>
+        <span className="pdf-zoom-value">{zoom}%</span>
+        <button
+          className="icon-button"
+          type="button"
+          title="Zoom in"
+          disabled={zoom >= maxZoom}
+          onClick={() => setZoom((value) => Math.min(maxZoom, value + zoomStep))}
+        >
+          <ZoomIn size={16} />
+        </button>
+      </div>
+      <div
+        className={`pdf-pages${isPanning ? ' panning' : ''}`}
+        ref={pdfContainerRef}
+        onPointerDown={startPan}
+        onPointerMove={movePan}
+        onPointerUp={stopPan}
+        onPointerCancel={stopPan}
+      >
+        {pages.map((page, index) => (
+          <div
+            className="pdf-page"
+            key={index}
+            style={{ aspectRatio: `${page.width} / ${page.height}`, width: `${zoom}%` }}
+          >
+            <img alt={`PDF page ${index + 1}`} draggable={false} src={page.dataUrl} />
+            {highlights
+              .filter((box) => box.page === index)
+              .map((box, boxIndex) => {
+                const isActive = box.fieldKey === activeFieldKey;
+                return (
+                  <div
+                    className={`pdf-highlight${isActive ? ' active' : ''}`}
+                    key={`${index}-${boxIndex}`}
+                    style={{
+                      left: `${box.x * 100}%`,
+                      top: `${box.y * 100}%`,
+                      width: `${box.width * 100}%`,
+                      height: `${box.height * 100}%`,
+                      borderColor: box.color,
+                      backgroundColor: isActive ? box.activeFill : 'transparent',
+                      boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
+                    }}
+                    tabIndex={isActive ? 0 : -1}
+                  />
+                );
+              })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
