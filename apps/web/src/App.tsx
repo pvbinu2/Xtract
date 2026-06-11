@@ -31,20 +31,22 @@ import {
   Upload,
   Download,
   FileText,
+  KeyRound,
   Mail,
   Phone,
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  Users as UsersIcon,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { api, AppConfigPayload, ReprocessDocumentPayload } from './api';
-import { BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
+import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users';
 
 type AppConfig = AppConfigPayload;
 type OperationsMetrics = {
@@ -318,6 +320,8 @@ export function App() {
 
 function OperationsApp() {
   const [view, setView] = useState<View>('documents');
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documents, setDocuments] = useState<IncomingDocument[]>([]);
   const [documentPage, setDocumentPage] = useState<PagedResult<IncomingDocument>>({
@@ -353,6 +357,7 @@ function OperationsApp() {
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
   });
+  const isAdmin = currentUser?.role === 'admin';
 
   async function loadConfiguration() {
     try {
@@ -509,7 +514,11 @@ function OperationsApp() {
   }
 
   async function refresh() {
-    await Promise.all([refreshDocumentTypes(), refreshDocuments(), refreshOperationsMetrics()]);
+    if (isAdmin) {
+      await Promise.all([refreshDocumentTypes(), refreshDocuments(), refreshOperationsMetrics(), loadConfiguration()]);
+      return;
+    }
+    await refreshDocuments();
   }
 
   async function moveToNextDocument(currentId: string) {
@@ -559,17 +568,29 @@ function OperationsApp() {
   }
 
   useEffect(() => {
-    refresh().catch((error) => showToast(error.message, 'error'));
-  }, []);
-
-  useEffect(() => {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
     setSidebarCollapsed(localStorage.getItem('xtract-sidebar-collapsed') === 'true');
-    loadConfiguration().catch(() => {
-      // fallback to local storage if remote config is unavailable
-    });
   }, []);
+
+  useEffect(() => {
+    api.me()
+      .then((user) => setCurrentUser(user))
+      .catch(() => {
+        clearAuthToken();
+        setCurrentUser(null);
+      })
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.role === 'validator' && !['documents', 'validation', 'password-reset'].includes(view)) {
+      setView('documents');
+      return;
+    }
+    refresh().catch((error) => showToast(error.message, 'error'));
+  }, [currentUser?.id]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
@@ -603,6 +624,22 @@ function OperationsApp() {
     }
   }
 
+  async function handleLogin(username: string, password: string) {
+    const session = await api.login({ username, password });
+    saveAuthToken(session.token);
+    setCurrentUser(session.user);
+    setView('documents');
+  }
+
+  function logout() {
+    clearAuthToken();
+    setCurrentUser(null);
+    setDocuments([]);
+    setDocumentTypes([]);
+    setActiveDocumentId('');
+    setView('documents');
+  }
+
   const navigation = [
     { id: 'documents' as View, label: 'Documents', icon: Files },
     { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
@@ -611,7 +648,14 @@ function OperationsApp() {
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
     { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
+    { id: 'users' as View, label: 'User Management', icon: UsersIcon },
+    { id: 'password-reset' as View, label: 'Password Reset', icon: KeyRound },
   ];
+  const visibleNavigation = navigation.filter((item) => (
+    currentUser?.role === 'admin'
+      ? true
+      : item.id === 'documents' || item.id === 'password-reset'
+  ));
   const validationDocumentId = activeDocumentId || documents[0]?._id || '';
   const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
   const canNavigatePreviousDocument =
@@ -621,6 +665,21 @@ function OperationsApp() {
     Boolean(validationDocumentId) &&
     (documentPage.page < documentPage.totalPages ||
       (validationDocumentIndex >= 0 && validationDocumentIndex < documents.length - 1));
+
+  if (!authChecked) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <Loader2 size={24} className="spin" />
+          <p>Checking session.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   return (
     <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
@@ -642,7 +701,7 @@ function OperationsApp() {
           </button>
         </div>
         <nav>
-          {navigation.map((item) => {
+          {visibleNavigation.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -657,6 +716,11 @@ function OperationsApp() {
             );
           })}
         </nav>
+        <div className="sidebar-user">
+          <span>{currentUser.username}</span>
+          <strong>{currentUser.role}</strong>
+          <button type="button" className="secondary-button compact" onClick={logout}>Logout</button>
+        </div>
       </aside>
 
       <section className="workspace">
@@ -666,24 +730,26 @@ function OperationsApp() {
             <h1>{view === 'validation' ? 'Validation' : navigation.find((item) => item.id === view)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            <div className="status-strip">
-              <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
-              <StatusMetric
-                label="Total cost"
-                value={formatCurrency(operationsMetrics.totalCostUsd)}
-                onClick={() => setView('business-review')}
-              />
-              <StatusMetric
-                label="Processing"
-                value={operationsMetrics.filesProcessing}
-                onClick={() => openDocuments('processing')}
-              />
-              <StatusMetric
-                label="Extracted"
-                value={operationsMetrics.filesReady}
-                onClick={() => openDocuments('extracted')}
-              />
-            </div>
+            {isAdmin && (
+              <div className="status-strip">
+                <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
+                <StatusMetric
+                  label="Total cost"
+                  value={formatCurrency(operationsMetrics.totalCostUsd)}
+                  onClick={() => setView('business-review')}
+                />
+                <StatusMetric
+                  label="Processing"
+                  value={operationsMetrics.filesProcessing}
+                  onClick={() => openDocuments('processing')}
+                />
+                <StatusMetric
+                  label="Extracted"
+                  value={operationsMetrics.filesReady}
+                  onClick={() => openDocuments('extracted')}
+                />
+              </div>
+            )}
             <button
               type="button"
               className="icon-button theme-toggle"
@@ -705,7 +771,7 @@ function OperationsApp() {
           </div>
         )}
 
-        {view === 'types' && (
+        {isAdmin && view === 'types' && (
           <DocumentTypeManagement
             documentTypes={documentTypes}
             activeType={activeType}
@@ -718,7 +784,7 @@ function OperationsApp() {
             }
           />
         )}
-        {view === 'classification' && (
+        {isAdmin && view === 'classification' && (
           <ClassificationScreen
             documentTypes={documentTypes}
             config={config}
@@ -728,7 +794,7 @@ function OperationsApp() {
             onRefresh={refreshDocumentTypes}
           />
         )}
-        {view === 'upload' && (
+        {isAdmin && view === 'upload' && (
           <UploadScreen
             categories={categories}
             documentTypes={documentTypes}
@@ -754,11 +820,17 @@ function OperationsApp() {
             }}
           />
         )}
-        {view === 'business-review' && (
+        {isAdmin && view === 'business-review' && (
           <BusinessReviewScreen onNotify={showToast} />
         )}
-        {view === 'demo-requests' && (
+        {isAdmin && view === 'demo-requests' && (
           <DemoRequestsScreen onNotify={showToast} />
+        )}
+        {isAdmin && view === 'users' && (
+          <UserManagementScreen currentUser={currentUser} onNotify={showToast} />
+        )}
+        {view === 'password-reset' && (
+          <PasswordResetScreen onNotify={showToast} />
         )}
         {view === 'validation' && (
           <ValidationScreen
@@ -777,9 +849,10 @@ function OperationsApp() {
               await moveToNextDocument(validationDocumentId);
             }}
             onNotify={showToast}
+            canAdminActions={isAdmin}
           />
         )}
-        {view === 'configuration' && (
+        {isAdmin && view === 'configuration' && (
           <ConfigurationScreen
             config={config}
             onConfigChange={setConfig}
@@ -971,6 +1044,317 @@ function MarketingSite() {
         </form>
       </section>
     </main>
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError('');
+    try {
+      await onLogin(username, password);
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Login failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={submit}>
+        <img src="/icon-192.png" alt="" />
+        <div>
+          <h1>Sign in to Xtract</h1>
+          <p>Use your assigned username and password.</p>
+        </div>
+        <label>
+          Username
+          <input value={username} autoFocus onChange={(event) => setUsername(event.target.value)} />
+        </label>
+        <label>
+          Password
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        {error && <div className="auth-error">{error}</div>}
+        <button className="primary-button" type="submit" disabled={submitting || !username || !password}>
+          {submitting ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
+          Login
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      onNotify('New passwords do not match.', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.changePassword({ currentPassword, newPassword });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      onNotify('Password changed successfully.', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to change password.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel narrow-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Password Reset</h2>
+          <p>Change your own password.</p>
+        </div>
+      </div>
+      <form className="form-grid" onSubmit={submit}>
+        <label className="full-label">
+          Current password
+          <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+        </label>
+        <label className="full-label">
+          New password
+          <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        </label>
+        <label className="full-label">
+          Confirm new password
+          <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+        </label>
+        <div className="configuration-actions full-label">
+          <button className="primary-button" type="submit" disabled={saving || !currentPassword || !newPassword || !confirmPassword}>
+            {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+            Save password
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function UserManagementScreen({
+  currentUser,
+  onNotify,
+}: {
+  currentUser: AuthUser;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('validator');
+  const [resetTarget, setResetTarget] = useState<AuthUser | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null);
+
+  async function loadUsers() {
+    setLoadingUsers(true);
+    try {
+      setUsers(await api.listUsers());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load users.', 'error');
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  async function createUser(event: FormEvent) {
+    event.preventDefault();
+    try {
+      await api.createUser({ username: newUsername, password: newPassword, role: newRole });
+      setNewUsername('');
+      setNewPassword('');
+      setNewRole('validator');
+      onNotify('User created.', 'success');
+      await loadUsers();
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to create user.', 'error');
+    }
+  }
+
+  async function updateUser(user: AuthUser, payload: { role?: UserRole; enabled?: boolean }) {
+    try {
+      await api.updateUser(user.id || user._id, payload);
+      onNotify('User updated.', 'success');
+      await loadUsers();
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to update user.', 'error');
+    }
+  }
+
+  async function confirmResetPassword() {
+    if (!resetTarget) return;
+    try {
+      await api.resetUserPassword(resetTarget.id || resetTarget._id, resetPassword);
+      setResetTarget(null);
+      setResetPassword('');
+      onNotify('Password reset.', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to reset password.', 'error');
+    }
+  }
+
+  async function confirmDeleteUser() {
+    if (!deleteTarget) return;
+    try {
+      await api.deleteUser(deleteTarget.id || deleteTarget._id);
+      setDeleteTarget(null);
+      onNotify('User removed.', 'success');
+      await loadUsers();
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to remove user.', 'error');
+    }
+  }
+
+  return (
+    <div className="user-management">
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>User Management</h2>
+            <p>Add users, assign roles, and control access.</p>
+          </div>
+          <button className="icon-button" title="Refresh users" onClick={loadUsers}>
+            {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
+        </div>
+        <form className="user-create-form" onSubmit={createUser}>
+          <label>
+            Username
+            <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
+          </label>
+          <label>
+            Initial password
+            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+          </label>
+          <label>
+            Role
+            <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
+              <option value="validator">Validator</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <button className="primary-button" type="submit" disabled={!newUsername || !newPassword}>
+            <Plus size={16} />
+            Add user
+          </button>
+        </form>
+      </section>
+      <section className="panel">
+        <div className="business-review-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => {
+                const userId = user.id || user._id;
+                const isSelf = userId === currentUser.id;
+                return (
+                  <tr key={userId}>
+                    <td>{user.username}</td>
+                    <td>
+                      <select
+                        value={user.role}
+                        disabled={isSelf}
+                        onChange={(event) => updateUser(user, { role: event.target.value as UserRole })}
+                      >
+                        <option value="validator">Validator</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                    <td>{user.enabled ? 'Enabled' : 'Disabled'}</td>
+                    <td>{user.createdAt ? new Date(user.createdAt).toLocaleString() : 'N/A'}</td>
+                    <td>
+                      <div className="table-actions">
+                        <button className="secondary-button compact" type="button" onClick={() => {
+                          setResetTarget(user);
+                          setResetPassword('');
+                        }}>
+                          Reset password
+                        </button>
+                        <button
+                          className="secondary-button compact"
+                          type="button"
+                          disabled={isSelf}
+                          onClick={() => updateUser(user, { enabled: !user.enabled })}
+                        >
+                          {user.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                        <button
+                          className="secondary-button compact danger-outline"
+                          type="button"
+                          disabled={isSelf}
+                          onClick={() => setDeleteTarget(user)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!users.length && <div className="empty-table">{loadingUsers ? 'Loading users.' : 'No users found.'}</div>}
+        </div>
+      </section>
+      {resetTarget && (
+        <ConfirmDialog
+          title="Reset Password"
+          body={
+            <label>
+              New password for {resetTarget.username}
+              <input type="password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
+            </label>
+          }
+          confirmLabel="Reset"
+          confirmIcon={<KeyRound size={16} />}
+          onCancel={() => setResetTarget(null)}
+          onConfirm={confirmResetPassword}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Remove User"
+          body={`Remove "${deleteTarget.username}"?`}
+          confirmLabel="Remove"
+          confirmIcon={<Trash2 size={16} />}
+          isDanger
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDeleteUser}
+        />
+      )}
+    </div>
   );
 }
 
@@ -2959,6 +3343,7 @@ function ValidationScreen({
   onRefresh,
   onValidated,
   onNotify,
+  canAdminActions = false,
 }: {
   documentId: string;
   documentTypes: DocumentType[];
@@ -2973,6 +3358,7 @@ function ValidationScreen({
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+  canAdminActions?: boolean;
 }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
@@ -3375,14 +3761,18 @@ function ValidationScreen({
                 Next
                 <ChevronRight size={16} />
               </button>
-              <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
-                <BrainCircuit size={16} />
-                Reclassify
-              </button>
-              <button className="secondary-button" type="button" onClick={() => setShowReprocessDialog(true)}>
-                <RotateCcw size={16} />
-                Reprocess
-              </button>
+              {canAdminActions && (
+                <>
+                  <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
+                    <BrainCircuit size={16} />
+                    Reclassify
+                  </button>
+                  <button className="secondary-button" type="button" onClick={() => setShowReprocessDialog(true)}>
+                    <RotateCcw size={16} />
+                    Reprocess
+                  </button>
+                </>
+              )}
               <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
                 <X size={16} />
                 Reject

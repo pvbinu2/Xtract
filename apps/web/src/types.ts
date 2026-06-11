@@ -106,6 +106,18 @@ export type DemoRequest = {
   updatedAt: string;
 };
 
+export type UserRole = 'admin' | 'validator';
+
+export type AuthUser = {
+  id: string;
+  _id?: string;
+  username: string;
+  role: UserRole;
+  enabled?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type PagedResult<T> = {
   items: T[];
   total: number;

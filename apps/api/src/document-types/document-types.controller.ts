@@ -2,10 +2,12 @@ import { Body, Controller, Delete, Get, Param, Post, UploadedFile, UseIntercepto
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { DocumentTypesService } from './document-types.service';
+import { Roles } from '../auth/auth.decorators';
 
 const storage = memoryStorage();
 
 @Controller('document-types')
+@Roles('admin')
 export class DocumentTypesController {
   constructor(private readonly service: DocumentTypesService) {}
 

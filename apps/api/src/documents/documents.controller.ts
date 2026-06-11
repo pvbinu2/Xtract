@@ -3,6 +3,7 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { DocumentsService } from './documents.service';
+import { Roles } from '../auth/auth.decorators';
 
 const storage = memoryStorage();
 
@@ -11,6 +12,7 @@ export class DocumentsController {
   constructor(private readonly service: DocumentsService) {}
 
   @Get()
+  @Roles('admin', 'validator')
   list(@Query() query: {
     status?: string;
     category?: string;
@@ -24,16 +26,19 @@ export class DocumentsController {
   }
 
   @Get('business-review/summary')
+  @Roles('admin')
   businessReviewSummary() {
     return this.service.businessReviewSummary();
   }
 
   @Delete('business-review')
+  @Roles('admin')
   resetBusinessReview() {
     return this.service.resetBusinessReview();
   }
 
   @Post('upload')
+  @Roles('admin')
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
     @UploadedFiles() files: Express.Multer.File[],
@@ -52,11 +57,13 @@ export class DocumentsController {
   }
 
   @Get(':id')
+  @Roles('admin', 'validator')
   findById(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Get(':id/file')
+  @Roles('admin', 'validator')
   async file(@Param('id') id: string, @Res() response: Response) {
     const file = await this.service.getFile(id);
     response.contentType(file.contentType);
@@ -64,6 +71,7 @@ export class DocumentsController {
   }
 
   @Post(':id/extracted-data')
+  @Roles('admin', 'validator')
   updateExtractedData(
     @Param('id') id: string,
     @Body() body: { extractedData: any[] },
@@ -72,6 +80,7 @@ export class DocumentsController {
   }
 
   @Post(':id/validate')
+  @Roles('admin', 'validator')
   validate(
     @Param('id') id: string,
     @Body()
@@ -92,6 +101,7 @@ export class DocumentsController {
   }
 
   @Post(':id/reject')
+  @Roles('admin', 'validator')
   reject(
     @Param('id') id: string,
     @Body() body: { deleteAfterDownstream?: boolean; downstreamUrl?: string; sendKeyValuePairs?: boolean },
@@ -100,6 +110,7 @@ export class DocumentsController {
   }
 
   @Post(':id/reprocess')
+  @Roles('admin')
   reprocess(
     @Param('id') id: string,
     @Body() body?: {
@@ -114,6 +125,7 @@ export class DocumentsController {
   }
 
   @Delete(':id')
+  @Roles('admin')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }
