@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   CheckCircle2,
@@ -29,6 +29,8 @@ import {
   Upload,
   Download,
   FileText,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { api, AppConfigPayload, ReprocessDocumentPayload } from './api';
 import { BusinessReviewSummary, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
@@ -3123,27 +3125,76 @@ function PdfViewer({
   activeFieldKey: string | null;
 }) {
   const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
+  const [zoom, setZoom] = useState(100);
+  const [isPanning, setIsPanning] = useState(false);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
+  const panStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+  const minZoom = 60;
+  const maxZoom = 180;
+  const zoomStep = 20;
 
   function centerHighlightInPdfPane(highlightElement: HTMLElement) {
-    const pdfPane = pdfContainerRef.current?.closest('.pdf-pane') as HTMLElement | null;
-    if (!pdfPane) {
+    const pagesContainer = pdfContainerRef.current;
+    if (!pagesContainer) {
       highlightElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
       return;
     }
 
-    const paneRect = pdfPane.getBoundingClientRect();
+    const paneRect = pagesContainer.getBoundingClientRect();
     const highlightRect = highlightElement.getBoundingClientRect();
     const scrollTop =
-      pdfPane.scrollTop + highlightRect.top - paneRect.top - pdfPane.clientHeight / 2 + highlightRect.height / 2;
+      pagesContainer.scrollTop + highlightRect.top - paneRect.top - pagesContainer.clientHeight / 2 + highlightRect.height / 2;
     const scrollLeft =
-      pdfPane.scrollLeft + highlightRect.left - paneRect.left - pdfPane.clientWidth / 2 + highlightRect.width / 2;
+      pagesContainer.scrollLeft + highlightRect.left - paneRect.left - pagesContainer.clientWidth / 2 + highlightRect.width / 2;
 
-    pdfPane.scrollTo({
+    pagesContainer.scrollTo({
       top: Math.max(0, scrollTop),
       left: Math.max(0, scrollLeft),
       behavior: 'smooth',
     });
+  }
+
+  function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const pagesContainer = pdfContainerRef.current;
+    if (!pagesContainer) return;
+
+    panStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: pagesContainer.scrollLeft,
+      scrollTop: pagesContainer.scrollTop,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPanning(true);
+  }
+
+  function movePan(event: ReactPointerEvent<HTMLDivElement>) {
+    const panState = panStateRef.current;
+    if (!panState || panState.pointerId !== event.pointerId) return;
+    const pagesContainer = pdfContainerRef.current;
+    if (!pagesContainer) return;
+
+    pagesContainer.scrollLeft = panState.scrollLeft - (event.clientX - panState.startX);
+    pagesContainer.scrollTop = panState.scrollTop - (event.clientY - panState.startY);
+    event.preventDefault();
+  }
+
+  function stopPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (panStateRef.current?.pointerId === event.pointerId) {
+      panStateRef.current = null;
+      setIsPanning(false);
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   useEffect(() => {
@@ -3195,36 +3246,79 @@ function PdfViewer({
         }
       }, 100);
     }
-  }, [highlights, activeFieldKey]);
+  }, [highlights, activeFieldKey, zoom]);
 
   return (
-    <div className="pdf-pages" ref={pdfContainerRef}>
-      {pages.map((page, index) => (
-        <div className="pdf-page" key={index} style={{ aspectRatio: `${page.width} / ${page.height}` }}>
-          <img alt={`PDF page ${index + 1}`} src={page.dataUrl} />
-          {highlights
-            .filter((box) => box.page === index)
-            .map((box, boxIndex) => {
-              const isActive = box.fieldKey === activeFieldKey;
-              return (
-                <div
-                  className={`pdf-highlight${isActive ? ' active' : ''}`}
-                  key={`${index}-${boxIndex}`}
-                  style={{
-                    left: `${box.x * 100}%`,
-                    top: `${box.y * 100}%`,
-                    width: `${box.width * 100}%`,
-                    height: `${box.height * 100}%`,
-                    borderColor: box.color,
-                    backgroundColor: isActive ? box.activeFill : 'transparent',
-                    boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
-                  }}
-                  tabIndex={isActive ? 0 : -1}
-                />
-              );
-            })}
-        </div>
-      ))}
+    <div className="pdf-viewer">
+      <div className="pdf-toolbar" aria-label="PDF zoom controls">
+        <button
+          className="icon-button"
+          type="button"
+          title="Zoom out"
+          disabled={zoom <= minZoom}
+          onClick={() => setZoom((value) => Math.max(minZoom, value - zoomStep))}
+        >
+          <ZoomOut size={16} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          title="Reset zoom"
+          disabled={zoom === 100}
+          onClick={() => setZoom(100)}
+        >
+          <RotateCcw size={16} />
+        </button>
+        <span className="pdf-zoom-value">{zoom}%</span>
+        <button
+          className="icon-button"
+          type="button"
+          title="Zoom in"
+          disabled={zoom >= maxZoom}
+          onClick={() => setZoom((value) => Math.min(maxZoom, value + zoomStep))}
+        >
+          <ZoomIn size={16} />
+        </button>
+      </div>
+      <div
+        className={`pdf-pages${isPanning ? ' panning' : ''}`}
+        ref={pdfContainerRef}
+        onPointerDown={startPan}
+        onPointerMove={movePan}
+        onPointerUp={stopPan}
+        onPointerCancel={stopPan}
+      >
+        {pages.map((page, index) => (
+          <div
+            className="pdf-page"
+            key={index}
+            style={{ aspectRatio: `${page.width} / ${page.height}`, width: `${zoom}%` }}
+          >
+            <img alt={`PDF page ${index + 1}`} draggable={false} src={page.dataUrl} />
+            {highlights
+              .filter((box) => box.page === index)
+              .map((box, boxIndex) => {
+                const isActive = box.fieldKey === activeFieldKey;
+                return (
+                  <div
+                    className={`pdf-highlight${isActive ? ' active' : ''}`}
+                    key={`${index}-${boxIndex}`}
+                    style={{
+                      left: `${box.x * 100}%`,
+                      top: `${box.y * 100}%`,
+                      width: `${box.width * 100}%`,
+                      height: `${box.height * 100}%`,
+                      borderColor: box.color,
+                      backgroundColor: isActive ? box.activeFill : 'transparent',
+                      boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
+                    }}
+                    tabIndex={isActive ? 0 : -1}
+                  />
+                );
+              })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
