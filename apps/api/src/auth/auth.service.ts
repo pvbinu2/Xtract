@@ -46,7 +46,7 @@ export class AuthService implements OnModuleInit {
       token: sign(
         { sub: profile.id, username: profile.username, role: profile.role },
         this.jwtSecret(),
-        { expiresIn: process.env.JWT_EXPIRES_IN || '12h' },
+        { expiresIn: (process.env.JWT_EXPIRES_IN || '12h') as any },
       ),
     };
   }

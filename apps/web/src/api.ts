@@ -79,10 +79,18 @@ export const api = {
       body: JSON.stringify({ password }),
     }),
   deleteUser: (id: string) => request<{ deleted: boolean }>(`/users/${id}`, { method: 'DELETE' }),
-  documentFileUrl: (id: string) => {
+  documentPageFile: async (id: string, pageNumber: number) => {
+    const headers = new Headers();
     const token = authToken();
-    return `${API_BASE}/documents/${id}/file${token ? `?access_token=${encodeURIComponent(token)}` : ''}`;
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${API_BASE}/documents/${id}/pages/${pageNumber}/file`, { headers });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Request failed: ${response.status}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
   },
+  documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),
   createDocumentType: (payload: { category: string; name: string; prompt?: string }) =>
     request<DocumentType>('/document-types', {
@@ -172,17 +180,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ extractedData }),
     }),
-  validateDocument: (
-    id: string,
-    extractedData: ExtractedValue[],
-    deleteAfterDownstream = false,
-    downstreamUrl?: string,
-    sendKeyValuePairs = false,
-  ) =>
+  validateDocument: (id: string, extractedData: ExtractedValue[]) =>
     request<any>(`/documents/${id}/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
+      body: JSON.stringify({ extractedData }),
     }),
   getConfiguration: () =>
     request<Partial<AppConfigPayload>>('/configuration'),
@@ -192,15 +194,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  rejectDocument: (
-    id: string,
-    deleteAfterDownstream = false,
-    downstreamUrl?: string,
-    sendKeyValuePairs = false,
-  ) =>
+  rejectDocument: (id: string) =>
     request<IncomingDocument>(`/documents/${id}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
+      body: JSON.stringify({}),
     }),
 };

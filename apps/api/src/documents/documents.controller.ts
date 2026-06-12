@@ -38,7 +38,7 @@ export class DocumentsController {
   }
 
   @Post('upload')
-  @Roles('admin')
+  @Roles('admin', 'validator')
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
     @UploadedFiles() files: Express.Multer.File[],
@@ -70,6 +70,26 @@ export class DocumentsController {
     return response.send(file.buffer);
   }
 
+  @Get(':id/page-count')
+  @Roles('admin', 'validator')
+  pageCount(@Param('id') id: string) {
+    return this.service.getPdfPageCount(id);
+  }
+
+  @Get(':id/pages/:pageNumber/file')
+  @Roles('admin', 'validator')
+  async pageFile(
+    @Param('id') id: string,
+    @Param('pageNumber') pageNumber: string,
+    @Res() response: Response,
+  ) {
+    const file = await this.service.getPdfPage(id, pageNumber);
+    response.contentType(file.contentType);
+    response.setHeader('X-PDF-Page-Count', String(file.pageCount));
+    response.setHeader('X-PDF-Page-Number', String(file.pageNumber));
+    return response.send(file.buffer);
+  }
+
   @Post(':id/extracted-data')
   @Roles('admin', 'validator')
   updateExtractedData(
@@ -83,34 +103,19 @@ export class DocumentsController {
   @Roles('admin', 'validator')
   validate(
     @Param('id') id: string,
-    @Body()
-    body: {
-      extractedData: any[];
-      deleteAfterDownstream?: boolean;
-      downstreamUrl?: string;
-      sendKeyValuePairs?: boolean;
-    },
+    @Body() body: { extractedData: any[] },
   ) {
-    return this.service.validate(
-      id,
-      body.extractedData,
-      body.deleteAfterDownstream,
-      body.downstreamUrl,
-      body.sendKeyValuePairs,
-    );
+    return this.service.validate(id, body.extractedData);
   }
 
   @Post(':id/reject')
   @Roles('admin', 'validator')
-  reject(
-    @Param('id') id: string,
-    @Body() body: { deleteAfterDownstream?: boolean; downstreamUrl?: string; sendKeyValuePairs?: boolean },
-  ) {
-    return this.service.reject(id, body.deleteAfterDownstream, body.downstreamUrl, body.sendKeyValuePairs);
+  reject(@Param('id') id: string) {
+    return this.service.reject(id);
   }
 
   @Post(':id/reprocess')
-  @Roles('admin')
+  @Roles('admin', 'validator')
   reprocess(
     @Param('id') id: string,
     @Body() body?: {
@@ -125,7 +130,7 @@ export class DocumentsController {
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @Roles('admin', 'validator')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

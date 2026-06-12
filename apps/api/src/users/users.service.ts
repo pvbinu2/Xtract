@@ -32,8 +32,7 @@ export class UsersService {
         role,
         enabled: payload.enabled !== false,
       });
-      const saved = user.toObject();
-      delete saved.passwordHash;
+      const { passwordHash: _passwordHash, ...saved } = user.toObject();
       return saved;
     } catch (error: any) {
       if (error?.code === 11000) throw new BadRequestException('Username already exists.');
