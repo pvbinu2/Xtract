@@ -3,6 +3,7 @@ import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
 import { Model } from 'mongoose';
+import { PDFDocument } from 'pdf-lib';
 import { DocumentType, DocumentTypeDocument } from '../schemas/document-type.schema';
 import {
   ExtractedValue,
@@ -183,6 +184,38 @@ export class DocumentsService {
     };
   }
 
+  async getPdfPageCount(id: string) {
+    const file = await this.getFile(id);
+    const pdf = await PDFDocument.load(file.buffer);
+    return { pageCount: pdf.getPageCount() };
+  }
+
+  async getPdfPage(id: string, pageNumberInput: string) {
+    const pageNumber = Number(pageNumberInput);
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      throw new BadRequestException('Page number must be a positive integer.');
+    }
+
+    const file = await this.getFile(id);
+    const sourcePdf = await PDFDocument.load(file.buffer);
+    const pageCount = sourcePdf.getPageCount();
+    if (pageNumber > pageCount) {
+      throw new BadRequestException(`Page number must be between 1 and ${pageCount}.`);
+    }
+
+    const pagePdf = await PDFDocument.create();
+    const [page] = await pagePdf.copyPages(sourcePdf, [pageNumber - 1]);
+    pagePdf.addPage(page);
+    const pageBytes = await pagePdf.save();
+
+    return {
+      buffer: Buffer.from(pageBytes),
+      contentType: 'application/pdf',
+      pageCount,
+      pageNumber,
+    };
+  }
+
   async updateExtractedData(id: string, extractedData: ExtractedValue[]) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
@@ -305,18 +338,18 @@ export class DocumentsService {
     return { reset: true };
   }
 
-  private async getDownstreamConfig(overrideUrl?: string, overrideSendKeyValuePairs?: boolean) {
-    const resolvedUrl = overrideUrl?.trim();
-    let url = resolvedUrl || process.env.DOWNSTREAM_API_URL?.trim();
-    let useEnv = Boolean(resolvedUrl);
-    let sendKeyValuePairs = Boolean(overrideSendKeyValuePairs);
+  private async getDownstreamConfig() {
+    let url = process.env.DOWNSTREAM_API_URL?.trim();
+    let useEnv = Boolean(url);
+    let sendKeyValuePairs = false;
 
     const configuration = await this.configurationService.get();
-    sendKeyValuePairs = overrideSendKeyValuePairs ?? Boolean(configuration.sendKeyValuePairs);
+    sendKeyValuePairs = Boolean(configuration.sendKeyValuePairs);
 
-    if (!resolvedUrl) {
-      url = configuration.downstreamUrl?.trim() || url;
-      useEnv = !configuration.downstreamUrl?.trim();
+    const configuredUrl = configuration.downstreamUrl?.trim();
+    if (configuredUrl) {
+      url = configuredUrl;
+      useEnv = false;
     }
 
     if (!url) return null;
@@ -417,9 +450,6 @@ export class DocumentsService {
   async validate(
     id: string,
     extractedData: ExtractedValue[],
-    deleteAfterDownstream = false,
-    downstreamUrl?: string,
-    sendKeyValuePairs?: boolean,
   ) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
@@ -428,12 +458,13 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl, sendKeyValuePairs);
+    const configuration = await this.configurationService.get();
+    const downstreamConfig = await this.getDownstreamConfig();
     if (downstreamConfig) {
       try {
         await this.sendToDownstream(updated, extractedData, downstreamConfig);
         // Only delete after successful downstream send
-        if (deleteAfterDownstream) {
+        if (configuration.deleteAfterDownstream) {
           await this.remove(updated.id);
           return { deleted: true };
         }
@@ -446,7 +477,7 @@ export class DocumentsService {
     return updated;
   }
 
-  async reject(id: string, deleteAfterDownstream = false, downstreamUrl?: string, sendKeyValuePairs?: boolean) {
+  async reject(id: string) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
       { status: 'rejected' },
@@ -454,11 +485,12 @@ export class DocumentsService {
     );
     if (!updated) throw new NotFoundException('Document not found');
 
-    const downstreamConfig = await this.getDownstreamConfig(downstreamUrl, sendKeyValuePairs);
+    const configuration = await this.configurationService.get();
+    const downstreamConfig = await this.getDownstreamConfig();
     if (downstreamConfig) {
       try {
         await this.sendToDownstream(updated, updated.extractedData || [], downstreamConfig);
-        if (deleteAfterDownstream) {
+        if (configuration.deleteAfterDownstream) {
           await this.remove(updated.id);
           return { deleted: true };
         }

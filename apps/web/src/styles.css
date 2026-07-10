@@ -100,6 +100,11 @@ button {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
   padding: 24px 18px;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
@@ -158,6 +163,12 @@ button {
 nav {
   display: grid;
   gap: 6px;
+}
+
+.sidebar nav {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .nav-item,
@@ -236,6 +247,107 @@ nav {
   padding: 0;
   justify-content: center;
   margin-right: 0;
+}
+
+.sidebar-user {
+  display: grid;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 14px;
+}
+
+.sidebar-user span {
+  color: var(--sidebar-text);
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-user strong {
+  color: var(--sidebar-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.sidebar-user .secondary-button {
+  margin-right: 0;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--sidebar-text);
+}
+
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background: var(--bg);
+  padding: 24px;
+}
+
+.auth-card {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 420px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.12);
+  padding: 24px;
+}
+
+.auth-card img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+}
+
+.auth-card h1 {
+  margin: 0 0 4px;
+  font-size: 26px;
+}
+
+.auth-card p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.auth-card label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.auth-card input {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.auth-card .primary-button {
+  margin-right: 0;
+}
+
+.auth-card .auth-remember {
+  justify-content: flex-start;
+  padding: 10px 12px;
+}
+
+.auth-error {
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .workspace {
@@ -427,6 +539,48 @@ nav {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.user-management {
+  display: grid;
+  gap: 18px;
+}
+
+.user-create-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) 160px auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.user-create-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.user-create-form input,
+.user-create-form select,
+.business-review-table select,
+.confirm-modal input {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.table-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.narrow-panel {
+  max-width: 680px;
 }
 
 .marketing-site {
@@ -1642,6 +1796,14 @@ textarea {
   text-align: center;
 }
 
+.pdf-page-value {
+  min-width: 84px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .pdf-pages {
   display: grid;
   gap: 16px;
@@ -1650,6 +1812,22 @@ textarea {
   overflow: auto;
   cursor: grab;
   user-select: none;
+}
+
+.pdf-page-state {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pdf-page-state.error {
+  color: var(--danger);
 }
 
 .pdf-pages.panning {
@@ -2153,6 +2331,7 @@ textarea {
   .marketing-hero-content,
   .marketing-card-grid,
   .marketing-demo-band,
+  .user-create-form,
   .validation-layout {
     grid-template-columns: 1fr;
   }
@@ -2162,16 +2341,20 @@ textarea {
   }
 
   .sidebar {
-    position: sticky;
-    top: 0;
     z-index: 5;
+    height: auto;
+    min-height: 0;
     flex-direction: row;
     align-items: center;
     overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .sidebar nav {
     display: flex;
+    min-height: auto;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .sidebar-collapsed .sidebar {

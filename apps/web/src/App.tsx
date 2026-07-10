@@ -31,20 +31,22 @@ import {
   Upload,
   Download,
   FileText,
+  KeyRound,
   Mail,
   Phone,
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  Users as UsersIcon,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { api, AppConfigPayload, ReprocessDocumentPayload } from './api';
-import { BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn } from './types';
+import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users';
 
 type AppConfig = AppConfigPayload;
 type OperationsMetrics = {
@@ -75,7 +77,6 @@ const displayCurrencyOptions = [
   { value: 'GBP', label: 'British pound', rate: 0.79 },
   { value: 'EUR', label: 'Euro', rate: 0.92 },
 ] as const;
-type DisplayCurrency = (typeof displayCurrencyOptions)[number]['value'];
 
 function supportsReasoningEffort(model: string) {
   return /^(gpt-5|o\d|o\d-)/.test(model);
@@ -157,6 +158,10 @@ function formatCurrency(value: number, currency: DisplayCurrency = 'USD') {
     minimumFractionDigits: convertedValue > 0 && convertedValue < 0.01 ? 4 : 2,
     maximumFractionDigits: convertedValue > 0 && convertedValue < 0.01 ? 6 : 2,
   }).format(convertedValue);
+}
+
+function normalizeDisplayCurrency(currency?: string | null): DisplayCurrency {
+  return displayCurrencyOptions.some((option) => option.value === currency) ? currency as DisplayCurrency : 'USD';
 }
 
 function displaySampleName(fileName: string) {
@@ -318,6 +323,8 @@ export function App() {
 
 function OperationsApp() {
   const [view, setView] = useState<View>('documents');
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documents, setDocuments] = useState<IncomingDocument[]>([]);
   const [documentPage, setDocumentPage] = useState<PagedResult<IncomingDocument>>({
@@ -327,6 +334,10 @@ function OperationsApp() {
     pageSize: 10,
     totalPages: 1,
   });
+  const [documentTypesLoaded, setDocumentTypesLoaded] = useState(false);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [metricsLoaded, setMetricsLoaded] = useState(false);
   const [activeTypeId, setActiveTypeId] = useState('');
   const [activeDocumentId, setActiveDocumentId] = useState('');
   const [documentListStatusTarget, setDocumentListStatusTarget] = useState<{
@@ -337,6 +348,7 @@ function OperationsApp() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
   const [operationsMetrics, setOperationsMetrics] = useState<OperationsMetrics>({
     filesProcessed: 0,
     totalCostUsd: 0,
@@ -353,6 +365,8 @@ function OperationsApp() {
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
   });
+  const isAdmin = currentUser?.role === 'admin';
+  const canManageDocuments = currentUser?.role === 'admin' || currentUser?.role === 'validator';
 
   async function loadConfiguration() {
     try {
@@ -386,6 +400,8 @@ function OperationsApp() {
           // ignore invalid saved config
         }
       }
+    } finally {
+      setConfigLoaded(true);
     }
   }
 
@@ -405,18 +421,20 @@ function OperationsApp() {
   async function refreshDocumentTypes() {
     const types = await api.listDocumentTypes();
     setDocumentTypes(types);
+    setDocumentTypesLoaded(true);
   }
 
   async function refreshDocuments() {
-    const docs = await api.listDocuments(
-      new URLSearchParams({
-        sort: 'latest',
-        page: String(documentPage.page),
-        pageSize: String(documentPage.pageSize),
-      }),
-    );
+    const params = new URLSearchParams({
+      sort: 'latest',
+      page: String(documentPage.page),
+      pageSize: String(documentPage.pageSize),
+    });
+    if (documentListStatusTarget.status) params.set('status', documentListStatusTarget.status);
+    const docs = await api.listDocuments(params);
     setDocumentPage(docs);
     setDocuments(docs.items);
+    setDocumentsLoaded(true);
     return docs;
   }
 
@@ -438,6 +456,7 @@ function OperationsApp() {
       filesProcessing: summary.filesProcessing,
       filesReady: readyDocuments.total,
     });
+    setMetricsLoaded(true);
   }
 
   async function loadDocumentsPage(page: number) {
@@ -450,6 +469,7 @@ function OperationsApp() {
     );
     setDocumentPage(docs);
     setDocuments(docs.items);
+    setDocumentsLoaded(true);
     return docs;
   }
 
@@ -505,11 +525,8 @@ function OperationsApp() {
       status,
       version: target.version + 1,
     }));
+    setDocumentsLoaded(false);
     setView('documents');
-  }
-
-  async function refresh() {
-    await Promise.all([refreshDocumentTypes(), refreshDocuments(), refreshOperationsMetrics()]);
   }
 
   async function moveToNextDocument(currentId: string) {
@@ -559,17 +576,64 @@ function OperationsApp() {
   }
 
   useEffect(() => {
-    refresh().catch((error) => showToast(error.message, 'error'));
-  }, []);
-
-  useEffect(() => {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
     setSidebarCollapsed(localStorage.getItem('xtract-sidebar-collapsed') === 'true');
-    loadConfiguration().catch(() => {
-      // fallback to local storage if remote config is unavailable
-    });
+    setDisplayCurrency(normalizeDisplayCurrency(localStorage.getItem('xtract-display-currency')));
   }, []);
+
+  useEffect(() => {
+    api.me()
+      .then((user) => {
+        setCurrentUser(user);
+        setDisplayCurrency(normalizeDisplayCurrency(user.preferredCurrency));
+      })
+      .catch(() => {
+        clearAuthToken();
+        setCurrentUser(null);
+      })
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.role === 'validator' && !['documents', 'upload', 'validation', 'password-reset'].includes(view)) {
+      setView('documents');
+      return;
+    }
+  }, [currentUser?.id, view]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!isAdmin || metricsLoaded) return;
+    refreshOperationsMetrics().catch((error) => showToast(error.message, 'error'));
+  }, [currentUser?.id, isAdmin, metricsLoaded]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const tasks: Array<Promise<unknown>> = [];
+    const needsDocumentTypes = ['types', 'classification', 'upload', 'documents', 'validation'].includes(view);
+    const needsConfiguration =
+      view === 'configuration' ||
+      view === 'classification' ||
+      view === 'validation' ||
+      (view === 'documents' && canManageDocuments);
+
+    if (needsDocumentTypes && !documentTypesLoaded) tasks.push(refreshDocumentTypes());
+    if (view === 'documents' && !documentsLoaded) tasks.push(refreshDocuments());
+    if (needsConfiguration && !configLoaded) tasks.push(loadConfiguration());
+
+    if (!tasks.length) return;
+    Promise.all(tasks).catch((error) => showToast(error instanceof Error ? error.message : 'Failed to load page data.', 'error'));
+  }, [
+    currentUser?.id,
+    view,
+    canManageDocuments,
+    documentTypesLoaded,
+    documentsLoaded,
+    configLoaded,
+  ]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
@@ -583,6 +647,10 @@ function OperationsApp() {
   useEffect(() => {
     localStorage.setItem('xtract-sidebar-collapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem('xtract-display-currency', displayCurrency);
+  }, [displayCurrency]);
 
   useEffect(() => {
     if (!toast) return;
@@ -603,6 +671,37 @@ function OperationsApp() {
     }
   }
 
+  async function handleLogin(username: string, password: string) {
+    const session = await api.login({ username, password });
+    saveAuthToken(session.token);
+    setCurrentUser(session.user);
+    setDisplayCurrency(normalizeDisplayCurrency(session.user.preferredCurrency));
+    setView('documents');
+  }
+
+  async function updateDisplayCurrency(currency: DisplayCurrency) {
+    setDisplayCurrency(currency);
+    try {
+      const user = await api.updatePreferences({ preferredCurrency: currency });
+      setCurrentUser(user);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to save currency preference.', 'error');
+    }
+  }
+
+  function logout() {
+    clearAuthToken();
+    setCurrentUser(null);
+    setDocuments([]);
+    setDocumentTypes([]);
+    setDocumentTypesLoaded(false);
+    setDocumentsLoaded(false);
+    setConfigLoaded(false);
+    setMetricsLoaded(false);
+    setActiveDocumentId('');
+    setView('documents');
+  }
+
   const navigation = [
     { id: 'documents' as View, label: 'Documents', icon: Files },
     { id: 'upload' as View, label: 'Upload', icon: FilePlus2 },
@@ -611,7 +710,14 @@ function OperationsApp() {
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
     { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
+    { id: 'users' as View, label: 'User Management', icon: UsersIcon },
+    { id: 'password-reset' as View, label: 'Password Reset', icon: KeyRound },
   ];
+  const visibleNavigation = navigation.filter((item) => (
+    currentUser?.role === 'admin'
+      ? true
+      : item.id === 'documents' || item.id === 'upload' || item.id === 'password-reset'
+  ));
   const validationDocumentId = activeDocumentId || documents[0]?._id || '';
   const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
   const canNavigatePreviousDocument =
@@ -621,6 +727,31 @@ function OperationsApp() {
     Boolean(validationDocumentId) &&
     (documentPage.page < documentPage.totalPages ||
       (validationDocumentIndex >= 0 && validationDocumentIndex < documents.length - 1));
+  const averageCostPerFile = operationsMetrics.filesProcessed
+    ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
+    : 0;
+  const selectedPageLoading =
+    (view === 'types' && !documentTypesLoaded) ||
+    (view === 'classification' && (!documentTypesLoaded || !configLoaded)) ||
+    (view === 'upload' && !documentTypesLoaded) ||
+    (view === 'documents' && (!documentsLoaded || !documentTypesLoaded || (canManageDocuments && !configLoaded))) ||
+    (view === 'validation' && (!documentTypesLoaded || !configLoaded)) ||
+    (view === 'configuration' && !configLoaded);
+
+  if (!authChecked) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <Loader2 size={24} className="spin" />
+          <p>Checking session.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   return (
     <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
@@ -642,7 +773,7 @@ function OperationsApp() {
           </button>
         </div>
         <nav>
-          {navigation.map((item) => {
+          {visibleNavigation.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -657,6 +788,11 @@ function OperationsApp() {
             );
           })}
         </nav>
+        <div className="sidebar-user">
+          <span>{currentUser.username}</span>
+          <strong>{currentUser.role}</strong>
+          <button type="button" className="secondary-button compact" onClick={logout}>Logout</button>
+        </div>
       </aside>
 
       <section className="workspace">
@@ -666,24 +802,31 @@ function OperationsApp() {
             <h1>{view === 'validation' ? 'Validation' : navigation.find((item) => item.id === view)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            <div className="status-strip">
-              <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
-              <StatusMetric
-                label="Total cost"
-                value={formatCurrency(operationsMetrics.totalCostUsd)}
-                onClick={() => setView('business-review')}
-              />
-              <StatusMetric
-                label="Processing"
-                value={operationsMetrics.filesProcessing}
-                onClick={() => openDocuments('processing')}
-              />
-              <StatusMetric
-                label="Extracted"
-                value={operationsMetrics.filesReady}
-                onClick={() => openDocuments('extracted')}
-              />
-            </div>
+            {isAdmin && (
+              <div className="status-strip">
+                <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
+                <StatusMetric
+                  label="Total cost"
+                  value={formatCurrency(operationsMetrics.totalCostUsd, displayCurrency)}
+                  onClick={() => setView('business-review')}
+                />
+                <StatusMetric
+                  label="Avg cost / file"
+                  value={formatCurrency(averageCostPerFile, displayCurrency)}
+                  onClick={() => setView('business-review')}
+                />
+                <StatusMetric
+                  label="Processing"
+                  value={operationsMetrics.filesProcessing}
+                  onClick={() => openDocuments('processing')}
+                />
+                <StatusMetric
+                  label="Extracted"
+                  value={operationsMetrics.filesReady}
+                  onClick={() => openDocuments('extracted')}
+                />
+              </div>
+            )}
             <button
               type="button"
               className="icon-button theme-toggle"
@@ -705,7 +848,9 @@ function OperationsApp() {
           </div>
         )}
 
-        {view === 'types' && (
+        {selectedPageLoading && <EmptyState text="Loading page data." />}
+
+        {!selectedPageLoading && isAdmin && view === 'types' && (
           <DocumentTypeManagement
             documentTypes={documentTypes}
             activeType={activeType}
@@ -718,7 +863,7 @@ function OperationsApp() {
             }
           />
         )}
-        {view === 'classification' && (
+        {!selectedPageLoading && isAdmin && view === 'classification' && (
           <ClassificationScreen
             documentTypes={documentTypes}
             config={config}
@@ -728,7 +873,7 @@ function OperationsApp() {
             onRefresh={refreshDocumentTypes}
           />
         )}
-        {view === 'upload' && (
+        {!selectedPageLoading && canManageDocuments && view === 'upload' && (
           <UploadScreen
             categories={categories}
             documentTypes={documentTypes}
@@ -737,13 +882,14 @@ function OperationsApp() {
             openDocuments={() => openDocuments()}
           />
         )}
-        {view === 'documents' && (
+        {!selectedPageLoading && view === 'documents' && (
           <DocumentList
             documents={documents}
             documentTypes={documentTypes}
             pagination={documentPage}
             statusTarget={documentListStatusTarget}
             config={config}
+            canManage={canManageDocuments}
             onOpen={(id) => {
               setActiveDocumentId(id);
               setView('validation');
@@ -751,22 +897,30 @@ function OperationsApp() {
             onPage={(page) => {
               setDocumentPage(page);
               setDocuments(page.items);
+              setDocumentsLoaded(true);
             }}
           />
         )}
-        {view === 'business-review' && (
-          <BusinessReviewScreen onNotify={showToast} />
+        {!selectedPageLoading && isAdmin && view === 'business-review' && (
+          <BusinessReviewScreen
+            displayCurrency={displayCurrency}
+            onCurrencyChange={updateDisplayCurrency}
+            onNotify={showToast}
+          />
         )}
-        {view === 'demo-requests' && (
+        {!selectedPageLoading && isAdmin && view === 'demo-requests' && (
           <DemoRequestsScreen onNotify={showToast} />
         )}
-        {view === 'validation' && (
+        {!selectedPageLoading && isAdmin && view === 'users' && (
+          <UserManagementScreen currentUser={currentUser} onNotify={showToast} />
+        )}
+        {!selectedPageLoading && view === 'password-reset' && (
+          <PasswordResetScreen onNotify={showToast} />
+        )}
+        {!selectedPageLoading && view === 'validation' && (
           <ValidationScreen
             documentId={validationDocumentId}
             documentTypes={documentTypes}
-            downstreamUrl={config.downstreamUrl}
-            defaultDeleteAfterDownstream={config.deleteAfterDownstream}
-            sendKeyValuePairs={config.sendKeyValuePairs}
             config={config}
             canNavigatePrevious={canNavigatePreviousDocument}
             canNavigateNext={canNavigateNextDocument}
@@ -777,9 +931,10 @@ function OperationsApp() {
               await moveToNextDocument(validationDocumentId);
             }}
             onNotify={showToast}
+            canAdminActions={canManageDocuments}
           />
         )}
-        {view === 'configuration' && (
+        {!selectedPageLoading && isAdmin && view === 'configuration' && (
           <ConfigurationScreen
             config={config}
             onConfigChange={setConfig}
@@ -971,6 +1126,342 @@ function MarketingSite() {
         </form>
       </section>
     </main>
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
+  const rememberedUsername = localStorage.getItem('xtract-remembered-username') || '';
+  const [username, setUsername] = useState(rememberedUsername);
+  const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(Boolean(rememberedUsername));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError('');
+    try {
+      await onLogin(username, password);
+      if (rememberMe) {
+        localStorage.setItem('xtract-remembered-username', username.trim());
+      } else {
+        localStorage.removeItem('xtract-remembered-username');
+      }
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Login failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={submit}>
+        <img src="/icon-192.png" alt="" />
+        <div>
+          <h1>Sign in to Xtract</h1>
+          <p>Use your assigned username and password.</p>
+        </div>
+        <label>
+          Username
+          <input value={username} autoFocus onChange={(event) => setUsername(event.target.value)} />
+        </label>
+        <label>
+          Password
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        <label className="checkbox-row auth-remember">
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(event) => setRememberMe(event.target.checked)}
+          />
+          <span>Remember me</span>
+        </label>
+        {error && <div className="auth-error">{error}</div>}
+        <button className="primary-button" type="submit" disabled={submitting || !username || !password}>
+          {submitting ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
+          Login
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      onNotify('New passwords do not match.', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.changePassword({ currentPassword, newPassword });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      onNotify('Password changed successfully.', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to change password.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel narrow-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Password Reset</h2>
+          <p>Change your own password.</p>
+        </div>
+      </div>
+      <form className="form-grid" onSubmit={submit}>
+        <label className="full-label">
+          Current password
+          <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+        </label>
+        <label className="full-label">
+          New password
+          <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        </label>
+        <label className="full-label">
+          Confirm new password
+          <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+        </label>
+        <div className="configuration-actions full-label">
+          <button className="primary-button" type="submit" disabled={saving || !currentPassword || !newPassword || !confirmPassword}>
+            {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+            Save password
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function UserManagementScreen({
+  currentUser,
+  onNotify,
+}: {
+  currentUser: AuthUser;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('validator');
+  const [resetTarget, setResetTarget] = useState<AuthUser | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null);
+
+  async function loadUsers() {
+    setLoadingUsers(true);
+    try {
+      setUsers(await api.listUsers());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load users.', 'error');
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  function userId(user: AuthUser) {
+    return user.id || user._id || '';
+  }
+
+  async function createUser(event: FormEvent) {
+    event.preventDefault();
+    try {
+      await api.createUser({ username: newUsername, password: newPassword, role: newRole });
+      setNewUsername('');
+      setNewPassword('');
+      setNewRole('validator');
+      onNotify('User created.', 'success');
+      await loadUsers();
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to create user.', 'error');
+    }
+  }
+
+  async function updateUser(user: AuthUser, payload: { role?: UserRole; enabled?: boolean }) {
+    const id = userId(user);
+    if (!id) return;
+    try {
+      await api.updateUser(id, payload);
+      onNotify('User updated.', 'success');
+      await loadUsers();
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to update user.', 'error');
+    }
+  }
+
+  async function confirmResetPassword() {
+    if (!resetTarget) return;
+    const id = userId(resetTarget);
+    if (!id) return;
+    try {
+      await api.resetUserPassword(id, resetPassword);
+      setResetTarget(null);
+      setResetPassword('');
+      onNotify('Password reset.', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to reset password.', 'error');
+    }
+  }
+
+  async function confirmDeleteUser() {
+    if (!deleteTarget) return;
+    const id = userId(deleteTarget);
+    if (!id) return;
+    try {
+      await api.deleteUser(id);
+      setDeleteTarget(null);
+      onNotify('User removed.', 'success');
+      await loadUsers();
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to remove user.', 'error');
+    }
+  }
+
+  return (
+    <div className="user-management">
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>User Management</h2>
+            <p>Add users, assign roles, and control access.</p>
+          </div>
+          <button className="icon-button" title="Refresh users" onClick={loadUsers}>
+            {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
+        </div>
+        <form className="user-create-form" onSubmit={createUser}>
+          <label>
+            Username
+            <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
+          </label>
+          <label>
+            Initial password
+            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+          </label>
+          <label>
+            Role
+            <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
+              <option value="validator">Validator</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <button className="primary-button" type="submit" disabled={!newUsername || !newPassword}>
+            <Plus size={16} />
+            Add user
+          </button>
+        </form>
+      </section>
+      <section className="panel">
+        <div className="business-review-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => {
+                const id = userId(user);
+                const isSelf = id === currentUser.id;
+                return (
+                  <tr key={id || user.username}>
+                    <td>{user.username}</td>
+                    <td>
+                      <select
+                        value={user.role}
+                        disabled={isSelf}
+                        onChange={(event) => updateUser(user, { role: event.target.value as UserRole })}
+                      >
+                        <option value="validator">Validator</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                    <td>{user.enabled ? 'Enabled' : 'Disabled'}</td>
+                    <td>{user.createdAt ? new Date(user.createdAt).toLocaleString() : 'N/A'}</td>
+                    <td>
+                      <div className="table-actions">
+                        <button className="secondary-button compact" type="button" onClick={() => {
+                          setResetTarget(user);
+                          setResetPassword('');
+                        }}>
+                          Reset password
+                        </button>
+                        <button
+                          className="secondary-button compact"
+                          type="button"
+                          disabled={isSelf}
+                          onClick={() => updateUser(user, { enabled: !user.enabled })}
+                        >
+                          {user.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                        <button
+                          className="secondary-button compact danger-outline"
+                          type="button"
+                          disabled={isSelf}
+                          onClick={() => setDeleteTarget(user)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!users.length && <div className="empty-table">{loadingUsers ? 'Loading users.' : 'No users found.'}</div>}
+        </div>
+      </section>
+      {resetTarget && (
+        <ConfirmDialog
+          title="Reset Password"
+          body={
+            <label>
+              New password for {resetTarget.username}
+              <input type="password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
+            </label>
+          }
+          confirmLabel="Reset"
+          confirmIcon={<KeyRound size={16} />}
+          onCancel={() => setResetTarget(null)}
+          onConfirm={confirmResetPassword}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Remove User"
+          body={`Remove "${deleteTarget.username}"?`}
+          confirmLabel="Remove"
+          confirmIcon={<Trash2 size={16} />}
+          isDanger
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDeleteUser}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1186,11 +1677,18 @@ function MonthlyCostProjectionChart({
   );
 }
 
-function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+function BusinessReviewScreen({
+  displayCurrency,
+  onCurrencyChange,
+  onNotify,
+}: {
+  displayCurrency: DisplayCurrency;
+  onCurrencyChange: (currency: DisplayCurrency) => void;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
 
   async function loadSummary() {
     setLoadingSummary(true);
@@ -1248,7 +1746,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
           <div className="toolbar-actions">
             <label className="currency-selector">
               Currency
-              <select value={displayCurrency} onChange={(event) => setDisplayCurrency(event.target.value as DisplayCurrency)}>
+              <select value={displayCurrency} onChange={(event) => onCurrencyChange(event.target.value as DisplayCurrency)}>
                 {displayCurrencyOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -2482,6 +2980,7 @@ function DocumentList({
   pagination,
   statusTarget,
   config,
+  canManage = false,
   onOpen,
   onPage,
 }: {
@@ -2490,6 +2989,7 @@ function DocumentList({
   pagination: PagedResult<IncomingDocument>;
   statusTarget: { status: DocumentStatusFilter; version: number };
   config: AppConfig;
+  canManage?: boolean;
   onOpen: (id: string) => void;
   onPage: (page: PagedResult<IncomingDocument>) => void;
 }) {
@@ -2677,41 +3177,43 @@ function DocumentList({
               </span>
               <time>{new Date(doc.createdAt).toLocaleString()}</time>
             </button>
-            <div className="row-actions">
-              <button
-                className="icon-button"
-                title="Reclassify document"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setReclassifyTarget(doc);
-                  const docCategory = doc.category;
-                  setReclassifyCategory(docCategory);
-                  setReclassifyDocumentType(doc.documentTypeId || '');
-                }}
-              >
-                <BrainCircuit size={16} />
-              </button>
-              <button
-                className="icon-button"
-                title="Reprocess document"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setReprocessTarget(doc);
-                }}
-              >
-                <RotateCcw size={16} />
-              </button>
-              <button
-                className="icon-button danger"
-                title="Delete document"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setDeleteTarget(doc);
-                }}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
+            {canManage && (
+              <div className="row-actions">
+                <button
+                  className="icon-button"
+                  title="Reclassify document"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setReclassifyTarget(doc);
+                    const docCategory = doc.category;
+                    setReclassifyCategory(docCategory);
+                    setReclassifyDocumentType(doc.documentTypeId || '');
+                  }}
+                >
+                  <BrainCircuit size={16} />
+                </button>
+                <button
+                  className="icon-button"
+                  title="Reprocess document"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setReprocessTarget(doc);
+                  }}
+                >
+                  <RotateCcw size={16} />
+                </button>
+                <button
+                  className="icon-button danger"
+                  title="Delete document"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setDeleteTarget(doc);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -2948,9 +3450,6 @@ function ReprocessDialog({
 function ValidationScreen({
   documentId,
   documentTypes,
-  downstreamUrl,
-  defaultDeleteAfterDownstream = false,
-  sendKeyValuePairs = false,
   config,
   canNavigatePrevious = false,
   canNavigateNext = false,
@@ -2959,12 +3458,10 @@ function ValidationScreen({
   onRefresh,
   onValidated,
   onNotify,
+  canAdminActions = false,
 }: {
   documentId: string;
   documentTypes: DocumentType[];
-  downstreamUrl: string;
-  defaultDeleteAfterDownstream?: boolean;
-  sendKeyValuePairs?: boolean;
   config: AppConfig;
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
@@ -2973,6 +3470,7 @@ function ValidationScreen({
   onRefresh: () => Promise<void>;
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+  canAdminActions?: boolean;
 }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
@@ -2985,7 +3483,6 @@ function ValidationScreen({
   const [showReprocessDialog, setShowReprocessDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
-  const [deleteAfterDownstream, setDeleteAfterDownstream] = useState(defaultDeleteAfterDownstream);
   const [pendingValidationAction, setPendingValidationAction] = useState<'validate' | 'reject' | null>(null);
   const [navigationPending, setNavigationPending] = useState(false);
   const documentTypeFor = (doc: IncomingDocument) => documentTypes.find((type) => type._id === doc.documentTypeId);
@@ -3006,10 +3503,6 @@ function ValidationScreen({
     await onRefresh();
     onNotify('Validation page refreshed');
   }
-
-  useEffect(() => {
-    setDeleteAfterDownstream(defaultDeleteAfterDownstream);
-  }, [defaultDeleteAfterDownstream]);
 
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
@@ -3133,7 +3626,7 @@ function ValidationScreen({
         return item;
       }
     });
-    await api.validateDocument(document._id, normalized, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs);
+    await api.validateDocument(document._id, normalized);
     const message = `Document validated: ${document.originalName}`;
     onNotify(message, 'success');
     await onValidated(message);
@@ -3142,7 +3635,7 @@ function ValidationScreen({
   async function reject() {
     if (!document) return;
     setPendingValidationAction(null);
-    await api.rejectDocument(document._id, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs);
+    await api.rejectDocument(document._id);
     const message = `Document rejected: ${document.originalName}`;
     onNotify(message, 'error');
     await onValidated(message);
@@ -3197,7 +3690,7 @@ function ValidationScreen({
     <div className="validation-layout">
       <section className="pdf-pane">
         <PdfViewer
-          url={api.documentFileUrl(document._id)}
+          documentId={document._id}
           highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
         />
@@ -3236,11 +3729,6 @@ function ValidationScreen({
               </button>
             </div>
           </div>
-          {!downstreamUrl && (
-            <div className="toast inline">
-              Downstream URL is not configured. Document validation will complete locally only.
-            </div>
-          )}
           <div className="extraction-form">
             {values.map((item, index) => {
               const styles = fieldStyles[item.key];
@@ -3340,18 +3828,12 @@ function ValidationScreen({
         </div>
         {!isLocked && (
           <div className="extraction-pane-footer">
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={deleteAfterDownstream}
-                onChange={(event) => setDeleteAfterDownstream(event.target.checked)}
-              />
-              <span>Delete document after sending to downstream</span>
-            </label>
             <div className="validation-actions">
               <button
-                className="secondary-button"
+                className="icon-button"
                 type="button"
+                title="Previous document"
+                aria-label="Previous document"
                 disabled={!canNavigatePrevious || navigationPending}
                 onClick={(event) => {
                   event.preventDefault();
@@ -3360,11 +3842,12 @@ function ValidationScreen({
                 }}
               >
                 <ChevronLeft size={16} />
-                Previous
               </button>
               <button
-                className="secondary-button"
+                className="icon-button"
                 type="button"
+                title="Next document"
+                aria-label="Next document"
                 disabled={!canNavigateNext || navigationPending}
                 onClick={(event) => {
                   event.preventDefault();
@@ -3372,17 +3855,30 @@ function ValidationScreen({
                   navigateDocument('next');
                 }}
               >
-                Next
                 <ChevronRight size={16} />
               </button>
-              <button className="secondary-button" type="button" onClick={() => setShowReclassifyDialog(true)}>
-                <BrainCircuit size={16} />
-                Reclassify
-              </button>
-              <button className="secondary-button" type="button" onClick={() => setShowReprocessDialog(true)}>
-                <RotateCcw size={16} />
-                Reprocess
-              </button>
+              {canAdminActions && (
+                <>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    title="Reclassify document"
+                    aria-label="Reclassify document"
+                    onClick={() => setShowReclassifyDialog(true)}
+                  >
+                    <BrainCircuit size={16} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    title="Reprocess document"
+                    aria-label="Reprocess document"
+                    onClick={() => setShowReprocessDialog(true)}
+                  >
+                    <RotateCcw size={16} />
+                  </button>
+                </>
+              )}
               <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
                 <X size={16} />
                 Reject
@@ -3491,11 +3987,11 @@ function ValidationScreen({
 }
 
 function PdfViewer({
-  url,
+  documentId,
   highlights,
   activeFieldKey,
 }: {
-  url: string;
+  documentId: string;
   highlights: Array<{
     page: number;
     x: number;
@@ -3508,7 +4004,11 @@ function PdfViewer({
   }>;
   activeFieldKey: string | null;
 }) {
-  const [pages, setPages] = useState<Array<{ dataUrl: string; width: number; height: number }>>([]);
+  const [selectedPage, setSelectedPage] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
+  const [pageImage, setPageImage] = useState<{ dataUrl: string; width: number; height: number } | null>(null);
+  const [loadingPage, setLoadingPage] = useState(false);
+  const [pageError, setPageError] = useState('');
   const [zoom, setZoom] = useState(100);
   const [isPanning, setIsPanning] = useState(false);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
@@ -3583,58 +4083,119 @@ function PdfViewer({
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const pdf = await getDocument(url).promise;
-      const rendered: Array<{ dataUrl: string; width: number; height: number }> = [];
-      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-        const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.3 });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        if (!context) continue;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        await page.render({ canvasContext: context, viewport }).promise;
-        rendered.push({ dataUrl: canvas.toDataURL('image/png'), width: viewport.width, height: viewport.height });
-      }
-      if (!cancelled) setPages(rendered);
-    })();
+    setSelectedPage(1);
+    setPageCount(0);
+    setPageImage(null);
+    setPageError('');
+
+    api.documentPageCount(documentId)
+      .then(({ pageCount: count }) => {
+        if (!cancelled) setPageCount(Math.max(count, 1));
+      })
+      .catch((error) => {
+        if (!cancelled) setPageError(error instanceof Error ? error.message : 'Failed to load PDF page count.');
+      });
+
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [documentId]);
 
   useEffect(() => {
-    if (!pdfContainerRef.current) return;
+    if (!pageCount) return;
+    setSelectedPage((page) => Math.min(Math.max(page, 1), pageCount));
+  }, [pageCount]);
+
+  useEffect(() => {
     const selectedHighlights = highlights.filter((box) => box.fieldKey === activeFieldKey);
     if (selectedHighlights.length === 0) return;
 
-    const firstHighlight = selectedHighlights[0];
-    const targetPageIndex = firstHighlight.page;
-
-    const pageElements = pdfContainerRef.current.querySelectorAll('.pdf-page');
-    if (targetPageIndex >= 0 && targetPageIndex < pageElements.length) {
-      const targetPageElement = pageElements[targetPageIndex];
-      const activeHighlights = targetPageElement.querySelectorAll('.pdf-highlight.active');
-      const activeHighlight = activeHighlights[0] as HTMLElement | undefined;
-
-      if (activeHighlight) {
-        centerHighlightInPdfPane(activeHighlight);
-      } else {
-        targetPageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-
-      setTimeout(() => {
-        if (activeHighlight) {
-          activeHighlight.focus({ preventScroll: true });
-        }
-      }, 100);
+    const targetPage = selectedHighlights[0].page + 1;
+    if (targetPage > 0 && (!pageCount || targetPage <= pageCount)) {
+      setSelectedPage(targetPage);
     }
-  }, [highlights, activeFieldKey, zoom]);
+  }, [activeFieldKey, highlights, pageCount]);
+
+  useEffect(() => {
+    if (!documentId || selectedPage < 1) return;
+    let cancelled = false;
+    let pdfTask: ReturnType<typeof getDocument> | null = null;
+
+    setLoadingPage(true);
+    setPageError('');
+    setPageImage(null);
+
+    (async () => {
+      try {
+        const pageBytes = await api.documentPageFile(documentId, selectedPage);
+        if (cancelled) return;
+        pdfTask = getDocument({ data: pageBytes });
+        const pdf = await pdfTask.promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 1.3 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Unable to render PDF page.');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: context, viewport }).promise;
+        const dataUrl = canvas.toDataURL('image/png');
+        await pdf.destroy();
+        if (!cancelled) {
+          setPageImage({ dataUrl, width: viewport.width, height: viewport.height });
+          setLoadingPage(false);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPageError(error instanceof Error ? error.message : 'Failed to load PDF page.');
+          setLoadingPage(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      pdfTask?.destroy();
+    };
+  }, [documentId, selectedPage]);
+
+  useEffect(() => {
+    if (!pdfContainerRef.current) return;
+    if (!activeFieldKey || !pageImage) return;
+
+    const activeHighlight = pdfContainerRef.current.querySelector('.pdf-highlight.active') as HTMLElement | null;
+    if (!activeHighlight) return;
+
+    centerHighlightInPdfPane(activeHighlight);
+    setTimeout(() => activeHighlight.focus({ preventScroll: true }), 100);
+  }, [activeFieldKey, pageImage, selectedPage, zoom]);
+
+  const pageHighlights = highlights.filter((box) => box.page === selectedPage - 1);
+  const canGoToPreviousPage = selectedPage > 1 && !loadingPage;
+  const canGoToNextPage = Boolean(pageCount) && selectedPage < pageCount && !loadingPage;
 
   return (
     <div className="pdf-viewer">
-      <div className="pdf-toolbar" aria-label="PDF zoom controls">
+      <div className="pdf-toolbar" aria-label="PDF page and zoom controls">
+        <button
+          className="icon-button"
+          type="button"
+          title="Previous PDF page"
+          disabled={!canGoToPreviousPage}
+          onClick={() => setSelectedPage((page) => Math.max(1, page - 1))}
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <span className="pdf-page-value">Page {selectedPage} / {pageCount || '-'}</span>
+        <button
+          className="icon-button"
+          type="button"
+          title="Next PDF page"
+          disabled={!canGoToNextPage}
+          onClick={() => setSelectedPage((page) => Math.min(pageCount || page, page + 1))}
+        >
+          <ChevronRight size={16} />
+        </button>
         <button
           className="icon-button"
           type="button"
@@ -3672,36 +4233,36 @@ function PdfViewer({
         onPointerUp={stopPan}
         onPointerCancel={stopPan}
       >
-        {pages.map((page, index) => (
+        {loadingPage && <div className="pdf-page-state">Loading page.</div>}
+        {pageError && <div className="pdf-page-state error">{pageError}</div>}
+        {pageImage && !loadingPage && !pageError && (
           <div
             className="pdf-page"
-            key={index}
-            style={{ aspectRatio: `${page.width} / ${page.height}`, width: `${zoom}%` }}
+            key={selectedPage}
+            style={{ aspectRatio: `${pageImage.width} / ${pageImage.height}`, width: `${zoom}%` }}
           >
-            <img alt={`PDF page ${index + 1}`} draggable={false} src={page.dataUrl} />
-            {highlights
-              .filter((box) => box.page === index)
-              .map((box, boxIndex) => {
-                const isActive = box.fieldKey === activeFieldKey;
-                return (
-                  <div
-                    className={`pdf-highlight${isActive ? ' active' : ''}`}
-                    key={`${index}-${boxIndex}`}
-                    style={{
-                      left: `${box.x * 100}%`,
-                      top: `${box.y * 100}%`,
-                      width: `${box.width * 100}%`,
-                      height: `${box.height * 100}%`,
-                      borderColor: box.color,
-                      backgroundColor: isActive ? box.activeFill : 'transparent',
-                      boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
-                    }}
-                    tabIndex={isActive ? 0 : -1}
-                  />
-                );
-              })}
+            <img alt={`PDF page ${selectedPage}`} draggable={false} src={pageImage.dataUrl} />
+            {pageHighlights.map((box, boxIndex) => {
+              const isActive = box.fieldKey === activeFieldKey;
+              return (
+                <div
+                  className={`pdf-highlight${isActive ? ' active' : ''}`}
+                  key={`${selectedPage}-${boxIndex}`}
+                  style={{
+                    left: `${box.x * 100}%`,
+                    top: `${box.y * 100}%`,
+                    width: `${box.width * 100}%`,
+                    height: `${box.height * 100}%`,
+                    borderColor: box.color,
+                    backgroundColor: isActive ? box.activeFill : 'transparent',
+                    boxShadow: isActive ? `0 0 0 2px ${box.color}` : 'none',
+                  }}
+                  tabIndex={isActive ? 0 : -1}
+                />
+              );
+            })}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

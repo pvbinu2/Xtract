@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { ConfigurationService } from './configuration.service';
 import { Configuration } from '../schemas/configuration.schema';
+import { Roles } from '../auth/auth.decorators';
 
 @Controller('configuration')
+@Roles('admin')
 export class ConfigurationController {
   constructor(private readonly configurationService: ConfigurationService) {}
 

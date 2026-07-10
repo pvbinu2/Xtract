@@ -67,6 +67,22 @@ The document processing configuration supports three modes:
 - **Built in text extraction**: Check **Use extracted text for document processing** and select **Built in** as the text extraction engine.
 - **Docling markdown extraction**: Check **Use extracted text for document processing**, select **Markdown (Docling service)**, and provide the Docling service URL.
 
+### Authentication and Roles
+
+Xtract stores users in MongoDB and requires login with a username and password. If the users collection is empty, the API creates a local admin user on startup:
+
+```text
+username: admin
+password: admin123
+```
+
+Override these defaults with `DEFAULT_ADMIN_USERNAME` and `DEFAULT_ADMIN_PASSWORD`. Set `JWT_SECRET` for non-local environments.
+
+Roles:
+
+- **Admin**: full application access, including user management.
+- **Validator**: access to document list and validation workflows only.
+
 ### Blob Trigger Ingestion
 
 The processor Function app includes a blob trigger for the `trigger` storage container. When a new file is uploaded to `trigger`, the function moves it to the `processing` container, creates an `IncomingDocument` record with `status: processing`, and enqueues the existing `document-processing` queue. The document then appears in the UI through the normal Documents and Validation screens as it moves through classification and extraction.

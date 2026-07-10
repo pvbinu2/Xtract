@@ -1,4 +1,4 @@
-import { BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort } from './types';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
 
 export type AppConfigPayload = {
   downstreamUrl: string;
@@ -19,9 +19,25 @@ export type ReprocessDocumentPayload = {
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
+const AUTH_TOKEN_KEY = 'xtract-auth-token';
+
+export function authToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY) || '';
+}
+
+export function saveAuthToken(token: string) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  const headers = new Headers(options?.headers);
+  const token = authToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed: ${response.status}`);
@@ -30,7 +46,57 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  documentFileUrl: (id: string) => `${API_BASE}/documents/${id}/file`,
+  login: (payload: { username: string; password: string }) =>
+    request<{ token: string; user: AuthUser }>('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  me: () => request<AuthUser>('/auth/me'),
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    request<{ changed: boolean }>('/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updatePreferences: (payload: { preferredCurrency: DisplayCurrency }) =>
+    request<AuthUser>('/auth/preferences', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  listUsers: () => request<AuthUser[]>('/users'),
+  createUser: (payload: { username: string; password: string; role: UserRole; enabled?: boolean }) =>
+    request<AuthUser>('/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updateUser: (id: string, payload: { role?: UserRole; enabled?: boolean }) =>
+    request<AuthUser>(`/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  resetUserPassword: (id: string, password: string) =>
+    request<AuthUser>(`/users/${id}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    }),
+  deleteUser: (id: string) => request<{ deleted: boolean }>(`/users/${id}`, { method: 'DELETE' }),
+  documentPageFile: async (id: string, pageNumber: number) => {
+    const headers = new Headers();
+    const token = authToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${API_BASE}/documents/${id}/pages/${pageNumber}/file`, { headers });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Request failed: ${response.status}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  },
+  documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),
   createDocumentType: (payload: { category: string; name: string; prompt?: string }) =>
     request<DocumentType>('/document-types', {
@@ -120,17 +186,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ extractedData }),
     }),
-  validateDocument: (
-    id: string,
-    extractedData: ExtractedValue[],
-    deleteAfterDownstream = false,
-    downstreamUrl?: string,
-    sendKeyValuePairs = false,
-  ) =>
+  validateDocument: (id: string, extractedData: ExtractedValue[]) =>
     request<any>(`/documents/${id}/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extractedData, deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
+      body: JSON.stringify({ extractedData }),
     }),
   getConfiguration: () =>
     request<Partial<AppConfigPayload>>('/configuration'),
@@ -140,15 +200,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  rejectDocument: (
-    id: string,
-    deleteAfterDownstream = false,
-    downstreamUrl?: string,
-    sendKeyValuePairs = false,
-  ) =>
+  rejectDocument: (id: string) =>
     request<IncomingDocument>(`/documents/${id}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deleteAfterDownstream, downstreamUrl, sendKeyValuePairs }),
+      body: JSON.stringify({}),
     }),
 };
