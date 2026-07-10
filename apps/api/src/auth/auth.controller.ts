@@ -25,4 +25,12 @@ export class AuthController {
   ) {
     return this.authService.changePassword(request.user!.id, body.currentPassword, body.newPassword);
   }
+
+  @Post('preferences')
+  updatePreferences(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: { preferredCurrency?: 'USD' | 'INR' | 'GBP' | 'EUR' },
+  ) {
+    return this.authService.updatePreferences(request.user!.id, body);
+  }
 }

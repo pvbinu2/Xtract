@@ -1,5 +1,6 @@
 export type FieldType = 'string' | 'number' | 'date' | 'currency' | 'boolean' | 'table';
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+export type DisplayCurrency = 'USD' | 'INR' | 'GBP' | 'EUR';
 
 export type TableColumn = {
   key: string;
@@ -113,6 +114,7 @@ export type AuthUser = {
   _id?: string;
   username: string;
   role: UserRole;
+  preferredCurrency?: DisplayCurrency;
   enabled?: boolean;
   createdAt?: string;
   updatedAt?: string;

@@ -42,7 +42,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
-import { AuthUser, BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
@@ -77,7 +77,6 @@ const displayCurrencyOptions = [
   { value: 'GBP', label: 'British pound', rate: 0.79 },
   { value: 'EUR', label: 'Euro', rate: 0.92 },
 ] as const;
-type DisplayCurrency = (typeof displayCurrencyOptions)[number]['value'];
 
 function supportsReasoningEffort(model: string) {
   return /^(gpt-5|o\d|o\d-)/.test(model);
@@ -159,6 +158,10 @@ function formatCurrency(value: number, currency: DisplayCurrency = 'USD') {
     minimumFractionDigits: convertedValue > 0 && convertedValue < 0.01 ? 4 : 2,
     maximumFractionDigits: convertedValue > 0 && convertedValue < 0.01 ? 6 : 2,
   }).format(convertedValue);
+}
+
+function normalizeDisplayCurrency(currency?: string | null): DisplayCurrency {
+  return displayCurrencyOptions.some((option) => option.value === currency) ? currency as DisplayCurrency : 'USD';
 }
 
 function displaySampleName(fileName: string) {
@@ -345,6 +348,7 @@ function OperationsApp() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
   const [operationsMetrics, setOperationsMetrics] = useState<OperationsMetrics>({
     filesProcessed: 0,
     totalCostUsd: 0,
@@ -575,11 +579,15 @@ function OperationsApp() {
     const stored = localStorage.getItem('xtract-dark-mode');
     setDarkMode(stored === 'true');
     setSidebarCollapsed(localStorage.getItem('xtract-sidebar-collapsed') === 'true');
+    setDisplayCurrency(normalizeDisplayCurrency(localStorage.getItem('xtract-display-currency')));
   }, []);
 
   useEffect(() => {
     api.me()
-      .then((user) => setCurrentUser(user))
+      .then((user) => {
+        setCurrentUser(user);
+        setDisplayCurrency(normalizeDisplayCurrency(user.preferredCurrency));
+      })
       .catch(() => {
         clearAuthToken();
         setCurrentUser(null);
@@ -641,6 +649,10 @@ function OperationsApp() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    localStorage.setItem('xtract-display-currency', displayCurrency);
+  }, [displayCurrency]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(timer);
@@ -663,7 +675,18 @@ function OperationsApp() {
     const session = await api.login({ username, password });
     saveAuthToken(session.token);
     setCurrentUser(session.user);
+    setDisplayCurrency(normalizeDisplayCurrency(session.user.preferredCurrency));
     setView('documents');
+  }
+
+  async function updateDisplayCurrency(currency: DisplayCurrency) {
+    setDisplayCurrency(currency);
+    try {
+      const user = await api.updatePreferences({ preferredCurrency: currency });
+      setCurrentUser(user);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to save currency preference.', 'error');
+    }
   }
 
   function logout() {
@@ -784,12 +807,12 @@ function OperationsApp() {
                 <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
                 <StatusMetric
                   label="Total cost"
-                  value={formatCurrency(operationsMetrics.totalCostUsd)}
+                  value={formatCurrency(operationsMetrics.totalCostUsd, displayCurrency)}
                   onClick={() => setView('business-review')}
                 />
                 <StatusMetric
                   label="Avg cost / file"
-                  value={formatCurrency(averageCostPerFile)}
+                  value={formatCurrency(averageCostPerFile, displayCurrency)}
                   onClick={() => setView('business-review')}
                 />
                 <StatusMetric
@@ -879,7 +902,11 @@ function OperationsApp() {
           />
         )}
         {!selectedPageLoading && isAdmin && view === 'business-review' && (
-          <BusinessReviewScreen onNotify={showToast} />
+          <BusinessReviewScreen
+            displayCurrency={displayCurrency}
+            onCurrencyChange={updateDisplayCurrency}
+            onNotify={showToast}
+          />
         )}
         {!selectedPageLoading && isAdmin && view === 'demo-requests' && (
           <DemoRequestsScreen onNotify={showToast} />
@@ -1650,11 +1677,18 @@ function MonthlyCostProjectionChart({
   );
 }
 
-function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+function BusinessReviewScreen({
+  displayCurrency,
+  onCurrencyChange,
+  onNotify,
+}: {
+  displayCurrency: DisplayCurrency;
+  onCurrencyChange: (currency: DisplayCurrency) => void;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
 
   async function loadSummary() {
     setLoadingSummary(true);
@@ -1712,7 +1746,7 @@ function BusinessReviewScreen({ onNotify }: { onNotify: (notification: string, t
           <div className="toolbar-actions">
             <label className="currency-selector">
               Currency
-              <select value={displayCurrency} onChange={(event) => setDisplayCurrency(event.target.value as DisplayCurrency)}>
+              <select value={displayCurrency} onChange={(event) => onCurrencyChange(event.target.value as DisplayCurrency)}>
                 {displayCurrencyOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}

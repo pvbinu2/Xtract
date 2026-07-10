@@ -5,13 +5,14 @@ import { Request } from 'express';
 import { verify } from 'jsonwebtoken';
 import { Model, Types } from 'mongoose';
 import { IS_PUBLIC_KEY, ROLES_KEY } from './auth.decorators';
-import { User, UserDocument, UserRole } from '../schemas/user.schema';
+import { PreferredCurrency, User, UserDocument, UserRole } from '../schemas/user.schema';
 
 export type AuthenticatedRequest = Request & {
   user?: {
     id: string;
     username: string;
     role: UserRole;
+    preferredCurrency: PreferredCurrency;
   };
 };
 
@@ -53,6 +54,7 @@ export class AuthGuard implements CanActivate {
       id: String(user._id),
       username: user.username,
       role: user.role,
+      preferredCurrency: user.preferredCurrency || 'USD',
     };
 
     const roles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [

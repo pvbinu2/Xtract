@@ -1,4 +1,4 @@
-import { AuthUser, BusinessReviewSummary, DemoRequest, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
 
 export type AppConfigPayload = {
   downstreamUrl: string;
@@ -55,6 +55,12 @@ export const api = {
   me: () => request<AuthUser>('/auth/me'),
   changePassword: (payload: { currentPassword: string; newPassword: string }) =>
     request<{ changed: boolean }>('/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updatePreferences: (payload: { preferredCurrency: DisplayCurrency }) =>
+    request<AuthUser>('/auth/preferences', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

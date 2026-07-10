@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { compare, hash } from 'bcryptjs';
 import { sign } from 'jsonwebtoken';
 import { Model } from 'mongoose';
-import { User, UserDocument } from '../schemas/user.schema';
+import { PreferredCurrency, User, UserDocument } from '../schemas/user.schema';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -22,6 +22,7 @@ export class AuthService implements OnModuleInit {
       passwordHash: await hash(password, 12),
       role: 'admin',
       enabled: true,
+      preferredCurrency: 'USD',
     });
   }
 
@@ -39,6 +40,7 @@ export class AuthService implements OnModuleInit {
       username: user.username,
       role: user.role,
       enabled: user.enabled,
+      preferredCurrency: user.preferredCurrency || 'USD',
     };
 
     return {
@@ -62,6 +64,27 @@ export class AuthService implements OnModuleInit {
     user.passwordHash = await hash(newPassword, 12);
     await user.save();
     return { changed: true };
+  }
+
+  async updatePreferences(userId: string, payload: { preferredCurrency?: PreferredCurrency }) {
+    const preferredCurrency = this.normalizePreferredCurrency(payload.preferredCurrency);
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { preferredCurrency }, { new: true, projection: { passwordHash: 0 } })
+      .lean()
+      .exec();
+    if (!user) throw new UnauthorizedException('User is unavailable.');
+    return {
+      id: String(user._id),
+      _id: String(user._id),
+      username: user.username,
+      role: user.role,
+      enabled: user.enabled,
+      preferredCurrency: user.preferredCurrency || 'USD',
+    };
+  }
+
+  private normalizePreferredCurrency(currency?: PreferredCurrency): PreferredCurrency {
+    return ['USD', 'INR', 'GBP', 'EUR'].includes(currency || '') ? currency! : 'USD';
   }
 
   private jwtSecret() {
