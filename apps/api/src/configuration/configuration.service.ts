@@ -18,6 +18,12 @@ export class ConfigurationService {
       useOcrForDocumentProcessing: false,
       documentTextMode: 'ocr',
       markdownServiceUrl: process.env.DOCLING_MARKDOWN_SERVICE_URL || '',
+      aiProvider: 'openai',
+      ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+      ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2',
+      embeddingProvider: 'openai',
+      embeddingModel: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
+      ollamaEmbeddingModel: process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
       classificationModel: 'gpt-5-nano',
       classificationReasoningEffort: 'low',
     };
@@ -26,6 +32,12 @@ export class ConfigurationService {
       ...config,
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
       markdownServiceUrl: config?.markdownServiceUrl || '',
+      aiProvider: config?.aiProvider === 'ollama' ? 'ollama' : 'openai',
+      ollamaBaseUrl: config?.ollamaBaseUrl || defaults.ollamaBaseUrl,
+      ollamaModel: config?.ollamaModel || defaults.ollamaModel,
+      embeddingProvider: config?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
+      embeddingModel: config?.embeddingModel || defaults.embeddingModel,
+      ollamaEmbeddingModel: config?.ollamaEmbeddingModel || defaults.ollamaEmbeddingModel,
       classificationModel: config?.classificationModel || defaults.classificationModel,
       classificationReasoningEffort: config?.classificationReasoningEffort || defaults.classificationReasoningEffort,
     } as Configuration;
@@ -38,10 +50,18 @@ export class ConfigurationService {
     useOcrForDocumentProcessing?: boolean;
     documentTextMode?: 'ocr' | 'markdown';
     markdownServiceUrl?: string;
+    aiProvider?: 'openai' | 'ollama';
+    ollamaBaseUrl?: string;
+    ollamaModel?: string;
+    embeddingProvider?: 'openai' | 'ollama';
+    embeddingModel?: string;
+    ollamaEmbeddingModel?: string;
     classificationModel?: string;
     classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
   }): Promise<Configuration> {
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
+    const aiProvider = config.aiProvider === 'ollama' ? 'ollama' : 'openai';
+    const embeddingProvider = config.embeddingProvider === 'ollama' ? 'ollama' : 'openai';
     const updated = await this.configModel
       .findOneAndUpdate(
         {},
@@ -51,6 +71,12 @@ export class ConfigurationService {
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           documentTextMode,
           markdownServiceUrl: config.markdownServiceUrl || '',
+          aiProvider,
+          ollamaBaseUrl: config.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+          ollamaModel: config.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2',
+          embeddingProvider,
+          embeddingModel: config.embeddingModel || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
+          ollamaEmbeddingModel: config.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
           classificationModel: config.classificationModel || 'gpt-5-nano',
           classificationReasoningEffort: config.classificationReasoningEffort || 'low',
         },

@@ -248,19 +248,22 @@ export class DocumentTypesService {
     if (!docType) throw new NotFoundException('Document type not found');
 
     const latestSample = docType.sampleFiles.at(-1);
-    if (latestSample && process.env.OPENAI_API_KEY) {
+    const configuration = await this.configurationService.get();
+    if (latestSample && (configuration.aiProvider === 'ollama' || process.env.OPENAI_API_KEY)) {
       const samplePath = await this.resolveSamplePath(latestSample);
       try {
-        const configuration = await this.configurationService.get();
         const openAiFields = await inferTemplateWithOpenAI(
           samplePath,
           prompt,
           Boolean(configuration.useOcrForDocumentProcessing),
           {
+            aiProvider: configuration.aiProvider,
             model: docType.extractionModel,
             reasoningEffort: docType.extractionReasoningEffort,
             documentTextMode: configuration.documentTextMode,
             markdownServiceUrl: configuration.markdownServiceUrl,
+            ollamaBaseUrl: configuration.ollamaBaseUrl,
+            ollamaModel: configuration.ollamaModel,
           },
         );
         if (openAiFields?.length) {

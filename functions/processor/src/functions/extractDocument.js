@@ -30,17 +30,72 @@ function modelName() {
   return process.env.OPENAI_MODEL || 'gpt-5-nano';
 }
 
+function providerName(options = {}) {
+  return options.aiProvider === 'ollama' ? 'ollama' : 'openai';
+}
+
+function ollamaModelName(options = {}) {
+  return options.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2';
+}
+
+function ollamaBaseUrl(options = {}) {
+  return (options.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+}
+
 function supportsReasoningEffort(model) {
   return /^(gpt-5|o\d|o\d-)/.test(model);
 }
 
 function openAIRequestConfig(options = {}) {
-  const model = options.model || modelName();
+  const model = providerName(options) === 'ollama' ? ollamaModelName(options) : options.model || modelName();
   return {
     model,
     ...(options.reasoningEffort && supportsReasoningEffort(model)
       ? { reasoning: { effort: options.reasoningEffort } }
       : {}),
+  };
+}
+
+async function createJsonResponse(content, options = {}, label = 'AI request') {
+  if (providerName(options) === 'ollama') {
+    const model = ollamaModelName(options);
+    const response = await fetch(`${ollamaBaseUrl(options)}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: 'json',
+        messages: [{
+          role: 'user',
+          content: content.map((item) => typeof item.text === 'string' ? item.text : '').filter(Boolean).join('\n'),
+        }],
+      }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`Ollama request failed (${response.status}): ${message || response.statusText}`);
+    }
+    const payload = await response.json();
+    return {
+      outputText: payload?.message?.content || payload?.response || '',
+      raw: payload,
+      model: payload?.model || model,
+    };
+  }
+
+  const client = getOpenAI();
+  if (!client) return undefined;
+  const requestConfig = openAIRequestConfig(options);
+  const response = await withOpenAIRetry(() => client.responses.create({
+    ...requestConfig,
+    input: [{ role: 'user', content }],
+    text: { format: { type: 'json_object' } },
+  }), label);
+  return {
+    outputText: response.output_text,
+    raw: response,
+    model: requestConfig.model,
   };
 }
 
@@ -67,8 +122,8 @@ function pricingForModel(model) {
 
 function tokenUsageFromResponse(response) {
   const usage = response?.usage || {};
-  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
-  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? response?.prompt_eval_count ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? response?.eval_count ?? 0);
   const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
 
   return {
@@ -181,9 +236,7 @@ function pdfInput(filePath) {
 }
 
 async function verifyExtractionWithOpenAI({
-  client,
-  requestConfig,
-  model,
+  aiOptions,
   document,
   documentType,
   selectedFields,
@@ -192,47 +245,38 @@ async function verifyExtractionWithOpenAI({
   documentText,
   textSourceLabel,
 }) {
-  const response = await withOpenAIRetry(() => client.responses.create({
-    ...requestConfig,
-    input: [
-      {
-        role: 'user',
-        content: [
-          ...(useOcr ? [] : [pdfInput(document.filePath)]),
-          {
-            type: 'input_text',
-            text: [
-              useOcr
-                ? `Verify extracted values from this ${documentType.name} document using the ${textSourceLabel} below.`
-                : `Verify extracted values from this ${documentType.name} PDF.`,
-              'Compare the extracted data against the document content and schema.',
-              'Return JSON only. Do not include markdown.',
-              'Set needsCorrection to true only when a value is missing, incorrect, assigned to the wrong field, or a table row/column is inconsistent with the document.',
-              'Return this exact shape:',
-              '{"needsCorrection":true,"issues":[{"key":"field_key","problem":"brief issue"}]}',
-              `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
-              `Extracted data: ${JSON.stringify(values)}`,
-              useOcr ? `Document text:\n${documentText}` : '',
-            ].join('\n'),
-          },
-        ],
-      },
-    ],
-    text: { format: { type: 'json_object' } },
-  }), `Extraction verification for document ${document._id || document.fileName}`);
+  const useDocumentText = useOcr || providerName(aiOptions) === 'ollama';
+  const content = [
+    ...(useDocumentText || providerName(aiOptions) === 'ollama' ? [] : [pdfInput(document.filePath)]),
+    {
+      type: 'input_text',
+      text: [
+        useDocumentText
+          ? `Verify extracted values from this ${documentType.name} document using the ${textSourceLabel} below.`
+          : `Verify extracted values from this ${documentType.name} PDF.`,
+        'Compare the extracted data against the document content and schema.',
+        'Return JSON only. Do not include markdown.',
+        'Set needsCorrection to true only when a value is missing, incorrect, assigned to the wrong field, or a table row/column is inconsistent with the document.',
+        'Return this exact shape:',
+        '{"needsCorrection":true,"issues":[{"key":"field_key","problem":"brief issue"}]}',
+        `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
+        `Extracted data: ${JSON.stringify(values)}`,
+        useDocumentText ? `Document text:\n${documentText}` : '',
+      ].join('\n'),
+    },
+  ];
+  const response = await createJsonResponse(content, aiOptions, `Extraction verification for document ${document._id || document.fileName}`);
 
-  const parsed = parseJsonObject(response.output_text);
+  const parsed = parseJsonObject(response.outputText);
   return {
     needsCorrection: Boolean(parsed.needsCorrection),
     issues: Array.isArray(parsed.issues) ? parsed.issues : [],
-    metrics: processingMetricsFromResponse(response, model),
+    metrics: processingMetricsFromResponse(response.raw, response.model),
   };
 }
 
 async function correctExtractionWithOpenAI({
-  client,
-  requestConfig,
-  model,
+  aiOptions,
   document,
   documentType,
   selectedFields,
@@ -242,52 +286,45 @@ async function correctExtractionWithOpenAI({
   documentText,
   textSourceLabel,
 }) {
-  const response = await withOpenAIRetry(() => client.responses.create({
-    ...requestConfig,
-    input: [
-      {
-        role: 'user',
-        content: [
-          ...(useOcr ? [] : [pdfInput(document.filePath)]),
-          {
-            type: 'input_text',
-            text: [
-              useOcr
-                ? `Correct extracted values from this ${documentType.name} document using the ${textSourceLabel} below.`
-                : `Correct extracted values from this ${documentType.name} PDF.`,
-              'The verification pass found issues in the extracted data.',
-              'Return one corrected full extraction result for every schema field.',
-              'Return JSON only. Do not include markdown.',
-              'If a value is missing, return an empty string and low confidence.',
-              'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
-              'Return this exact shape:',
-              '{"fields":[{"key":"field_key","value":"corrected value","confidence":0.92}]}',
-              `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
-              `Verification issues: ${JSON.stringify(issues)}`,
-              `Original extracted data: ${JSON.stringify(values)}`,
-              useOcr ? `Document text:\n${documentText}` : '',
-            ].join('\n'),
-          },
-        ],
-      },
-    ],
-    text: { format: { type: 'json_object' } },
-  }), `Extraction correction for document ${document._id || document.fileName}`);
+  const useDocumentText = useOcr || providerName(aiOptions) === 'ollama';
+  const content = [
+    ...(useDocumentText || providerName(aiOptions) === 'ollama' ? [] : [pdfInput(document.filePath)]),
+    {
+      type: 'input_text',
+      text: [
+        useDocumentText
+          ? `Correct extracted values from this ${documentType.name} document using the ${textSourceLabel} below.`
+          : `Correct extracted values from this ${documentType.name} PDF.`,
+        'The verification pass found issues in the extracted data.',
+        'Return one corrected full extraction result for every schema field.',
+        'Return JSON only. Do not include markdown.',
+        'If a value is missing, return an empty string and low confidence.',
+        'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
+        'Return this exact shape:',
+        '{"fields":[{"key":"field_key","value":"corrected value","confidence":0.92}]}',
+        `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
+        `Verification issues: ${JSON.stringify(issues)}`,
+        `Original extracted data: ${JSON.stringify(values)}`,
+        useDocumentText ? `Document text:\n${documentText}` : '',
+      ].join('\n'),
+    },
+  ];
+  const response = await createJsonResponse(content, aiOptions, `Extraction correction for document ${document._id || document.fileName}`);
 
-  const parsed = parseJsonObject(response.output_text);
+  const parsed = parseJsonObject(response.outputText);
   return {
     values: valuesFromParsedFields(parsed.fields || [], selectedFields),
-    metrics: processingMetricsFromResponse(response, model),
+    metrics: processingMetricsFromResponse(response.raw, response.model),
   };
 }
 
-async function extractValuesWithOpenAI(document, documentType, useOcr = false, textOptions = {}) {
-  const client = getOpenAI();
-  if (!client) return undefined;
+async function extractValuesWithOpenAI(document, documentType, useOcr = false, textOptions = {}, aiOptions = {}) {
+  if (providerName(aiOptions) === 'openai' && !getOpenAI()) return undefined;
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const textMode = textOptions.mode === 'markdown' ? 'markdown' : 'ocr';
-  const documentText = useOcr ? await extractDocumentText(document.filePath, undefined, {
+  const useDocumentText = useOcr || providerName(aiOptions) === 'ollama';
+  const documentText = useDocumentText ? await extractDocumentText(document.filePath, undefined, {
     mode: textMode,
     markdownServiceUrl: textOptions.markdownServiceUrl,
     fileName: document.originalName || document.fileName,
@@ -296,45 +333,37 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
   const requestConfig = openAIRequestConfig({
     model: documentType.extractionModel,
     reasoningEffort: documentType.extractionReasoningEffort,
+    aiProvider: aiOptions.aiProvider,
+    ollamaBaseUrl: aiOptions.ollamaBaseUrl,
+    ollamaModel: aiOptions.ollamaModel,
   });
-  const model = requestConfig.model;
-  const response = await withOpenAIRetry(() => client.responses.create({
-    ...requestConfig,
-    input: [
-      {
-        role: 'user',
-        content: [
-          ...(useOcr ? [] : [pdfInput(document.filePath)]),
-          {
-            type: 'input_text',
-            text: [
-              useOcr
-                ? `Extract values from this ${documentType.name} document using the ${textSourceLabel} below.`
-                : `Extract values from this ${documentType.name} PDF.`,
-              'Return JSON only. Do not include markdown.',
-              'If a value is missing, return an empty string and low confidence.',
-              'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
-              'Return this exact shape:',
-              '{"fields":[{"key":"field_key","value":"extracted value","confidence":0.92}]}',
-              `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
-              useOcr ? `Document text:\n${documentText}` : '',
-            ].join('\n'),
-          },
-        ],
-      },
-    ],
-    text: { format: { type: 'json_object' } },
-  }), `Extraction for document ${document._id || document.fileName}`);
+  const content = [
+    ...(useDocumentText || providerName(aiOptions) === 'ollama' ? [] : [pdfInput(document.filePath)]),
+    {
+      type: 'input_text',
+      text: [
+        useDocumentText
+          ? `Extract values from this ${documentType.name} document using the ${textSourceLabel} below.`
+          : `Extract values from this ${documentType.name} PDF.`,
+        'Return JSON only. Do not include markdown.',
+        'If a value is missing, return an empty string and low confidence.',
+        'For table fields, return an array of row objects. Each row object must contain only the column keys defined for that table in the schema.',
+        'Return this exact shape:',
+        '{"fields":[{"key":"field_key","value":"extracted value","confidence":0.92}]}',
+        `Schema: ${JSON.stringify(schemaForFields(selectedFields))}`,
+        useDocumentText ? `Document text:\n${documentText}` : '',
+      ].join('\n'),
+    },
+  ];
+  const response = await createJsonResponse(content, { ...aiOptions, model: requestConfig.model }, `Extraction for document ${document._id || document.fileName}`);
 
-  const parsed = parseJsonObject(response.output_text);
+  const parsed = parseJsonObject(response.outputText);
   let values = valuesFromParsedFields(parsed.fields || [], selectedFields);
-  let metrics = processingMetricsFromResponse(response, model);
+  let metrics = processingMetricsFromResponse(response.raw, response.model);
 
   if (documentType.extractionVerification) {
     const verification = await verifyExtractionWithOpenAI({
-      client,
-      requestConfig,
-      model,
+      aiOptions: { ...aiOptions, model: requestConfig.model },
       document,
       documentType,
       selectedFields,
@@ -347,9 +376,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
 
     if (verification.needsCorrection) {
       const correction = await correctExtractionWithOpenAI({
-        client,
-        requestConfig,
-        model,
+        aiOptions: { ...aiOptions, model: requestConfig.model },
         document,
         documentType,
         selectedFields,
@@ -398,6 +425,7 @@ async function extractQueuedDocument(message, context) {
 
   const configuration = await db.collection('configuration').findOne({});
   const {
+    aiOptions,
     reprocessOptions,
     useOcrForDocumentProcessing,
     documentTextMode,
@@ -432,7 +460,7 @@ async function extractQueuedDocument(message, context) {
       ...documentType,
       extractionModel: reprocessOptions.extractionModel || documentType.extractionModel,
     };
-    const extraction = await extractValuesWithOpenAI(localDocument, effectiveDocumentType, useOcrForDocumentProcessing, textOptions);
+    const extraction = await extractValuesWithOpenAI(localDocument, effectiveDocumentType, useOcrForDocumentProcessing, textOptions, aiOptions);
     const extractedData = await attachBoundingBoxes(
       localFilePath,
       extraction?.values ||

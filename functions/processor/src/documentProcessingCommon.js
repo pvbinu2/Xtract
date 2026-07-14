@@ -68,6 +68,14 @@ function processingOptionsFor(document, configuration = {}) {
     forceClassification: reprocessOptions.forceClassification === true,
     useOcrForDocumentProcessing,
     documentTextMode,
+    aiOptions: {
+      aiProvider: configuration?.aiProvider === 'ollama' ? 'ollama' : 'openai',
+      ollamaBaseUrl: configuration?.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+      ollamaModel: configuration?.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2',
+      embeddingProvider: configuration?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
+      embeddingModel: configuration?.embeddingModel || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
+      ollamaEmbeddingModel: configuration?.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
+    },
     textOptions: {
       mode: documentTextMode,
       markdownServiceUrl: configuration?.markdownServiceUrl,
