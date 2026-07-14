@@ -66,15 +66,18 @@ const defaultOllamaBaseUrl = 'http://127.0.0.1:11434';
 const defaultOllamaModel = 'llama3.2';
 const defaultOpenAIEmbeddingModel = 'text-embedding-3-small';
 const defaultOllamaEmbeddingModel = 'qwen3-embedding:4b';
+const openAIEmbeddingModelOptions = [
+  { value: 'text-embedding-3-small', label: 'Text Embedding 3 Small' },
+  { value: 'text-embedding-3-large', label: 'Text Embedding 3 Large' },
+  { value: 'text-embedding-ada-002', label: 'Text Embedding Ada 002' },
+];
 const openAIModelOptions = [
+  { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+  { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
   { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
   { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
   { value: 'gpt-5', label: 'GPT-5' },
-  { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
-  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'gpt-4.1', label: 'GPT-4.1' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'gpt-4o', label: 'GPT-4o' },
 ];
 const reasoningEffortOptions: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const displayCurrencyOptions = [
@@ -1987,11 +1990,19 @@ function ConfigurationScreen({
               ) : (
                 <label>
                   OpenAI embedding model
-                  <input
+                  <select
                     value={config.embeddingModel}
-                    placeholder={defaultOpenAIEmbeddingModel}
                     onChange={(event) => onConfigChange({ ...config, embeddingModel: event.target.value })}
-                  />
+                  >
+                    {config.embeddingModel && !openAIEmbeddingModelOptions.some((option) => option.value === config.embeddingModel) && (
+                      <option value={config.embeddingModel}>{config.embeddingModel}</option>
+                    )}
+                    {openAIEmbeddingModelOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               )}
             </div>
