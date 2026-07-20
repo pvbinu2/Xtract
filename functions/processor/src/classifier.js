@@ -297,6 +297,7 @@ function fallbackClassify(fileName, candidates, options = {}) {
     score: Number(scored[0].score.toFixed(2)),
     method: 'llm',
     model: 'mock',
+    justification: `Selected from the uploaded file name because it most closely matched the document type or category: ${scored[0].candidate.name}.`,
     classificationMetrics: emptyMetrics('mock'),
     embeddingMetrics: emptyMetrics(embeddingModelName(options)),
   };
@@ -628,8 +629,9 @@ async function classifyDocument(document, documentTypes, options = {}) {
           : 'Classify the uploaded PDF using trained document type profiles and metadata.',
         'Choose exactly one candidate document type. Return JSON only.',
         'The score must be a number from 0 to 1 representing match strength.',
+        'The justification must concisely identify the document evidence that supports the selected type.',
         'Return this exact shape:',
-        '{"documentTypeId":"candidate_id","score":0.92}',
+        '{"documentTypeId":"candidate_id","score":0.92,"justification":"Concise evidence-based reason for choosing this type"}',
         `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
         useDocumentText ? `Document text:\n${documentText}` : '',
         'Candidates:',
@@ -657,6 +659,9 @@ async function classifyDocument(document, documentTypes, options = {}) {
     score: Number(clampScore(parsed.score).toFixed(2)),
     method: 'llm',
     model: response.model,
+    justification: typeof parsed.justification === 'string' && parsed.justification.trim()
+      ? parsed.justification.trim().slice(0, 2000)
+      : `The LLM selected ${selected.name} as the closest match among the candidate document types.`,
     classificationMetrics,
     embeddingMetrics,
   };

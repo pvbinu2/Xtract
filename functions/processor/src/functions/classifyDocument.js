@@ -90,6 +90,7 @@ async function classifyQueuedDocument(message, context) {
           classificationScore: classification.score,
           classificationMethod: classification.method || 'llm',
           classificationModel: classification.model || 'unknown',
+          classificationJustification: classification.justification,
         };
         await documents.updateOne(
           { _id: document._id },

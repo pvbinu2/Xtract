@@ -190,7 +190,13 @@ function displaySampleName(fileName: string) {
   return parts[parts.length - 1] || fileName;
 }
 
-function ClassificationMethodIcon({ method }: { method?: IncomingDocument['classificationMethod'] }) {
+function ClassificationMethodIcon({
+  method,
+  onShowJustification,
+}: {
+  method?: IncomingDocument['classificationMethod'];
+  onShowJustification?: () => void;
+}) {
   if (method === 'vector') {
     return (
       <span className="method-icon vector" title="Vector classification" aria-label="Vector classification">
@@ -200,12 +206,61 @@ function ClassificationMethodIcon({ method }: { method?: IncomingDocument['class
   }
   if (method === 'llm') {
     return (
-      <span className="method-icon llm" title="LLM classification" aria-label="LLM classification">
+      <span
+        className={`method-icon llm${onShowJustification ? ' interactive' : ''}`}
+        title={onShowJustification ? 'Show LLM classification justification' : 'LLM classification'}
+        aria-label={onShowJustification ? 'Show LLM classification justification' : 'LLM classification'}
+        role={onShowJustification ? 'button' : undefined}
+        tabIndex={onShowJustification ? 0 : undefined}
+        onClick={onShowJustification ? (event) => {
+          event.stopPropagation();
+          onShowJustification();
+        } : undefined}
+        onKeyDown={onShowJustification ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            onShowJustification();
+          }
+        } : undefined}
+      >
         <BrainCircuit size={14} />
       </span>
     );
   }
   return null;
+}
+
+function ClassificationJustificationDialog({
+  document,
+  onClose,
+}: {
+  document: IncomingDocument;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="classification-justification-title" onClick={onClose}>
+      <section className="confirm-modal classification-justification-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2 id="classification-justification-title">Classification Justification</h2>
+            <p>{document.originalName}</p>
+          </div>
+          <button className="icon-button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="classification-justification-summary">
+          <span>Selected document type</span>
+          <strong>{document.category} / {document.documentTypeName}</strong>
+          <span>Model</span>
+          <strong>{displayModel(document.classificationModel)}</strong>
+          <span>Justification</span>
+          <p>{document.classificationJustification || 'No justification was recorded for this previously processed document.'}</p>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'] }) {
@@ -3175,6 +3230,7 @@ function DocumentList({
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyTarget, setReclassifyTarget] = useState<IncomingDocument | null>(null);
+  const [justificationTarget, setJustificationTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
@@ -3343,7 +3399,10 @@ function DocumentList({
               <span className={`pill ${doc.status}`}>{doc.status}</span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
-                <ClassificationMethodIcon method={doc.classificationMethod} />
+                <ClassificationMethodIcon
+                  method={doc.classificationMethod}
+                  onShowJustification={doc.classificationMethod === 'llm' ? () => setJustificationTarget(doc) : undefined}
+                />
               </span>
               <span className="processing-mode-badge">
                 <ProcessingModeIcon mode={doc.processingMode} />
@@ -3400,6 +3459,10 @@ function DocumentList({
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => deleteDocument(deleteTarget)}
         />
+      )}
+
+      {justificationTarget && (
+        <ClassificationJustificationDialog document={justificationTarget} onClose={() => setJustificationTarget(null)} />
       )}
 
       {reprocessTarget && (
@@ -3653,6 +3716,7 @@ function ValidationScreen({
   const [editingValueDraft, setEditingValueDraft] = useState('');
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
+  const [showClassificationJustification, setShowClassificationJustification] = useState(false);
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [showReprocessDialog, setShowReprocessDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
@@ -3880,7 +3944,10 @@ function ValidationScreen({
                 <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
                   {formatScore(document.classificationScore)}
                 </strong>
-                <ClassificationMethodIcon method={document.classificationMethod} />
+                <ClassificationMethodIcon
+                  method={document.classificationMethod}
+                  onShowJustification={document.classificationMethod === 'llm' ? () => setShowClassificationJustification(true) : undefined}
+                />
               </div>
               <div className="document-model-line">
                 <span>Classification: {displayModel(document.classificationModel)}</span>
@@ -4118,6 +4185,10 @@ function ValidationScreen({
           onConfirm={reprocess}
         />
       )}
+      {showClassificationJustification && document && (
+        <ClassificationJustificationDialog document={document} onClose={() => setShowClassificationJustification(false)} />
+      )}
+
       {showReclassifyDialog && document && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowReclassifyDialog(false)}>
           <section className="confirm-modal" onClick={(e) => e.stopPropagation()}>
