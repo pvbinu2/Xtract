@@ -106,9 +106,21 @@ Successful response shape:
 {
   "engine": "docling",
   "fileName": "invoice.pdf",
-  "markdown": "# ..."
+  "markdown": "# ...",
+  "elements": [
+    {
+      "text": "Invoice number INV-10425",
+      "page": 0,
+      "x": 0.12,
+      "y": 0.18,
+      "width": 0.31,
+      "height": 0.03
+    }
+  ]
 }
 ```
+
+The optional `elements` array contains normalized Docling provenance coordinates used to highlight extracted values. OCR mode similarly retains Tesseract TSV word coordinates for scanned PDFs.
 
 The mock downstream API includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL, show rendered markdown, and download the markdown output.
 

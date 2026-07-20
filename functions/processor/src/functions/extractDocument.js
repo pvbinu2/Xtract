@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
-const { extractDocumentText } = require('../documentText');
+const { extractDocumentContent, extractDocumentText } = require('../documentText');
 const { withOpenAIRetry } = require('../openaiRetry');
 const {
   ObjectId,
@@ -327,11 +327,12 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const textMode = textOptions.mode === 'markdown' ? 'markdown' : 'ocr';
   const useDocumentText = useOcr || providerName(aiOptions) === 'ollama';
-  const documentText = useDocumentText ? await extractDocumentText(document.filePath, undefined, {
+  const documentContent = useDocumentText ? await extractDocumentContent(document.filePath, undefined, {
     mode: textMode,
     markdownServiceUrl: textOptions.markdownServiceUrl,
     fileName: document.originalName || document.fileName,
-  }) : '';
+  }) : { text: '', spatialItems: [] };
+  const documentText = documentContent.text;
   const textSourceLabel = textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text';
   const requestConfig = openAIRequestConfig({
     model: documentType.extractionModel,
@@ -397,6 +398,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
   return {
     values,
     metrics,
+    spatialItems: documentContent.spatialItems,
   };
 }
 
@@ -481,6 +483,7 @@ async function extractQueuedDocument(message, context) {
             : mockValue(field.label, field.type, index),
           confidence: Number((0.82 + Math.min(index, 8) * 0.015).toFixed(2)),
         })),
+      extraction?.spatialItems || [],
     );
 
     const processingMetrics = extraction?.metrics || {
