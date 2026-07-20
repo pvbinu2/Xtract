@@ -152,8 +152,16 @@ async function extractDocumentText(filePath, limit = Number(process.env.DOCUMENT
   return (await extractDocumentContent(filePath, limit, options)).text;
 }
 
+async function extractDocumentSpatialItems(filePath) {
+  const minTextLength = Number(process.env.OCR_MIN_TEXT_LENGTH || 80);
+  const embeddedText = await extractPdfText(filePath);
+  if (embeddedText.trim().length >= minTextLength) return [];
+  return (await ocrPdfContent(filePath)).spatialItems;
+}
+
 module.exports = {
   extractDocumentContent,
+  extractDocumentSpatialItems,
   extractDocumentText,
   extractPdfText,
 };

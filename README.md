@@ -122,6 +122,8 @@ Successful response shape:
 
 The optional `elements` array contains normalized Docling provenance coordinates used to highlight extracted values. OCR mode similarly retains Tesseract TSV word coordinates for scanned PDFs.
 
+Bounding-box generation is independent of the selected model input mode. If a PDF has no usable embedded text layer and no Docling coordinates, the processor automatically runs Tesseract TSV to obtain word-level coordinates, including when the model processes the PDF directly.
+
 The mock downstream API includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL, show rendered markdown, and download the markdown output.
 
 ### Reclassification and Reprocessing

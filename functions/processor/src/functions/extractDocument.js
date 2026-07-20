@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
-const { extractDocumentContent, extractDocumentText } = require('../documentText');
+const { extractDocumentContent, extractDocumentSpatialItems, extractDocumentText } = require('../documentText');
 const { withOpenAIRetry } = require('../openaiRetry');
 const {
   ObjectId,
@@ -395,10 +395,14 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
     }
   }
 
+  const spatialItems = documentContent.spatialItems.length
+    ? documentContent.spatialItems
+    : await extractDocumentSpatialItems(document.filePath);
+
   return {
     values,
     metrics,
-    spatialItems: documentContent.spatialItems,
+    spatialItems,
   };
 }
 
