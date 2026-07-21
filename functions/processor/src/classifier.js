@@ -3,7 +3,10 @@ const path = require('path');
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { withOpenAIRetry } = require('./openaiRetry');
+const { QdrantVectorDatabase } = require('@xtract/common');
 const { TRAIN_CONTAINER, downloadToTemp, isConfigured: isBlobStorageConfigured, removeTempFile } = require('./blobStorage');
+
+const vectorDatabase = new QdrantVectorDatabase();
 const { extractDocumentText } = require('./documentText');
 
 let openai;
@@ -190,14 +193,6 @@ function vectorSize() {
   return Number(process.env.VECTOR_SIZE || 1536);
 }
 
-function qdrantUrl() {
-  return (process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
-}
-
-function qdrantCollection() {
-  return process.env.QDRANT_COLLECTION || 'xtract_document_classifier';
-}
-
 function vectorScoreThreshold() {
   return Number(process.env.CLASSIFIER_VECTOR_SCORE_THRESHOLD || 0.82);
 }
@@ -324,69 +319,12 @@ function chunkText(text, maxChars = embeddingTextLimit(), maxChunks = maxTrainCh
   return chunks;
 }
 
-async function qdrantRequest(pathname, options = {}) {
-  const response = await fetch(`${qdrantUrl()}${pathname}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Qdrant request failed: ${response.status} ${message}`);
-  }
-  return response.status === 204 ? undefined : response.json();
-}
-
-function vectorSizeFromCollection(payload) {
-  const vectors = payload?.result?.config?.params?.vectors;
-  if (typeof vectors?.size === 'number') return vectors.size;
-  if (typeof vectors?.default?.size === 'number') return vectors.default.size;
-  if (vectors && typeof vectors === 'object') {
-    const firstVector = Object.values(vectors).find((value) => value && typeof value === 'object' && typeof value.size === 'number');
-    if (firstVector) return firstVector.size;
-  }
-  return undefined;
-}
-
 async function ensureVectorCollection(size = vectorSize()) {
-  const collection = qdrantCollection();
-  const response = await fetch(`${qdrantUrl()}/collections/${collection}`);
-  if (response.ok) {
-    const payload = await response.json();
-    const existingSize = vectorSizeFromCollection(payload);
-    if (!existingSize || existingSize === size) return;
-    throw new Error(
-      `Qdrant collection ${collection} uses ${existingSize}-dimension vectors, but the configured embedding model returned ${size}. Reset classifier training after changing embedding models.`,
-    );
-  }
-  const createResponse = await fetch(`${qdrantUrl()}/collections/${collection}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      vectors: {
-        size,
-        distance: 'Cosine',
-      },
-    }),
-  });
-  if (createResponse.ok || createResponse.status === 409) return;
-  const message = await createResponse.text();
-  throw new Error(`Qdrant request failed: ${createResponse.status} ${message}`);
+  return vectorDatabase.ensureCollection(size);
 }
 
 async function resetClassifierVectors() {
-  const collection = qdrantCollection();
-  let response;
-  try {
-    response = await fetch(`${qdrantUrl()}/collections/${collection}`, { method: 'DELETE' });
-  } catch (error) {
-    throw new Error(`Could not reach Qdrant at ${qdrantUrl()}: ${error?.message || String(error)}`);
-  }
-  if (response.ok || response.status === 404) return;
-  const message = await response.text();
-  throw new Error(`Qdrant collection reset failed: ${response.status} ${message}`);
+  return vectorDatabase.resetCollection();
 }
 
 async function embedText(text, options = {}) {
@@ -426,19 +364,8 @@ async function embedText(text, options = {}) {
 }
 
 async function deleteDocumentTypeVectors(documentTypeId) {
-  const collectionResponse = await fetch(`${qdrantUrl()}/collections/${qdrantCollection()}`);
-  if (collectionResponse.status === 404) return;
-  if (!collectionResponse.ok) {
-    const message = await collectionResponse.text();
-    throw new Error(`Qdrant request failed: ${collectionResponse.status} ${message}`);
-  }
-  await qdrantRequest(`/collections/${qdrantCollection()}/points/delete`, {
-    method: 'POST',
-    body: JSON.stringify({
-      filter: {
-        must: [{ key: 'documentTypeId', match: { value: String(documentTypeId) } }],
-      },
-    }),
+  await vectorDatabase.deleteByFilter({
+    must: [{ key: 'documentTypeId', match: { value: String(documentTypeId) } }],
   });
 }
 
@@ -483,10 +410,7 @@ async function upsertDocumentTypeVectors(documentType, samples, options = {}) {
   }
 
   if (!points.length) return;
-  await qdrantRequest(`/collections/${qdrantCollection()}/points?wait=true`, {
-    method: 'PUT',
-    body: JSON.stringify({ points }),
-  });
+  await vectorDatabase.upsert(points);
 }
 
 async function searchDocumentTypeVectors(document, textOptions = {}, options = {}) {
@@ -509,16 +433,9 @@ async function searchDocumentTypeVectors(document, textOptions = {}, options = {
       await ensureVectorCollection(ensuredVectorSize);
     }
     embeddingMetrics = addMetrics(embeddingMetrics, embedded.metrics);
-    const response = await qdrantRequest(`/collections/${qdrantCollection()}/points/search`, {
-      method: 'POST',
-      body: JSON.stringify({
-        vector: embedded.embedding,
-        limit: Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5),
-        with_payload: true,
-      }),
-    });
+    const hits = await vectorDatabase.search(embedded.embedding, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5));
 
-    for (const hit of response.result || []) {
+    for (const hit of hits) {
       const existing = hitsByPoint.get(hit.id);
       if (!existing || hit.score > existing.score) hitsByPoint.set(hit.id, hit);
     }

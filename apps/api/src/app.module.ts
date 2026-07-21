@@ -7,11 +7,12 @@ import { ConfigurationModule } from './configuration/configuration.module';
 import { DemoRequestsModule } from './demo-requests/demo-requests.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { MongoDatabase } from '@xtract/common';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    MongooseModule.forRoot(process.env.MONGODB_URI ?? 'mongodb://localhost:27017/xtract'),
+    MongooseModule.forRoot(MongoDatabase.resolveUri()),
     AuthModule,
     UsersModule,
     DocumentTypesModule,

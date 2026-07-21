@@ -1,15 +1,9 @@
 const fs = require('fs');
-const { MongoClient, ObjectId } = require('mongodb');
+const { MongoDatabase, ObjectId } = require('@xtract/common');
 const { downloadToTemp, removeTempFile } = require('./blobStorage');
 
-let clientPromise;
-
-function getClient() {
-  if (!clientPromise) {
-    clientPromise = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017/xtract').connect();
-  }
-  return clientPromise;
-}
+const database = new MongoDatabase();
+const getClient = () => database.connect();
 
 function resolveMessage(message) {
   if (typeof message === 'string') {

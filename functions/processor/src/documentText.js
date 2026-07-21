@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const { OcrService } = require('@xtract/common');
 
 const execFileAsync = promisify(execFile);
 let pdfjsPromise;
@@ -134,19 +135,14 @@ async function extractMarkdownContent(filePath, options = {}) {
 }
 
 async function extractDocumentContent(filePath, limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000), options = {}) {
-  if (options.mode === 'markdown') {
-    const content = await extractMarkdownContent(filePath, options);
-    return { ...content, text: content.text.replace(/\s+\n/g, '\n').trim().slice(0, limit) };
-  }
-
-  const minTextLength = Number(process.env.OCR_MIN_TEXT_LENGTH || 80);
-  const embeddedText = await extractPdfText(filePath);
-  if (embeddedText.trim().length >= minTextLength) {
-    return { text: embeddedText.replace(/\s+\n/g, '\n').trim().slice(0, limit), spatialItems: [] };
-  }
-  const content = await ocrPdfContent(filePath);
-  return { ...content, text: content.text.replace(/\s+\n/g, '\n').trim().slice(0, limit) };
+  return documentTextService.extract(filePath, limit, options);
 }
+
+const documentTextService = new OcrService({
+  extractEmbeddedText: extractPdfText,
+  extractOcrContent: ocrPdfContent,
+  extractMarkdownContent,
+});
 
 async function extractDocumentText(filePath, limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000), options = {}) {
   return (await extractDocumentContent(filePath, limit, options)).text;
