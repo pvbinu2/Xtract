@@ -15,6 +15,10 @@ function normalizeText(value) {
   return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase().replace(/,/g, '');
 }
 
+function normalizeSpatialText(value) {
+  return normalizeText(String(value || '')).replace(/[^\p{L}\p{N}]/gu, '');
+}
+
 function scalarStrings(value) {
   if (value === null || value === undefined) return [];
   if (Array.isArray(value) || typeof value === 'object') return [];
@@ -58,12 +62,15 @@ function mergeMatchedBoxes(items) {
 }
 
 function findSpatialMatch(value, items) {
-  const target = normalizeText(String(value));
+  // OCR commonly inserts/removes spaces and punctuation (for example
+  // "BINUPV" vs "BINU PV" or "KL-36" vs "KL 36"). Compare a compact
+  // Unicode alphanumeric form while retaining the original word boxes.
+  const target = normalizeSpatialText(value);
   if (!target) return [];
 
   const direct = items.find((item) => {
-    const text = normalizeText(item.text || '');
-    return text === target || (target.length >= 3 && ` ${text} `.includes(` ${target} `));
+    const text = normalizeSpatialText(item.text);
+    return text === target || (target.length >= 3 && text.includes(target));
   });
   if (direct) return [enclosingBox([direct])];
 
@@ -74,7 +81,7 @@ function findSpatialMatch(value, items) {
     for (let end = start; end < Math.min(items.length, start + 30); end += 1) {
       const item = items[end];
       if (item.page !== items[start].page) break;
-      combined = normalizeText(`${combined} ${item.text || ''}`);
+      combined += normalizeSpatialText(item.text);
       matched.push(item);
       if (combined === target) return mergeMatchedBoxes(matched);
       if (combined.length > target.length + 20 || !target.startsWith(combined)) break;

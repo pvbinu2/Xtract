@@ -395,9 +395,15 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
     }
   }
 
-  const spatialItems = documentContent.spatialItems.length
-    ? documentContent.spatialItems
-    : await extractDocumentSpatialItems(document.filePath);
+  // Docling can return a small subset of positioned elements for scanned PDFs.
+  // That partial result previously prevented the full Tesseract spatial pass,
+  // leaving most extracted fields without validation-page bounding boxes.
+  // Prefer OCR positions in markdown mode and retain Docling positions as a
+  // fallback for values that OCR did not recognize.
+  const ocrSpatialItems = textMode === 'markdown' || !documentContent.spatialItems.length
+    ? await extractDocumentSpatialItems(document.filePath)
+    : [];
+  const spatialItems = [...ocrSpatialItems, ...documentContent.spatialItems];
 
   return {
     values,
