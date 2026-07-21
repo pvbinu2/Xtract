@@ -122,6 +122,9 @@ export class IncomingDocument {
   classificationModel?: string;
 
   @Prop()
+  classificationJustification?: string;
+
+  @Prop()
   processingMode?: 'ocr' | 'pdf' | 'markdown';
 
   @Prop({ default: 'uploaded' })

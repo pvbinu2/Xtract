@@ -1416,6 +1416,36 @@ textarea {
   color: #92400e;
 }
 
+.method-icon.interactive {
+  cursor: pointer;
+}
+
+.method-icon.interactive:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.classification-justification-modal {
+  max-width: 620px;
+}
+
+.classification-justification-summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px 18px;
+}
+
+.classification-justification-summary > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.classification-justification-summary > p {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .processing-mode-badge {
   display: inline-flex;
   align-items: center;

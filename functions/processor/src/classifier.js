@@ -18,12 +18,24 @@ function modelName() {
   return process.env.OPENAI_MODEL || 'gpt-5-nano';
 }
 
+function providerName(options = {}) {
+  return options.aiProvider === 'ollama' ? 'ollama' : 'openai';
+}
+
+function ollamaModelName(options = {}) {
+  return options.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2';
+}
+
+function ollamaBaseUrl(options = {}) {
+  return (options.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+}
+
 function supportsReasoningEffort(model) {
   return /^(gpt-5|o\d|o\d-)/.test(model);
 }
 
 function openAIRequestConfig(options = {}) {
-  const model = options.model || modelName();
+  const model = providerName(options) === 'ollama' ? ollamaModelName(options) : options.model || modelName();
   return {
     model,
     ...(options.reasoningEffort && supportsReasoningEffort(model)
@@ -32,8 +44,57 @@ function openAIRequestConfig(options = {}) {
   };
 }
 
-function embeddingModelName() {
-  return process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+async function createJsonResponse(content, options = {}, label = 'AI request') {
+  if (providerName(options) === 'ollama') {
+    const model = ollamaModelName(options);
+    const response = await fetch(`${ollamaBaseUrl(options)}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: 'json',
+        messages: [{
+          role: 'user',
+          content: content.map((item) => typeof item.text === 'string' ? item.text : '').filter(Boolean).join('\n'),
+        }],
+      }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`Ollama request failed (${response.status}): ${message || response.statusText}`);
+    }
+    const payload = await response.json();
+    return {
+      outputText: payload?.message?.content || payload?.response || '',
+      raw: payload,
+      model: payload?.model || model,
+    };
+  }
+
+  const client = getOpenAI();
+  if (!client) return undefined;
+  const requestConfig = openAIRequestConfig(options);
+  const response = await withOpenAIRetry(() => client.responses.create({
+    ...requestConfig,
+    input: [{ role: 'user', content }],
+    text: { format: { type: 'json_object' } },
+  }), label);
+  return {
+    outputText: response.output_text,
+    raw: response,
+    model: requestConfig.model,
+  };
+}
+
+function embeddingProviderName(options = {}) {
+  return options.embeddingProvider === 'ollama' ? 'ollama' : 'openai';
+}
+
+function embeddingModelName(options = {}) {
+  return embeddingProviderName(options) === 'ollama'
+    ? options.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b'
+    : options.embeddingModel || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
 }
 
 const modelPricingUsdPerMillion = {
@@ -42,6 +103,9 @@ const modelPricingUsdPerMillion = {
   'gpt-4.1': { input: 2.00, output: 8.00 },
   'gpt-4.1-mini': { input: 0.40, output: 1.60 },
   'gpt-4.1-nano': { input: 0.10, output: 0.40 },
+  'gpt-5.6-sol': { input: 5.00, output: 30.00 },
+  'gpt-5.6-terra': { input: 2.50, output: 15.00 },
+  'gpt-5.6-luna': { input: 1.00, output: 6.00 },
   'gpt-5': { input: 1.25, output: 10.00 },
   'gpt-5-mini': { input: 0.25, output: 2.00 },
   'gpt-5-nano': { input: 0.05, output: 0.40 },
@@ -65,8 +129,8 @@ function pricingForEmbeddingModel(model) {
 
 function tokenUsageFromResponse(response) {
   const usage = response?.usage || {};
-  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
-  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? response?.prompt_eval_count ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? response?.eval_count ?? 0);
   const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
 
   return {
@@ -212,7 +276,7 @@ function fallbackProfile(documentType, sampleFileName) {
     .join('\n');
 }
 
-function fallbackClassify(fileName, candidates) {
+function fallbackClassify(fileName, candidates, options = {}) {
   const normalized = fileName.toLowerCase();
   const scored = candidates.map((candidate) => {
     const name = candidate.name.toLowerCase();
@@ -233,8 +297,9 @@ function fallbackClassify(fileName, candidates) {
     score: Number(scored[0].score.toFixed(2)),
     method: 'llm',
     model: 'mock',
+    justification: `Selected from the uploaded file name because it most closely matched the document type or category: ${scored[0].candidate.name}.`,
     classificationMetrics: emptyMetrics('mock'),
-    embeddingMetrics: emptyMetrics(embeddingModelName()),
+    embeddingMetrics: emptyMetrics(embeddingModelName(options)),
   };
 }
 
@@ -274,16 +339,34 @@ async function qdrantRequest(pathname, options = {}) {
   return response.status === 204 ? undefined : response.json();
 }
 
-async function ensureVectorCollection() {
+function vectorSizeFromCollection(payload) {
+  const vectors = payload?.result?.config?.params?.vectors;
+  if (typeof vectors?.size === 'number') return vectors.size;
+  if (typeof vectors?.default?.size === 'number') return vectors.default.size;
+  if (vectors && typeof vectors === 'object') {
+    const firstVector = Object.values(vectors).find((value) => value && typeof value === 'object' && typeof value.size === 'number');
+    if (firstVector) return firstVector.size;
+  }
+  return undefined;
+}
+
+async function ensureVectorCollection(size = vectorSize()) {
   const collection = qdrantCollection();
   const response = await fetch(`${qdrantUrl()}/collections/${collection}`);
-  if (response.ok) return;
+  if (response.ok) {
+    const payload = await response.json();
+    const existingSize = vectorSizeFromCollection(payload);
+    if (!existingSize || existingSize === size) return;
+    throw new Error(
+      `Qdrant collection ${collection} uses ${existingSize}-dimension vectors, but the configured embedding model returned ${size}. Reset classifier training after changing embedding models.`,
+    );
+  }
   const createResponse = await fetch(`${qdrantUrl()}/collections/${collection}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       vectors: {
-        size: vectorSize(),
+        size,
         distance: 'Cosine',
       },
     }),
@@ -306,10 +389,32 @@ async function resetClassifierVectors() {
   throw new Error(`Qdrant collection reset failed: ${response.status} ${message}`);
 }
 
-async function embedText(text) {
+async function embedText(text, options = {}) {
+  const model = embeddingModelName(options);
+  if (embeddingProviderName(options) === 'ollama') {
+    const response = await fetch(`${ollamaBaseUrl(options)}/api/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        input: text || 'empty document',
+      }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`Ollama embedding request failed (${response.status}): ${message || response.statusText}`);
+    }
+    const payload = await response.json();
+    const embedding = Array.isArray(payload?.embeddings?.[0]) ? payload.embeddings[0] : payload?.embedding;
+    if (!Array.isArray(embedding)) throw new Error(`Ollama embedding response did not include an embedding for ${model}.`);
+    return {
+      embedding,
+      metrics: embeddingMetricsFromResponse(payload, payload?.model || model),
+    };
+  }
+
   const client = getOpenAI();
   if (!client) throw new Error('OPENAI_API_KEY is required to create classifier embeddings.');
-  const model = embeddingModelName();
   const response = await withOpenAIRetry(() => client.embeddings.create({
     model,
     input: text || 'empty document',
@@ -321,7 +426,12 @@ async function embedText(text) {
 }
 
 async function deleteDocumentTypeVectors(documentTypeId) {
-  await ensureVectorCollection();
+  const collectionResponse = await fetch(`${qdrantUrl()}/collections/${qdrantCollection()}`);
+  if (collectionResponse.status === 404) return;
+  if (!collectionResponse.ok) {
+    const message = await collectionResponse.text();
+    throw new Error(`Qdrant request failed: ${collectionResponse.status} ${message}`);
+  }
   await qdrantRequest(`/collections/${qdrantCollection()}/points/delete`, {
     method: 'POST',
     body: JSON.stringify({
@@ -332,9 +442,9 @@ async function deleteDocumentTypeVectors(documentTypeId) {
   });
 }
 
-async function upsertDocumentTypeVectors(documentType, samples) {
-  await ensureVectorCollection();
+async function upsertDocumentTypeVectors(documentType, samples, options = {}) {
   const points = [];
+  let ensuredVectorSize = 0;
 
   for (const sampleFileName of samples) {
     const filePath = await resolveSamplePath(sampleFileName);
@@ -350,9 +460,14 @@ async function upsertDocumentTypeVectors(documentType, samples) {
 
       const chunks = chunkText(text);
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+        const embedded = await embedText(chunks[chunkIndex], options);
+        if (!ensuredVectorSize) {
+          ensuredVectorSize = embedded.embedding.length;
+          await ensureVectorCollection(ensuredVectorSize);
+        }
         points.push({
           id: pointId(documentType._id, sampleFileName, chunkIndex),
-          vector: (await embedText(chunks[chunkIndex])).embedding,
+          vector: embedded.embedding,
           payload: {
             documentTypeId: String(documentType._id),
             documentTypeName: documentType.name,
@@ -374,8 +489,7 @@ async function upsertDocumentTypeVectors(documentType, samples) {
   });
 }
 
-async function searchDocumentTypeVectors(document, textOptions = {}) {
-  await ensureVectorCollection();
+async function searchDocumentTypeVectors(document, textOptions = {}, options = {}) {
   const text = await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
     ...textOptions,
     fileName: document.originalName || document.fileName,
@@ -385,10 +499,15 @@ async function searchDocumentTypeVectors(document, textOptions = {}) {
     text,
   ].join('\n'), embeddingTextLimit(), maxQueryChunksPerDocument());
   const hitsByPoint = new Map();
-  let embeddingMetrics = emptyMetrics(embeddingModelName());
+  let embeddingMetrics = emptyMetrics(embeddingModelName(options));
+  let ensuredVectorSize = 0;
 
   for (const chunk of chunks) {
-    const embedded = await embedText(chunk);
+    const embedded = await embedText(chunk, options);
+    if (!ensuredVectorSize) {
+      ensuredVectorSize = embedded.embedding.length;
+      await ensureVectorCollection(ensuredVectorSize);
+    }
     embeddingMetrics = addMetrics(embeddingMetrics, embedded.metrics);
     const response = await qdrantRequest(`/collections/${qdrantCollection()}/points/search`, {
       method: 'POST',
@@ -411,14 +530,17 @@ async function searchDocumentTypeVectors(document, textOptions = {}) {
   };
 }
 
-async function trainClassifierProfile(documentType, sampleFileName) {
+async function trainClassifierProfile(documentType, sampleFileName, options = {}) {
   const samples = existingSamples(documentType);
   if (!samples.length) {
     throw new Error(`Training sample file not found for ${documentType.name}`);
   }
 
-  await deleteDocumentTypeVectors(documentType._id);
-  await upsertDocumentTypeVectors(documentType, samples);
+  const embeddingsEnabled = embeddingProviderName(options) === 'ollama' || Boolean(process.env.OPENAI_API_KEY);
+  if (embeddingsEnabled) {
+    await deleteDocumentTypeVectors(documentType._id);
+    await upsertDocumentTypeVectors(documentType, samples, options);
+  }
 
   const latestSample = sampleFileName || samples.at(-1);
   const latestSamplePath = await resolveSamplePath(latestSample);
@@ -426,7 +548,9 @@ async function trainClassifierProfile(documentType, sampleFileName) {
     const sampleText = await extractDocumentText(latestSamplePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
     return [
       fallbackProfile(documentType, latestSample),
-      `Training samples indexed: ${samples.length}`,
+      embeddingsEnabled
+        ? `Training samples indexed with ${embeddingProviderName(options) === 'ollama' ? 'Ollama' : 'OpenAI'} embeddings: ${samples.length}`
+        : `Training samples profiled without embeddings: ${samples.length}`,
       `Sample text preview: ${sampleText.slice(0, Number(process.env.CLASSIFIER_PROFILE_TEXT_LIMIT || 2000))}`,
     ].join('\n');
   } finally {
@@ -450,10 +574,10 @@ async function classifyDocument(document, documentTypes, options = {}) {
     markdownServiceUrl: options.markdownServiceUrl,
   };
   let vectorHits = [];
-  let embeddingMetrics = emptyMetrics(embeddingModelName());
-  if (useOcr) {
+  let embeddingMetrics = emptyMetrics(embeddingModelName(options));
+  if (useOcr && (embeddingProviderName(options) === 'ollama' || process.env.OPENAI_API_KEY)) {
     try {
-      const vectorSearch = await searchDocumentTypeVectors(document, textOptions);
+      const vectorSearch = await searchDocumentTypeVectors(document, textOptions, options);
       vectorHits = vectorSearch.hits;
       embeddingMetrics = vectorSearch.metrics;
     } catch (error) {
@@ -469,14 +593,13 @@ async function classifyDocument(document, documentTypes, options = {}) {
       documentType: vectorDocumentType,
       score: Number(clampScore(topHit.score).toFixed(2)),
       method: 'vector',
-      model: embeddingModelName(),
+      model: embeddingModelName(options),
       classificationMetrics: emptyMetrics('vector'),
       embeddingMetrics,
     };
   }
 
-  const client = getOpenAI();
-  if (!client) return fallbackClassify(document.originalName || document.fileName || '', candidates);
+  if (providerName(options) === 'openai' && !getOpenAI()) return fallbackClassify(document.originalName || document.fileName || '', candidates, options);
 
   const retrievedIds = new Set(vectorHits.map((hit) => hit.payload?.documentTypeId).filter(Boolean));
   const llmCandidates = [
@@ -484,28 +607,33 @@ async function classifyDocument(document, documentTypes, options = {}) {
     ...candidates.filter((candidate) => !retrievedIds.has(String(candidate._id))),
   ].slice(0, Number(process.env.CLASSIFIER_LLM_CANDIDATE_LIMIT || 8));
 
-  const documentText = useOcr ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
+  const useDocumentText = useOcr || providerName(options) === 'ollama';
+  const documentText = useDocumentText ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
     ...textOptions,
     fileName: document.originalName || document.fileName,
   }) : '';
   const requestConfig = openAIRequestConfig({
     model: options.model,
     reasoningEffort: options.reasoningEffort,
+    aiProvider: options.aiProvider,
+    ollamaBaseUrl: options.ollamaBaseUrl,
+    ollamaModel: options.ollamaModel,
   });
   const content = [
-    ...(useOcr ? [] : [pdfInput(document.filePath)]),
+    ...(useDocumentText || providerName(options) === 'ollama' ? [] : [pdfInput(document.filePath)]),
     {
       type: 'input_text',
       text: [
-        useOcr
+        useDocumentText
           ? `Classify the uploaded document using ${textOptions.mode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text'}, trained document type profiles, and metadata.`
           : 'Classify the uploaded PDF using trained document type profiles and metadata.',
         'Choose exactly one candidate document type. Return JSON only.',
         'The score must be a number from 0 to 1 representing match strength.',
+        'The justification must concisely identify the document evidence that supports the selected type.',
         'Return this exact shape:',
-        '{"documentTypeId":"candidate_id","score":0.92}',
+        '{"documentTypeId":"candidate_id","score":0.92,"justification":"Concise evidence-based reason for choosing this type"}',
         `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
-        useOcr ? `Document text:\n${documentText}` : '',
+        useDocumentText ? `Document text:\n${documentText}` : '',
         'Candidates:',
         ...llmCandidates.map((candidate, index) => (
           `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`
@@ -517,20 +645,23 @@ async function classifyDocument(document, documentTypes, options = {}) {
     },
   ];
 
-  const response = await withOpenAIRetry(() => client.responses.create({
-    ...requestConfig,
-    input: [{ role: 'user', content }],
-    text: { format: { type: 'json_object' } },
-  }), `Classifier LLM fallback for ${document._id || document.fileName}`);
-  const classificationMetrics = metricsFromResponse(response, requestConfig.model);
+  const response = await createJsonResponse(content, {
+    ...options,
+    model: requestConfig.model,
+  }, `Classifier LLM fallback for ${document._id || document.fileName}`);
+  if (!response) return fallbackClassify(document.originalName || document.fileName || '', candidates, options);
+  const classificationMetrics = metricsFromResponse(response.raw, response.model);
 
-  const parsed = parseJsonObject(response.output_text);
+  const parsed = parseJsonObject(response.outputText);
   const selected = llmCandidates.find((candidate) => String(candidate._id) === parsed.documentTypeId) || llmCandidates[0];
   return {
     documentType: selected,
     score: Number(clampScore(parsed.score).toFixed(2)),
     method: 'llm',
-    model: requestConfig.model,
+    model: response.model,
+    justification: typeof parsed.justification === 'string' && parsed.justification.trim()
+      ? parsed.justification.trim().slice(0, 2000)
+      : `The LLM selected ${selected.name} as the closest match among the candidate document types.`,
     classificationMetrics,
     embeddingMetrics,
   };

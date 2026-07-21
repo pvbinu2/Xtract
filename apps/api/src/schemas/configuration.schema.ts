@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export type ConfigurationDocument = Configuration & Document;
+export type AiProvider = 'openai' | 'ollama';
 
 @Schema({ collection: 'configuration' })
 export class Configuration {
@@ -22,6 +23,24 @@ export class Configuration {
 
   @Prop({ default: '' })
   markdownServiceUrl!: string;
+
+  @Prop({ default: 'openai' })
+  aiProvider!: AiProvider;
+
+  @Prop({ default: 'http://127.0.0.1:11434' })
+  ollamaBaseUrl!: string;
+
+  @Prop({ default: 'llama3.2' })
+  ollamaModel!: string;
+
+  @Prop({ default: 'openai' })
+  embeddingProvider!: AiProvider;
+
+  @Prop({ default: 'text-embedding-3-small' })
+  embeddingModel!: string;
+
+  @Prop({ default: 'qwen3-embedding:4b' })
+  ollamaEmbeddingModel!: string;
 
   @Prop({ default: 'gpt-5-nano' })
   classificationModel!: string;

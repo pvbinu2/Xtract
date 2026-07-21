@@ -36,6 +36,7 @@ async function classifyQueuedDocument(message, context) {
 
   const configuration = await db.collection('configuration').findOne({});
   const {
+    aiOptions,
     forceClassification,
     useOcrForDocumentProcessing,
     textOptions,
@@ -72,6 +73,7 @@ async function classifyQueuedDocument(message, context) {
       try {
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
         const classification = await classifyDocument(localDocument, allDocumentTypes, {
+          ...aiOptions,
           useOcr: useOcrForDocumentProcessing,
           model: configuration?.classificationModel,
           reasoningEffort: configuration?.classificationReasoningEffort,
@@ -88,6 +90,7 @@ async function classifyQueuedDocument(message, context) {
           classificationScore: classification.score,
           classificationMethod: classification.method || 'llm',
           classificationModel: classification.model || 'unknown',
+          classificationJustification: classification.justification,
         };
         await documents.updateOne(
           { _id: document._id },

@@ -23,6 +23,12 @@ export class ConfigurationController {
       useOcrForDocumentProcessing?: boolean;
       documentTextMode?: 'ocr' | 'markdown';
       markdownServiceUrl?: string;
+      aiProvider?: 'openai' | 'ollama';
+      ollamaBaseUrl?: string;
+      ollamaModel?: string;
+      embeddingProvider?: 'openai' | 'ollama';
+      embeddingModel?: string;
+      ollamaEmbeddingModel?: string;
       classificationModel?: string;
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     },

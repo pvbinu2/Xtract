@@ -26,7 +26,17 @@ async function trainClassifier(message, context) {
   const payload = resolveMessage(message);
 
   const client = await getClient();
-  const documentTypes = client.db().collection('documenttypes');
+  const db = client.db();
+  const documentTypes = db.collection('documenttypes');
+  const configuration = await db.collection('configuration').findOne({});
+  const aiOptions = {
+    aiProvider: configuration?.aiProvider === 'ollama' ? 'ollama' : 'openai',
+    ollamaBaseUrl: configuration?.ollamaBaseUrl,
+    ollamaModel: configuration?.ollamaModel,
+    embeddingProvider: configuration?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
+    embeddingModel: configuration?.embeddingModel,
+    ollamaEmbeddingModel: configuration?.ollamaEmbeddingModel,
+  };
 
   if (payload.trainAll) {
     const includedTypes = await documentTypes
@@ -62,7 +72,7 @@ async function trainClassifier(message, context) {
 
     for (const documentType of includedTypes) {
       try {
-        const profile = await trainClassifierProfile(documentType, (documentType.sampleFiles || []).at(-1));
+        const profile = await trainClassifierProfile(documentType, (documentType.sampleFiles || []).at(-1), aiOptions);
         await documentTypes.updateOne(
           { _id: documentType._id },
           {
@@ -106,7 +116,7 @@ async function trainClassifier(message, context) {
   }
 
   try {
-    const profile = await trainClassifierProfile(documentType, payload.sampleFileName);
+    const profile = await trainClassifierProfile(documentType, payload.sampleFileName, aiOptions);
     await documentTypes.updateOne(
       { _id: documentTypeId },
       {

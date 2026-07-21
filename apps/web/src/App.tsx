@@ -49,6 +49,8 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs'
 type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users';
 
 type AppConfig = AppConfigPayload;
+type AiProvider = AppConfig['aiProvider'];
+type EmbeddingProvider = AppConfig['embeddingProvider'];
 type OperationsMetrics = {
   filesProcessed: number;
   totalCostUsd: number;
@@ -60,15 +62,22 @@ type ReprocessProcessingMode = 'pdf' | 'ocr' | 'markdown';
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 const lowCostOpenAIModel = 'gpt-5-nano';
+const defaultOllamaBaseUrl = 'http://127.0.0.1:11434';
+const defaultOllamaModel = 'llama3.2';
+const defaultOpenAIEmbeddingModel = 'text-embedding-3-small';
+const defaultOllamaEmbeddingModel = 'qwen3-embedding:4b';
+const openAIEmbeddingModelOptions = [
+  { value: 'text-embedding-3-small', label: 'Text Embedding 3 Small' },
+  { value: 'text-embedding-3-large', label: 'Text Embedding 3 Large' },
+  { value: 'text-embedding-ada-002', label: 'Text Embedding Ada 002' },
+];
 const openAIModelOptions = [
+  { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+  { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
   { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
   { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
   { value: 'gpt-5', label: 'GPT-5' },
-  { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
-  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'gpt-4.1', label: 'GPT-4.1' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'gpt-4o', label: 'GPT-4o' },
 ];
 const reasoningEffortOptions: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const displayCurrencyOptions = [
@@ -84,6 +93,18 @@ function supportsReasoningEffort(model: string) {
 
 function modelLabel(model?: string) {
   return openAIModelOptions.find((option) => option.value === model)?.label || model || 'OpenAI model';
+}
+
+function aiModelLabel(config: AppConfig) {
+  return config.aiProvider === 'ollama'
+    ? `Ollama ${config.ollamaModel || defaultOllamaModel}`
+    : modelLabel(config.classificationModel);
+}
+
+function embeddingModelLabel(config: AppConfig) {
+  return config.embeddingProvider === 'ollama'
+    ? `Ollama ${config.ollamaEmbeddingModel || defaultOllamaEmbeddingModel}`
+    : config.embeddingModel || defaultOpenAIEmbeddingModel;
 }
 
 function displayModel(model?: string) {
@@ -169,7 +190,13 @@ function displaySampleName(fileName: string) {
   return parts[parts.length - 1] || fileName;
 }
 
-function ClassificationMethodIcon({ method }: { method?: IncomingDocument['classificationMethod'] }) {
+function ClassificationMethodIcon({
+  method,
+  onShowJustification,
+}: {
+  method?: IncomingDocument['classificationMethod'];
+  onShowJustification?: () => void;
+}) {
   if (method === 'vector') {
     return (
       <span className="method-icon vector" title="Vector classification" aria-label="Vector classification">
@@ -179,12 +206,61 @@ function ClassificationMethodIcon({ method }: { method?: IncomingDocument['class
   }
   if (method === 'llm') {
     return (
-      <span className="method-icon llm" title="LLM classification" aria-label="LLM classification">
+      <span
+        className={`method-icon llm${onShowJustification ? ' interactive' : ''}`}
+        title={onShowJustification ? 'Show LLM classification justification' : 'LLM classification'}
+        aria-label={onShowJustification ? 'Show LLM classification justification' : 'LLM classification'}
+        role={onShowJustification ? 'button' : undefined}
+        tabIndex={onShowJustification ? 0 : undefined}
+        onClick={onShowJustification ? (event) => {
+          event.stopPropagation();
+          onShowJustification();
+        } : undefined}
+        onKeyDown={onShowJustification ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            onShowJustification();
+          }
+        } : undefined}
+      >
         <BrainCircuit size={14} />
       </span>
     );
   }
   return null;
+}
+
+function ClassificationJustificationDialog({
+  document,
+  onClose,
+}: {
+  document: IncomingDocument;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="classification-justification-title" onClick={onClose}>
+      <section className="confirm-modal classification-justification-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2 id="classification-justification-title">Classification Justification</h2>
+            <p>{document.originalName}</p>
+          </div>
+          <button className="icon-button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="classification-justification-summary">
+          <span>Selected document type</span>
+          <strong>{document.category} / {document.documentTypeName}</strong>
+          <span>Model</span>
+          <strong>{displayModel(document.classificationModel)}</strong>
+          <span>Justification</span>
+          <p>{document.classificationJustification || 'No justification was recorded for this previously processed document.'}</p>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'] }) {
@@ -313,6 +389,19 @@ function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?:
   });
 }
 
+function hasExtractedValue(item: ExtractedValue) {
+  if (item.type === 'table') return asTableRows(item.value).length > 0;
+  if (item.value === null || typeof item.value === 'undefined') return false;
+  if (typeof item.value === 'string') return item.value.trim().length > 0;
+  if (Array.isArray(item.value)) return item.value.length > 0;
+  return true;
+}
+
+function confidenceBadge(item: ExtractedValue) {
+  if (!hasExtractedValue(item)) return null;
+  return typeof item.confidence === 'number' ? `${Math.round(item.confidence * 100)}%` : null;
+}
+
 export function App() {
   if (window.location.pathname === '/xtractor') {
     return <MarketingSite />;
@@ -362,6 +451,12 @@ function OperationsApp() {
     useOcrForDocumentProcessing: false,
     documentTextMode: 'ocr',
     markdownServiceUrl: '',
+    aiProvider: 'openai',
+    ollamaBaseUrl: defaultOllamaBaseUrl,
+    ollamaModel: defaultOllamaModel,
+    embeddingProvider: 'openai',
+    embeddingModel: defaultOpenAIEmbeddingModel,
+    ollamaEmbeddingModel: defaultOllamaEmbeddingModel,
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
   });
@@ -378,6 +473,12 @@ function OperationsApp() {
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
         markdownServiceUrl: saved.markdownServiceUrl || '',
+        aiProvider: saved.aiProvider === 'ollama' ? 'ollama' : 'openai',
+        ollamaBaseUrl: saved.ollamaBaseUrl || defaultOllamaBaseUrl,
+        ollamaModel: saved.ollamaModel || defaultOllamaModel,
+        embeddingProvider: saved.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
+        embeddingModel: saved.embeddingModel || defaultOpenAIEmbeddingModel,
+        ollamaEmbeddingModel: saved.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
         classificationModel: saved.classificationModel || lowCostOpenAIModel,
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
       });
@@ -393,6 +494,12 @@ function OperationsApp() {
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
             markdownServiceUrl: parsed.markdownServiceUrl || '',
+            aiProvider: parsed.aiProvider === 'ollama' ? 'ollama' : 'openai',
+            ollamaBaseUrl: parsed.ollamaBaseUrl || defaultOllamaBaseUrl,
+            ollamaModel: parsed.ollamaModel || defaultOllamaModel,
+            embeddingProvider: parsed.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
+            embeddingModel: parsed.embeddingModel || defaultOpenAIEmbeddingModel,
+            ollamaEmbeddingModel: parsed.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
             classificationModel: parsed.classificationModel || lowCostOpenAIModel,
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
           });
@@ -854,6 +961,8 @@ function OperationsApp() {
           <DocumentTypeManagement
             documentTypes={documentTypes}
             activeType={activeType}
+            config={config}
+            onConfigChange={setConfig}
             setActiveTypeId={setActiveTypeId}
             categories={categories}
             onRun={run}
@@ -1844,6 +1953,7 @@ function ConfigurationScreen({
   onRefresh: () => Promise<void>;
 }) {
   const [expandedSections, setExpandedSections] = useState({
+    aiService: true,
     documentProcessing: true,
     downstream: true,
   });
@@ -1863,6 +1973,97 @@ function ConfigurationScreen({
   return (
     <div className="panel configuration-panel">
       <div className="configuration-form">
+        <div className="configuration-section">
+          <button
+            className="configuration-section-toggle"
+            type="button"
+            aria-expanded={expandedSections.aiService}
+            onClick={() => toggleSection('aiService')}
+          >
+            <span>AI Service Configuration</span>
+            {expandedSections.aiService ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {expandedSections.aiService && (
+            <div className="configuration-section-body">
+              <label>
+                AI provider
+                <select
+                  value={config.aiProvider}
+                  onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </label>
+              {config.aiProvider === 'ollama' ? (
+                <>
+                  <label>
+                    Ollama base URL
+                    <input
+                      type="url"
+                      value={config.ollamaBaseUrl}
+                      placeholder={defaultOllamaBaseUrl}
+                      onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Ollama model
+                    <input
+                      value={config.ollamaModel}
+                      placeholder={defaultOllamaModel}
+                      onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                    />
+                  </label>
+                </>
+              ) : (
+                <OpenAIModelControls
+                  model={config.classificationModel || lowCostOpenAIModel}
+                  reasoningEffort={config.classificationReasoningEffort || 'low'}
+                  onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
+                  onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
+                />
+              )}
+              <label>
+                Embedding provider
+                <select
+                  value={config.embeddingProvider}
+                  onChange={(event) => onConfigChange({ ...config, embeddingProvider: event.target.value as EmbeddingProvider })}
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </label>
+              {config.embeddingProvider === 'ollama' ? (
+                <label>
+                  Ollama embedding model
+                  <input
+                    value={config.ollamaEmbeddingModel}
+                    placeholder={defaultOllamaEmbeddingModel}
+                    onChange={(event) => onConfigChange({ ...config, ollamaEmbeddingModel: event.target.value })}
+                  />
+                </label>
+              ) : (
+                <label>
+                  OpenAI embedding model
+                  <select
+                    value={config.embeddingModel}
+                    onChange={(event) => onConfigChange({ ...config, embeddingModel: event.target.value })}
+                  >
+                    {config.embeddingModel && !openAIEmbeddingModelOptions.some((option) => option.value === config.embeddingModel) && (
+                      <option value={config.embeddingModel}>{config.embeddingModel}</option>
+                    )}
+                    {openAIEmbeddingModelOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="configuration-section">
           <button
             className="configuration-section-toggle"
@@ -2081,15 +2282,27 @@ function ClassificationScreen({
 
         <div className="model-settings-band">
           <div>
-            <strong>{modelLabel(config.classificationModel)}</strong>
-            <small>Used when vector classification falls back to OpenAI.</small>
+            <strong>{aiModelLabel(config)}</strong>
+            <small>LLM fallback for classification. Vectors use {embeddingModelLabel(config)}.</small>
           </div>
-          <OpenAIModelControls
-            model={config.classificationModel || lowCostOpenAIModel}
-            reasoningEffort={config.classificationReasoningEffort || 'low'}
-            onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
-            onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
-          />
+          {config.aiProvider === 'openai' ? (
+            <OpenAIModelControls
+              model={config.classificationModel || lowCostOpenAIModel}
+              reasoningEffort={config.classificationReasoningEffort || 'low'}
+              onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
+              onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
+            />
+          ) : (
+            <div className="model-controls">
+              <label>
+                Model
+                <input
+                  value={config.ollamaModel}
+                  onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                />
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="classification-table">
@@ -2116,6 +2329,8 @@ function ClassificationScreen({
 function DocumentTypeManagement({
   documentTypes,
   activeType,
+  config,
+  onConfigChange,
   setActiveTypeId,
   categories,
   onRun,
@@ -2124,6 +2339,8 @@ function DocumentTypeManagement({
 }: {
   documentTypes: DocumentType[];
   activeType?: DocumentType;
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
   setActiveTypeId: (id: string) => void;
   categories: string[];
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
@@ -2239,35 +2456,47 @@ function DocumentTypeManagement({
 
             <div className="model-settings-band">
               <div>
-                <strong>{modelLabel(activeType.extractionModel || lowCostOpenAIModel)}</strong>
+                <strong>{config.aiProvider === 'ollama' ? `Ollama ${config.ollamaModel || defaultOllamaModel}` : modelLabel(activeType.extractionModel || lowCostOpenAIModel)}</strong>
                 <small>Used for template generation and extraction for this document type.</small>
               </div>
-              <OpenAIModelControls
-                model={activeType.extractionModel || lowCostOpenAIModel}
-                reasoningEffort={activeType.extractionReasoningEffort || 'low'}
-                onModelChange={(extractionModel) =>
-                  onRun(async () => {
-                    const updated = await api.updateExtractionModel(activeType._id, {
-                      extractionModel,
-                      extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
-                      extractionVerification: Boolean(activeType.extractionVerification),
-                    });
-                    onDocumentTypeSaved(updated);
-                    await onRefresh();
-                  }, 'Extraction model saved')
-                }
-                onReasoningEffortChange={(extractionReasoningEffort) =>
-                  onRun(async () => {
-                    const updated = await api.updateExtractionModel(activeType._id, {
-                      extractionModel: activeType.extractionModel || lowCostOpenAIModel,
-                      extractionReasoningEffort,
-                      extractionVerification: Boolean(activeType.extractionVerification),
-                    });
-                    onDocumentTypeSaved(updated);
-                    await onRefresh();
-                  }, 'Extraction reasoning effort saved')
-                }
-              />
+              {config.aiProvider === 'openai' ? (
+                <OpenAIModelControls
+                  model={activeType.extractionModel || lowCostOpenAIModel}
+                  reasoningEffort={activeType.extractionReasoningEffort || 'low'}
+                  onModelChange={(extractionModel) =>
+                    onRun(async () => {
+                      const updated = await api.updateExtractionModel(activeType._id, {
+                        extractionModel,
+                        extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                        extractionVerification: Boolean(activeType.extractionVerification),
+                      });
+                      onDocumentTypeSaved(updated);
+                      await onRefresh();
+                    }, 'Extraction model saved')
+                  }
+                  onReasoningEffortChange={(extractionReasoningEffort) =>
+                    onRun(async () => {
+                      const updated = await api.updateExtractionModel(activeType._id, {
+                        extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                        extractionReasoningEffort,
+                        extractionVerification: Boolean(activeType.extractionVerification),
+                      });
+                      onDocumentTypeSaved(updated);
+                      await onRefresh();
+                    }, 'Extraction reasoning effort saved')
+                  }
+                />
+              ) : (
+                <div className="model-controls">
+                  <label>
+                    Model
+                    <input
+                      value={config.ollamaModel}
+                      onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
 
             <label className="checkbox-row">
@@ -3001,6 +3230,7 @@ function DocumentList({
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyTarget, setReclassifyTarget] = useState<IncomingDocument | null>(null);
+  const [justificationTarget, setJustificationTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
@@ -3169,7 +3399,10 @@ function DocumentList({
               <span className={`pill ${doc.status}`}>{doc.status}</span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
-                <ClassificationMethodIcon method={doc.classificationMethod} />
+                <ClassificationMethodIcon
+                  method={doc.classificationMethod}
+                  onShowJustification={doc.classificationMethod === 'llm' ? () => setJustificationTarget(doc) : undefined}
+                />
               </span>
               <span className="processing-mode-badge">
                 <ProcessingModeIcon mode={doc.processingMode} />
@@ -3226,6 +3459,10 @@ function DocumentList({
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => deleteDocument(deleteTarget)}
         />
+      )}
+
+      {justificationTarget && (
+        <ClassificationJustificationDialog document={justificationTarget} onClose={() => setJustificationTarget(null)} />
       )}
 
       {reprocessTarget && (
@@ -3479,6 +3716,7 @@ function ValidationScreen({
   const [editingValueDraft, setEditingValueDraft] = useState('');
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
+  const [showClassificationJustification, setShowClassificationJustification] = useState(false);
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [showReprocessDialog, setShowReprocessDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
@@ -3706,7 +3944,10 @@ function ValidationScreen({
                 <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
                   {formatScore(document.classificationScore)}
                 </strong>
-                <ClassificationMethodIcon method={document.classificationMethod} />
+                <ClassificationMethodIcon
+                  method={document.classificationMethod}
+                  onShowJustification={document.classificationMethod === 'llm' ? () => setShowClassificationJustification(true) : undefined}
+                />
               </div>
               <div className="document-model-line">
                 <span>Classification: {displayModel(document.classificationModel)}</span>
@@ -3733,9 +3974,22 @@ function ValidationScreen({
             {values.map((item, index) => {
               const styles = fieldStyles[item.key];
               const isActive = item.key === activeFieldKey;
+              const isMissingValue = !hasExtractedValue(item);
+              const isLowConfidence = typeof item.confidence === 'number' && item.confidence < 0.8;
+              const badge = confidenceBadge(item);
+              const fieldClassName = [
+                'extraction-field',
+                isActive ? 'active' : '',
+                isMissingValue || isLowConfidence ? 'low-score' : '',
+                isMissingValue ? 'missing-value' : '',
+              ].filter(Boolean).join(' ');
               const wrapperStyle = {
-                borderColor: styles?.border,
-                backgroundColor: isActive ? styles?.activeFill : styles?.fill,
+                borderColor: isMissingValue || isLowConfidence ? 'rgba(185, 28, 28, 0.45)' : styles?.border,
+                backgroundColor: isMissingValue
+                  ? 'rgba(248, 113, 113, 0.1)'
+                  : isActive
+                    ? styles?.activeFill
+                    : styles?.fill,
               } as const;
 
               const isEditingValue = editingValueKey === item.key;
@@ -3743,7 +3997,7 @@ function ValidationScreen({
 
               return item.type === 'table' ? (
                 <div
-                  className={`extraction-field${isActive ? ' active' : ''}`}
+                  className={fieldClassName}
                   key={item.key}
                   style={wrapperStyle}
                 >
@@ -3751,9 +4005,9 @@ function ValidationScreen({
                     <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {item.confidence && (
+                    {badge && (
                       <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
-                        {Math.round(item.confidence * 100)}%
+                        {badge}
                       </em>
                     )}
                   </div>
@@ -3762,16 +4016,16 @@ function ValidationScreen({
               ) : (
                 <div
                   key={item.key}
-                  className={`extraction-field${isActive ? ' active' : ''}`}
+                  className={fieldClassName}
                   style={wrapperStyle}
                 >
                   <div className="field-label">
                     <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {item.confidence && (
+                    {badge && (
                       <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
-                        {Math.round(item.confidence * 100)}%
+                        {badge}
                       </em>
                     )}
                   </div>
@@ -3931,6 +4185,10 @@ function ValidationScreen({
           onConfirm={reprocess}
         />
       )}
+      {showClassificationJustification && document && (
+        <ClassificationJustificationDialog document={document} onClose={() => setShowClassificationJustification(false)} />
+      )}
+
       {showReclassifyDialog && document && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowReclassifyDialog(false)}>
           <section className="confirm-modal" onClick={(e) => e.stopPropagation()}>

@@ -58,6 +58,7 @@ export type IncomingDocument = {
   classificationScore?: number;
   classificationMethod?: 'manual' | 'vector' | 'llm';
   classificationModel?: string;
+  classificationJustification?: string;
   processingMode?: 'ocr' | 'pdf' | 'markdown';
   processingMetrics?: {
     model?: string;

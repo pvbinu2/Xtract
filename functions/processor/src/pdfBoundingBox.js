@@ -12,7 +12,7 @@ async function loadPdfJs() {
 }
 
 function normalizeText(value) {
-  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase().replace(/,/g, '');
 }
 
 function scalarStrings(value) {
@@ -25,13 +25,72 @@ function scalarStrings(value) {
   return Array.from(variants).filter(Boolean);
 }
 
-async function attachBoundingBoxes(filePath, extractedData) {
+function scalarValues(value) {
+  if (value === null || value === undefined || value === '') return [];
+  if (Array.isArray(value)) return value.flatMap(scalarValues);
+  if (typeof value === 'object') return Object.values(value).flatMap(scalarValues);
+  return [value];
+}
+
+function enclosingBox(boxes) {
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+  return { page: boxes[0].page, x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function mergeMatchedBoxes(items) {
+  const groups = [];
+  for (const item of items) {
+    const last = groups.at(-1);
+    const sameLine = last && last.page === item.page && (
+      (item.lineKey && last.lineKey === item.lineKey) ||
+      (!item.lineKey && Math.abs(last.y - item.y) <= Math.max(last.height, item.height) * 0.5)
+    );
+    if (sameLine) {
+      last.items.push(item);
+    } else {
+      groups.push({ page: item.page, y: item.y, height: item.height, lineKey: item.lineKey, items: [item] });
+    }
+  }
+  return groups.map((group) => enclosingBox(group.items));
+}
+
+function findSpatialMatch(value, items) {
+  const target = normalizeText(String(value));
+  if (!target) return [];
+
+  const direct = items.find((item) => {
+    const text = normalizeText(item.text || '');
+    return text === target || (target.length >= 3 && ` ${text} `.includes(` ${target} `));
+  });
+  if (direct) return [enclosingBox([direct])];
+
+  for (let start = 0; start < items.length; start += 1) {
+    if (items[start].page === undefined) continue;
+    const matched = [];
+    let combined = '';
+    for (let end = start; end < Math.min(items.length, start + 30); end += 1) {
+      const item = items[end];
+      if (item.page !== items[start].page) break;
+      combined = normalizeText(`${combined} ${item.text || ''}`);
+      matched.push(item);
+      if (combined === target) return mergeMatchedBoxes(matched);
+      if (combined.length > target.length + 20 || !target.startsWith(combined)) break;
+    }
+  }
+  return [];
+}
+
+async function attachBoundingBoxes(filePath, extractedData, spatialItems = []) {
   const fs = require('fs');
   const { getDocument } = await loadPdfJs();
   const data = fs.readFileSync(filePath);
   const standardFontDataUrl = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + path.sep;
   const pdf = await getDocument({ data: new Uint8Array(data), disableWorker: true, standardFontDataUrl }).promise;
   const pageMatches = new Map();
+  const pdfItems = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -52,6 +111,7 @@ async function attachBoundingBoxes(filePath, extractedData) {
         width: width / viewport.width,
         height: height / viewport.height,
       };
+      pdfItems.push({ text, ...box });
       for (const candidate of [text, normalizeText(text), text.replace(/,/g, '')]) {
         if (!candidate) continue;
         const key = `${pageNumber - 1}:${candidate}`;
@@ -63,6 +123,18 @@ async function attachBoundingBoxes(filePath, extractedData) {
   }
 
   return extractedData.map((field) => {
+    const fieldValues = scalarValues(field.value);
+    const spatialBoxes = fieldValues.flatMap((value) => {
+      const suppliedMatch = findSpatialMatch(value, spatialItems);
+      return suppliedMatch.length ? suppliedMatch : findSpatialMatch(value, pdfItems);
+    });
+    if (spatialBoxes.length) {
+      const uniqueBoxes = spatialBoxes.filter((box, index, boxes) => boxes.findIndex((candidate) => (
+        candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
+        candidate.width === box.width && candidate.height === box.height
+      )) === index);
+      return { ...field, boundingBoxes: uniqueBoxes };
+    }
     if (field.type === 'table') return { ...field, boundingBoxes: [] };
     const boxes = [];
     for (const candidate of scalarStrings(field.value)) {

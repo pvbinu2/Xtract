@@ -106,9 +106,23 @@ Successful response shape:
 {
   "engine": "docling",
   "fileName": "invoice.pdf",
-  "markdown": "# ..."
+  "markdown": "# ...",
+  "elements": [
+    {
+      "text": "Invoice number INV-10425",
+      "page": 0,
+      "x": 0.12,
+      "y": 0.18,
+      "width": 0.31,
+      "height": 0.03
+    }
+  ]
 }
 ```
+
+The optional `elements` array contains normalized Docling provenance coordinates used to highlight extracted values. OCR mode similarly retains Tesseract TSV word coordinates for scanned PDFs.
+
+Bounding-box generation is independent of the selected model input mode. If a PDF has no usable embedded text layer and no Docling coordinates, the processor automatically runs Tesseract TSV to obtain word-level coordinates, including when the model processes the PDF directly.
 
 The mock downstream API includes a **Docling Markdown** tab that can send a test PDF to a Docling target URL, show rendered markdown, and download the markdown output.
 
@@ -259,6 +273,7 @@ http://docling-markdown:7072/api/extract-markdown
 ### Runtime Notes
 
 - With `OPENAI_API_KEY` present, uploads use Azure Blob Storage, template generation and extraction use OpenAI, and classifier training stores embeddings in Qdrant.
+- When using Ollama from Docker Compose, set the app configuration's Ollama base URL to `http://host.docker.internal:11434`. The `xtract-apps` service also defaults `OLLAMA_MODEL=llama3.2` and `OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b`.
 - If no OpenAI key is configured, the app falls back to deterministic mock values for local UI testing.
 - Automatic classification searches Qdrant first. If the best vector score is at least `CLASSIFIER_VECTOR_SCORE_THRESHOLD` (default `0.82`), the worker skips the LLM classifier call.
 - Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`.
