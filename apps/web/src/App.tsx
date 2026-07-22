@@ -997,6 +997,9 @@ function OperationsApp() {
             documentTypes={documentTypes}
             pagination={documentPage}
             statusTarget={documentListStatusTarget}
+            onStatusTargetApplied={() => {
+              setDocumentListStatusTarget((target) => ({ ...target, version: 0 }));
+            }}
             config={config}
             canManage={canManageDocuments}
             onOpen={(id) => {
@@ -3208,6 +3211,7 @@ function DocumentList({
   documentTypes,
   pagination,
   statusTarget,
+  onStatusTargetApplied,
   config,
   canManage = false,
   onOpen,
@@ -3217,6 +3221,7 @@ function DocumentList({
   documentTypes: DocumentType[];
   pagination: PagedResult<IncomingDocument>;
   statusTarget: { status: DocumentStatusFilter; version: number };
+  onStatusTargetApplied: () => void;
   config: AppConfig;
   canManage?: boolean;
   onOpen: (id: string) => void;
@@ -3257,6 +3262,7 @@ function DocumentList({
     if (statusTarget.version === 0) return;
 
     const nextStatus = statusTarget.status;
+    onStatusTargetApplied();
     setStatus(nextStatus);
     setCategory('');
     setNameFilter('');
@@ -3272,7 +3278,7 @@ function DocumentList({
     api.listDocuments(params).then(onPage).catch(() => {
       // The regular refresh path will surface API errors elsewhere.
     });
-  }, [statusTarget.version]);
+  }, [statusTarget.version, onStatusTargetApplied]);
 
   async function deleteDocument(document: IncomingDocument) {
     await api.deleteDocument(document._id);
