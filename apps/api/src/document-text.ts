@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { dirname, join, sep } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { OcrService } from '@xtract/common';
 
 const execFileAsync = promisify(execFile);
 let pdfjsPromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | undefined;
@@ -109,12 +110,14 @@ export async function extractDocumentText(
   limit = Number(process.env.DOCUMENT_TEXT_LIMIT || 60000),
   options: DocumentTextOptions = {},
 ) {
-  if (options.mode === 'markdown') {
-    return (await extractMarkdownText(filePath, options)).replace(/\s+\n/g, '\n').trim().slice(0, limit);
-  }
-
-  const minTextLength = Number(process.env.OCR_MIN_TEXT_LENGTH || 80);
-  const embeddedText = await extractPdfText(filePath);
-  const text = embeddedText.trim().length >= minTextLength ? embeddedText : await ocrPdfText(filePath);
-  return text.replace(/\s+\n/g, '\n').trim().slice(0, limit);
+  return documentTextService.extractText(filePath, limit, options);
 }
+
+const documentTextService = new OcrService({
+  extractEmbeddedText: extractPdfText,
+  extractOcrContent: async (filePath) => ({ text: await ocrPdfText(filePath), spatialItems: [] }),
+  extractMarkdownContent: async (filePath, options) => ({
+    text: await extractMarkdownText(filePath, options as DocumentTextOptions),
+    spatialItems: [],
+  }),
+});

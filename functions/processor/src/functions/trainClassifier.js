@@ -1,15 +1,8 @@
 const { app } = require('@azure/functions');
-const { MongoClient, ObjectId } = require('mongodb');
+const { MongoDatabase, ObjectId } = require('@xtract/common');
 const { resetClassifierVectors, trainClassifierProfile } = require('../classifier');
 
-let clientPromise;
-
-function getClient() {
-  if (!clientPromise) {
-    clientPromise = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017/xtract').connect();
-  }
-  return clientPromise;
-}
+const database = new MongoDatabase();
 
 function resolveMessage(message) {
   if (typeof message === 'string') {
@@ -25,8 +18,7 @@ function resolveMessage(message) {
 async function trainClassifier(message, context) {
   const payload = resolveMessage(message);
 
-  const client = await getClient();
-  const db = client.db();
+  const db = await database.database();
   const documentTypes = db.collection('documenttypes');
   const configuration = await db.collection('configuration').findOne({});
   const aiOptions = {
