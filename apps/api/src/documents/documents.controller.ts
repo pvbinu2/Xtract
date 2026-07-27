@@ -70,6 +70,15 @@ export class DocumentsController {
     return response.send(file.buffer);
   }
 
+  @Get(':id/text-artifact')
+  @Roles('admin', 'validator')
+  async textArtifact(@Param('id') id: string, @Res() response: Response) {
+    const artifact = await this.service.getTextArtifact(id);
+    response.contentType(artifact.contentType);
+    response.attachment(artifact.fileName);
+    return response.send(artifact.buffer);
+  }
+
   @Get(':id/page-count')
   @Roles('admin', 'validator')
   pageCount(@Param('id') id: string) {

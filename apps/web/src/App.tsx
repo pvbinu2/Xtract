@@ -122,6 +122,15 @@ function downloadJsonFile(fileName: string, data: unknown) {
   URL.revokeObjectURL(url);
 }
 
+function downloadBlobFile(fileName: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName.replace(/[^\w.-]+/g, '_') || 'document';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function defaultTableColumns() {
   return [
     { key: 'description', label: 'Description', type: 'string' as FieldType, description: '' },
@@ -4227,6 +4236,29 @@ function ValidationScreen({
     onNotify('JSON downloaded', 'success');
   }
 
+  async function downloadPdf() {
+    if (!document) return;
+    try {
+      downloadBlobFile(document.originalName || document.fileName || 'document.pdf', await api.documentFile(document._id));
+      onNotify('PDF downloaded', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to download PDF', 'error');
+    }
+  }
+
+  async function downloadTextArtifact() {
+    if (!document) return;
+    try {
+      const mode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
+      const extension = mode === 'markdown' ? 'md' : 'ocr';
+      const baseName = document.originalName.replace(/\.[^.]+$/, '') || document.fileName.replace(/\.[^.]+$/, '') || 'document';
+      downloadBlobFile(`${baseName}.${extension}`, await api.documentTextArtifact(document._id));
+      onNotify(`${mode === 'markdown' ? 'Markdown' : 'OCR'} file downloaded`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to download OCR/markdown file', 'error');
+    }
+  }
+
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
@@ -4272,6 +4304,17 @@ function ValidationScreen({
               </div>
               <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
+              </button>
+              <button className="icon-button" title="Download original PDF" onClick={downloadPdf}>
+                <FileText size={16} />
+              </button>
+              <button
+                className="icon-button"
+                title={`Download ${document.textArtifactMode === 'markdown' ? 'markdown' : 'OCR'} file`}
+                onClick={downloadTextArtifact}
+                disabled={!document.textArtifactBlobName}
+              >
+                <ScanText size={16} />
               </button>
               <button className="icon-button" title="Download extracted data as JSON" onClick={downloadExtractedJson}>
                 <Download size={16} />

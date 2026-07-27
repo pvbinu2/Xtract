@@ -223,6 +223,25 @@ export class DocumentsService {
     };
   }
 
+  async getTextArtifact(id: string) {
+    const document = await this.documentModel.findById(id).lean();
+    if (!document) throw new NotFoundException('Document not found');
+    if (!document.textArtifactContainer || !document.textArtifactBlobName) {
+      throw new NotFoundException('OCR/markdown artifact is not available for this document');
+    }
+
+    return {
+      buffer: await this.blobStorage.downloadBuffer(
+        document.textArtifactContainer,
+        document.textArtifactBlobName,
+      ),
+      contentType: document.textArtifactMode === 'markdown'
+        ? 'text/markdown; charset=utf-8'
+        : 'text/plain; charset=utf-8',
+      fileName: document.textArtifactBlobName.split('/').at(-1) || `document.${document.textArtifactMode === 'markdown' ? 'md' : 'ocr'}`,
+    };
+  }
+
   async getPdfPageCount(id: string) {
     const file = await this.getFile(id);
     const pdf = await PDFDocument.load(file.buffer);

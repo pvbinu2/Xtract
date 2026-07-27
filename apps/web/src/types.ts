@@ -52,6 +52,8 @@ export type IncomingDocument = {
   _id: string;
   fileName: string;
   originalName: string;
+  textArtifactBlobName?: string;
+  textArtifactMode?: 'ocr' | 'markdown';
   category: string;
   documentTypeId: string;
   documentTypeName: string;
