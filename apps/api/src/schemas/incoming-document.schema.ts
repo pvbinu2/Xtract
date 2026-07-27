@@ -165,6 +165,9 @@ export class IncomingDocument {
   @Prop({ default: 'received' })
   status!: DocumentStatus;
 
+  @Prop({ default: 0 })
+  revision!: number;
+
   @Prop({ type: [ExtractedValueSchema], default: [] })
   extractedData!: ExtractedValue[];
 

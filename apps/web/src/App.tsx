@@ -42,6 +42,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
@@ -483,6 +484,10 @@ function OperationsApp() {
     status: DocumentStatusFilter;
     version: number;
   }>({ status: '', version: 0 });
+  const documentPageRef = useRef(documentPage);
+  const documentListStatusTargetRef = useRef(documentListStatusTarget);
+  documentPageRef.current = documentPage;
+  documentListStatusTargetRef.current = documentListStatusTarget;
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
@@ -600,12 +605,14 @@ function OperationsApp() {
   }
 
   async function refreshDocuments() {
+    const currentPage = documentPageRef.current;
+    const currentStatusTarget = documentListStatusTargetRef.current;
     const params = new URLSearchParams({
       sort: 'latest',
-      page: String(documentPage.page),
-      pageSize: String(documentPage.pageSize),
+      page: String(currentPage.page),
+      pageSize: String(currentPage.pageSize),
     });
-    if (documentListStatusTarget.status) params.set('status', documentListStatusTarget.status);
+    if (currentStatusTarget.status) params.set('status', currentStatusTarget.status);
     const docs = await api.listDocuments(params);
     setDocumentPage(docs);
     setDocuments(docs.items);
@@ -783,6 +790,70 @@ function OperationsApp() {
     if (!isAdmin || metricsLoaded) return;
     refreshOperationsMetrics().catch((error) => showToast(error.message, 'error'));
   }, [currentUser?.id, isAdmin, metricsLoaded]);
+
+  useEffect(() => {
+    if (!currentUser || !canManageDocuments) return;
+    let refreshTimer: number | undefined;
+    const connection = createDocumentRealtimeConnection(
+      currentUser.id,
+      (event) => {
+        setDocuments((items) => items.map((document) => {
+          if (document._id !== event.documentId || Number(document.revision || 0) > event.revision) return document;
+          return {
+            ...document,
+            status: event.status,
+            revision: event.revision,
+            updatedAt: event.updatedAt,
+          };
+        }));
+        setDocumentPage((page) => ({
+          ...page,
+          items: page.items.map((document) => {
+            if (document._id !== event.documentId || Number(document.revision || 0) > event.revision) return document;
+            return {
+              ...document,
+              status: event.status,
+              revision: event.revision,
+              updatedAt: event.updatedAt,
+            };
+          }),
+        }));
+        window.clearTimeout(refreshTimer);
+        refreshTimer = window.setTimeout(() => {
+          const refreshes: Array<Promise<unknown>> = [refreshDocuments()];
+          if (isAdmin) refreshes.push(refreshOperationsMetrics());
+          Promise.all(refreshes).catch((error) => {
+            console.warn('Unable to silently refresh document status and summary.', error);
+          });
+        }, 300);
+      },
+      () => {
+        const refreshes: Array<Promise<unknown>> = [refreshDocuments()];
+        if (isAdmin) refreshes.push(refreshOperationsMetrics());
+        Promise.all(refreshes).catch((error) => {
+          console.warn('Unable to silently refresh documents after reconnecting.', error);
+        });
+      },
+    );
+    if (!connection) return;
+
+    let stopped = false;
+    let retryTimer: number | undefined;
+    const startConnection = () => {
+      connection.start().catch((error) => {
+        if (stopped) return;
+        console.warn('Document real-time connection could not be started. Retrying.', error);
+        retryTimer = window.setTimeout(startConnection, 10000);
+      });
+    };
+    startConnection();
+    return () => {
+      stopped = true;
+      window.clearTimeout(refreshTimer);
+      window.clearTimeout(retryTimer);
+      connection.stop().catch(() => undefined);
+    };
+  }, [currentUser?.id, canManageDocuments, isAdmin]);
 
   useEffect(() => {
     if (!currentUser) return;

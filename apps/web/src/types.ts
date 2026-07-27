@@ -79,6 +79,7 @@ export type IncomingDocument = {
     | 'failed'
     | 'uploaded'
     | 'processing';
+  revision?: number;
   extractedData: ExtractedValue[];
   createdAt: string;
   updatedAt: string;

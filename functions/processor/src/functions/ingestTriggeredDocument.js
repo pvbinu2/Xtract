@@ -1,6 +1,7 @@
 const path = require('path');
 const { app, output } = require('@azure/functions');
 const { ObjectId, getClient } = require('../documentProcessingCommon');
+const { publishDocumentChanged } = require('../documentEvents');
 const {
   PROCESSING_CONTAINER,
   TRIGGER_CONTAINER,
@@ -69,12 +70,14 @@ async function ingestTriggeredDocument(_blob, context) {
     documentTypeName: 'Pending classification',
     classificationMethod: 'vector',
     status: 'received',
+    revision: 1,
     extractedData: [],
     createdAt: now,
     updatedAt: now,
   });
 
   context.info(`Ingested trigger blob ${triggerBlobName} as document ${result.insertedId}.`);
+  await publishDocumentChanged(documents, result.insertedId, ['status'], context);
   context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(result.insertedId) }));
 }
 

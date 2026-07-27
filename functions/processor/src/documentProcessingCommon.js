@@ -96,6 +96,7 @@ async function markDocumentFailed(documents, documentId, error) {
     { _id: documentId },
     {
       $set: { status: 'failed', error, updatedAt: new Date() },
+      $inc: { revision: 1 },
       $unset: { reprocessOptions: '' },
     },
   );

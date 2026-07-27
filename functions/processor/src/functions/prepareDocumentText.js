@@ -12,6 +12,7 @@ const {
   resolveDocumentId,
 } = require('../documentProcessingCommon');
 const { extractDocumentContent } = require('../documentText');
+const { publishDocumentChanged } = require('../documentEvents');
 const {
   PROCESSING_CONTAINER,
   deleteBlob,
@@ -53,6 +54,7 @@ async function prepareDocumentText(message, context) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -113,7 +115,14 @@ async function prepareDocumentText(message, context) {
           status: 'preprocessed',
           updatedAt: new Date(),
         },
+        $inc: { revision: 1 },
       },
+    );
+    await publishDocumentChanged(
+      documents,
+      document._id,
+      ['status', 'textArtifactBlobName', 'textArtifactMode'],
+      context,
     );
 
     context.info(`Prepared ${documentTextMode} for document ${document._id} at ${artifactBlobName}.`);
@@ -122,6 +131,7 @@ async function prepareDocumentText(message, context) {
     const errorMessage = `Document text preparation failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
   } finally {
     if (localFilePath && document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
   }

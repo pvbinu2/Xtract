@@ -85,7 +85,21 @@ Roles:
 
 ### Blob Trigger Ingestion
 
-The processor Function app includes a blob trigger for the `trigger` storage container. When a new file is uploaded to `trigger`, the function moves it to the `processing` container, creates an `IncomingDocument` record with `status: processing`, and enqueues the `document-processing` queue. Files in the processing container use a document-scoped layout: `{documentId}/{source-file}` plus `{documentId}/{source-name}.ocr` or `.md`. The prepared text artifact is reused by classification and extraction.
+The processor Function app includes a blob trigger for the `trigger` storage container. When a new file is uploaded to `trigger`, the function moves it to the `processing` container, creates an `IncomingDocument` record with `status: received`, and enqueues the `document-processing` queue. Files in the processing container use a document-scoped layout: `{documentId}/{source-file}` plus `{documentId}/{source-name}.ocr` or `.md`. The prepared text artifact is reused by classification and extraction.
+
+### Real-time Document Status
+
+Document status changes are broadcast through the self-hosted ASP.NET Core SignalR service in `services/realtime`. Docker Compose exposes the hub at `http://127.0.0.1:5080/hubs/documents`. The hub validates the same JWT issued by the API and accepts backend broadcasts through a separately protected internal endpoint.
+
+```text
+SIGNALR_ENABLED=true
+JWT_SECRET=<same value for API, Functions, and realtime service>
+REALTIME_BROADCAST_SECRET=<shared backend-only secret>
+REALTIME_BROADCAST_URL=http://realtime:5080/internal/document-changed
+VITE_REALTIME_URL=http://127.0.0.1:5080/hubs/documents
+```
+
+The Function broadcaster consumes `document-events` and posts each event to the internal endpoint. The hub broadcasts `documentChanged` to authenticated admin and validator clients. The browser applies status events immediately and performs a debounced REST refresh. Set `WEB_ORIGIN` to the allowed browser origins. When `SIGNALR_ENABLED=false` or `VITE_REALTIME_URL` is absent, processing and manual REST refresh continue without real-time updates.
 
 ### Docling Markdown Extraction
 

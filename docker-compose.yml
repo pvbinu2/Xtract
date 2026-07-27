@@ -54,6 +54,19 @@ services:
     depends_on:
       - azurite
 
+  realtime:
+    build:
+      context: .
+      dockerfile: services/realtime/Dockerfile
+    container_name: xtract-realtime
+    ports:
+      - "5080:5080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - JWT_SECRET=${JWT_SECRET:-xtract-local-dev-secret-change-me-32}
+      - REALTIME_BROADCAST_SECRET=${REALTIME_BROADCAST_SECRET:-xtract-local-realtime-secret}
+      - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:5173,http://127.0.0.1:5173}
+
   xtract-apps:
     build:
       context: .
@@ -82,11 +95,17 @@ services:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_MODEL=llama3.2
       - OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b
+      - SIGNALR_ENABLED=${SIGNALR_ENABLED:-true}
+      - JWT_SECRET=${JWT_SECRET:-xtract-local-dev-secret-change-me-32}
+      - REALTIME_BROADCAST_URL=http://realtime:5080/internal/document-changed
+      - REALTIME_BROADCAST_SECRET=${REALTIME_BROADCAST_SECRET:-xtract-local-realtime-secret}
+      - VITE_REALTIME_URL=${VITE_REALTIME_URL:-http://127.0.0.1:5080/hubs/documents}
     depends_on:
       - mongo
       - azurite
       - qdrant
       - docling-markdown
+      - realtime
 
 volumes:
   xtract-apps-node-modules:

@@ -1,5 +1,6 @@
 const { app } = require('@azure/functions');
 const { withExtractionConcurrency } = require('../aiConcurrency');
+const { publishDocumentChanged } = require('../documentEvents');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -460,9 +461,11 @@ async function extractQueuedDocument(message, context) {
       { _id: document._id },
       {
         $set: { status: 'failed', error: 'Document type not found for extraction', updatedAt: new Date() },
+        $inc: { revision: 1 },
         $unset: { reprocessOptions: '' },
       },
     );
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -470,6 +473,7 @@ async function extractQueuedDocument(message, context) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -565,14 +569,22 @@ async function extractQueuedDocument(message, context) {
           error: null,
           updatedAt: new Date(),
         },
+        $inc: { revision: 1 },
         $unset: { reprocessOptions: '' },
       },
+    );
+    await publishDocumentChanged(
+      documents,
+      document._id,
+      ['status', 'extractedData', 'processingMetrics', 'processingMode'],
+      context,
     );
     await recordBusinessReviewProcessing(db, localDocument, documentType, processingMetrics);
   } catch (error) {
     const errorMessage = `Extraction failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
   } finally {
     if (localFilePath && document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
   }

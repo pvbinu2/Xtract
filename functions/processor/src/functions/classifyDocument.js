@@ -1,6 +1,7 @@
 const { app, output } = require('@azure/functions');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
 const { withClassificationConcurrency } = require('../aiConcurrency');
+const { publishDocumentChanged } = require('../documentEvents');
 const {
   ObjectId,
   getClient,
@@ -49,6 +50,7 @@ async function classifyQueuedDocument(message, context) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -59,9 +61,11 @@ async function classifyQueuedDocument(message, context) {
         { _id: document._id },
         {
           $set: { status: 'failed', error: 'Document type not found', updatedAt: new Date() },
+          $inc: { revision: 1 },
           $unset: { reprocessOptions: '' },
         },
       );
+      await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
       return;
     }
 
@@ -120,7 +124,16 @@ async function classifyQueuedDocument(message, context) {
 
     await documents.updateOne(
       { _id: document._id },
-      { $set: { status: 'classified', updatedAt: new Date() } },
+      {
+        $set: { status: 'classified', updatedAt: new Date() },
+        $inc: { revision: 1 },
+      },
+    );
+    await publishDocumentChanged(
+      documents,
+      document._id,
+      ['status', 'category', 'documentTypeId', 'documentTypeName', 'classificationScore', 'classificationMethod'],
+      context,
     );
     context.extraOutputs.set(extractionQueueOutput, JSON.stringify({
       documentId: String(document._id),
@@ -132,6 +145,7 @@ async function classifyQueuedDocument(message, context) {
     const errorMessage = `Classification failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
   }
 }
 
