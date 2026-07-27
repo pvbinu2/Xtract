@@ -1112,6 +1112,155 @@ textarea {
   padding-top: 10px;
 }
 
+.configuration-card-grid {
+  --settings-accent: var(--primary);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.configuration-card-grid.ai-settings {
+  --settings-accent: #7c3aed;
+}
+
+.configuration-card-grid.processing-settings {
+  --settings-accent: #0284c7;
+}
+
+.configuration-card-grid.downstream-settings {
+  --settings-accent: #059669;
+}
+
+.configuration-card-grid > .model-controls {
+  display: contents;
+}
+
+.configuration-card-grid > label,
+.configuration-card-grid > .model-controls > label {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--settings-accent);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  padding: 16px;
+  box-shadow: 0 3px 10px rgb(15 23 42 / 0.05);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.configuration-card-grid > label:hover,
+.configuration-card-grid > label:focus-within,
+.configuration-card-grid > .model-controls > label:hover,
+.configuration-card-grid > .model-controls > label:focus-within {
+  border-color: var(--settings-accent);
+  box-shadow: 0 8px 22px rgb(15 23 42 / 0.1);
+  transform: translateY(-1px);
+}
+
+.configuration-card-grid > .checkbox-row {
+  align-content: center;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.configuration-card-grid > .help-text,
+.configuration-card-grid > .warning-text {
+  grid-column: 1 / -1;
+}
+
+.scaling-control-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scaling-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.scaling-control {
+  --scaling-accent: var(--primary);
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--scaling-accent);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  padding: 16px;
+  box-shadow: 0 3px 10px rgb(15 23 42 / 0.05);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.scaling-control:hover,
+.scaling-control:focus-within {
+  border-color: var(--scaling-accent);
+  box-shadow: 0 8px 22px rgb(15 23 42 / 0.1);
+  transform: translateY(-1px);
+}
+
+.scaling-control.preprocessing {
+  --scaling-accent: #0284c7;
+}
+
+.scaling-control.vector {
+  --scaling-accent: #2563eb;
+}
+
+.scaling-control.llm {
+  --scaling-accent: #7c3aed;
+}
+
+.scaling-control.extraction {
+  --scaling-accent: #059669;
+}
+
+.scaling-control-heading output {
+  display: inline-grid;
+  min-width: 38px;
+  min-height: 30px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--scaling-accent);
+  color: #fff;
+  padding: 4px 10px;
+  font-size: 14px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.scaling-slider {
+  display: grid;
+  gap: 2px;
+}
+
+.scaling-slider input[type='range'] {
+  width: 100%;
+  min-height: 30px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--scaling-accent);
+  cursor: pointer;
+}
+
+.scaling-slider > span {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.scaling-slider > span small {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.scaling-controls > .help-text {
+  grid-column: 1 / -1;
+}
+
 .configuration-actions {
   display: flex;
   justify-content: flex-end;
@@ -2519,6 +2668,8 @@ textarea {
   .form-grid,
   .filters,
   .classification-summary,
+  .configuration-card-grid,
+  .scaling-controls,
   .model-settings-band,
   .model-controls,
   .document-row,

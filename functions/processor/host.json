@@ -13,8 +13,8 @@
   },
   "extensions": {
     "queues": {
-      "batchSize": 4,
-      "newBatchThreshold": 2,
+      "batchSize": 16,
+      "newBatchThreshold": 8,
       "maxDequeueCount": 5,
       "visibilityTimeout": "00:05:00"
     }

@@ -54,6 +54,18 @@ export class Configuration {
 
   @Prop({ default: 5, min: 1, max: 50 })
   classificationRagTopK!: number;
+
+  @Prop({ default: 4, min: 1, max: 16 })
+  preprocessingConcurrency!: number;
+
+  @Prop({ default: 4, min: 1, max: 16 })
+  vectorClassificationConcurrency!: number;
+
+  @Prop({ default: 1, min: 1, max: 16 })
+  llmClassificationConcurrency!: number;
+
+  @Prop({ default: 1, min: 1, max: 16 })
+  extractionConcurrency!: number;
 }
 
 export const ConfigurationSchema = SchemaFactory.createForClass(Configuration);

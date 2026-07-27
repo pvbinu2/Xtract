@@ -511,6 +511,10 @@ function OperationsApp() {
     classificationReasoningEffort: 'low',
     classificationMode: 'vector',
     classificationRagTopK: 5,
+    preprocessingConcurrency: 4,
+    vectorClassificationConcurrency: 4,
+    llmClassificationConcurrency: 1,
+    extractionConcurrency: 1,
   });
   const isAdmin = currentUser?.role === 'admin';
   const canManageDocuments = currentUser?.role === 'admin' || currentUser?.role === 'validator';
@@ -535,6 +539,10 @@ function OperationsApp() {
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
         classificationMode: saved.classificationMode === 'llm' || saved.classificationMode === 'rag' ? saved.classificationMode : 'vector',
         classificationRagTopK: Math.min(50, Math.max(1, Number(saved.classificationRagTopK) || 5)),
+        preprocessingConcurrency: Math.min(16, Math.max(1, Number(saved.preprocessingConcurrency) || 4)),
+        vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.vectorClassificationConcurrency) || 4)),
+        llmClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.llmClassificationConcurrency) || 1)),
+        extractionConcurrency: Math.min(16, Math.max(1, Number(saved.extractionConcurrency) || 1)),
       });
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
@@ -558,6 +566,10 @@ function OperationsApp() {
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
             classificationMode: parsed.classificationMode === 'llm' || parsed.classificationMode === 'rag' ? parsed.classificationMode : 'vector',
             classificationRagTopK: Math.min(50, Math.max(1, Number(parsed.classificationRagTopK) || 5)),
+            preprocessingConcurrency: Math.min(16, Math.max(1, Number(parsed.preprocessingConcurrency) || 4)),
+            vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.vectorClassificationConcurrency) || 4)),
+            llmClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.llmClassificationConcurrency) || 1)),
+            extractionConcurrency: Math.min(16, Math.max(1, Number(parsed.extractionConcurrency) || 1)),
           });
         } catch {
           // ignore invalid saved config
@@ -2053,14 +2065,11 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
-  const [expandedSections, setExpandedSections] = useState({
-    aiService: true,
-    documentProcessing: true,
-    downstream: true,
-  });
+  type ConfigurationSection = 'aiService' | 'documentProcessing' | 'scaling' | 'downstream';
+  const [expandedSection, setExpandedSection] = useState<ConfigurationSection | null>(null);
 
-  function toggleSection(section: keyof typeof expandedSections) {
-    setExpandedSections((current) => ({ ...current, [section]: !current[section] }));
+  function toggleSection(section: ConfigurationSection) {
+    setExpandedSection((current) => current === section ? null : section);
   }
 
   async function refreshConfig() {
@@ -2078,14 +2087,14 @@ function ConfigurationScreen({
           <button
             className="configuration-section-toggle"
             type="button"
-            aria-expanded={expandedSections.aiService}
+            aria-expanded={expandedSection === 'aiService'}
             onClick={() => toggleSection('aiService')}
           >
             <span>AI Service Configuration</span>
-            {expandedSections.aiService ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expandedSection === 'aiService' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
-          {expandedSections.aiService && (
-            <div className="configuration-section-body">
+          {expandedSection === 'aiService' && (
+            <div className="configuration-section-body configuration-card-grid ai-settings">
               <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
               <label>
                 AI provider
@@ -2170,14 +2179,117 @@ function ConfigurationScreen({
           <button
             className="configuration-section-toggle"
             type="button"
-            aria-expanded={expandedSections.documentProcessing}
+            aria-expanded={expandedSection === 'scaling'}
+            onClick={() => toggleSection('scaling')}
+          >
+            <span>Scaling</span>
+            {expandedSection === 'scaling' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {expandedSection === 'scaling' && (
+            <div className="configuration-section-body scaling-controls">
+              <label className="scaling-control preprocessing">
+                <span className="scaling-control-heading">
+                  Preprocessing concurrency
+                  <output>{config.preprocessingConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.preprocessingConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      preprocessingConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum OCR or Docling preparations running at the same time.</small>
+              </label>
+              <label className="scaling-control vector">
+                <span className="scaling-control-heading">
+                  Vector classification concurrency
+                  <output>{config.vectorClassificationConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.vectorClassificationConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      vectorClassificationConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum vector-only classifications running at the same time.</small>
+              </label>
+              <label className="scaling-control llm">
+                <span className="scaling-control-heading">
+                  LLM classification concurrency
+                  <output>{config.llmClassificationConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.llmClassificationConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      llmClassificationConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum LLM or RAG classifications running at the same time.</small>
+              </label>
+              <label className="scaling-control extraction">
+                <span className="scaling-control-heading">
+                  Extraction concurrency
+                  <output>{config.extractionConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.extractionConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      extractionConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum field extractions running at the same time.</small>
+              </label>
+              <p className="help-text">
+                Limits apply to new queue invocations after saving. Higher AI concurrency may increase model rate-limit errors.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="configuration-section">
+          <button
+            className="configuration-section-toggle"
+            type="button"
+            aria-expanded={expandedSection === 'documentProcessing'}
             onClick={() => toggleSection('documentProcessing')}
           >
             <span>Document Processing Configuration</span>
-            {expandedSections.documentProcessing ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expandedSection === 'documentProcessing' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
-          {expandedSections.documentProcessing && (
-            <div className="configuration-section-body">
+          {expandedSection === 'documentProcessing' && (
+            <div className="configuration-section-body configuration-card-grid processing-settings">
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -2225,14 +2337,14 @@ function ConfigurationScreen({
           <button
             className="configuration-section-toggle"
             type="button"
-            aria-expanded={expandedSections.downstream}
+            aria-expanded={expandedSection === 'downstream'}
             onClick={() => toggleSection('downstream')}
           >
             <span>Downstream Configuration</span>
-            {expandedSections.downstream ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expandedSection === 'downstream' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
-          {expandedSections.downstream && (
-            <div className="configuration-section-body">
+          {expandedSection === 'downstream' && (
+            <div className="configuration-section-body configuration-card-grid downstream-settings">
               <label>
                 Downstream API URL
                 <input

@@ -33,6 +33,10 @@ export class ConfigurationController {
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       classificationMode?: 'vector' | 'llm' | 'rag';
       classificationRagTopK?: number;
+      preprocessingConcurrency?: number;
+      vectorClassificationConcurrency?: number;
+      llmClassificationConcurrency?: number;
+      extractionConcurrency?: number;
     },
   ): Promise<Configuration> {
     return this.configurationService.save(body);

@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { withAiConcurrency } = require('../aiConcurrency');
+const { withExtractionConcurrency } = require('../aiConcurrency');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -581,5 +581,5 @@ async function extractQueuedDocument(message, context) {
 app.storageQueue('extractDocument', {
   queueName: 'document-extraction',
   connection: 'AzureWebJobsStorage',
-  handler: withAiConcurrency(extractQueuedDocument),
+  handler: withExtractionConcurrency(extractQueuedDocument),
 });

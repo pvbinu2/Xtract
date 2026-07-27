@@ -1,6 +1,6 @@
 const { app, output } = require('@azure/functions');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
-const { withAiConcurrency } = require('../aiConcurrency');
+const { withClassificationConcurrency } = require('../aiConcurrency');
 const {
   ObjectId,
   getClient,
@@ -139,5 +139,5 @@ app.storageQueue('classifyDocument', {
   queueName: 'document-classification',
   connection: 'AzureWebJobsStorage',
   extraOutputs: [extractionQueueOutput],
-  handler: withAiConcurrency(classifyQueuedDocument),
+  handler: withClassificationConcurrency(classifyQueuedDocument),
 });

@@ -1,5 +1,6 @@
 const path = require('path');
 const { app, output } = require('@azure/functions');
+const { withPreprocessingConcurrency } = require('../aiConcurrency');
 const {
   ObjectId,
   getClient,
@@ -130,7 +131,7 @@ app.storageQueue('prepareDocumentText', {
   queueName: 'document-processing',
   connection: 'AzureWebJobsStorage',
   extraOutputs: [classificationQueueOutput],
-  handler: prepareDocumentText,
+  handler: withPreprocessingConcurrency(prepareDocumentText),
 });
 
 module.exports = { prepareDocumentText, sourceBlobName, textArtifactBlobName };

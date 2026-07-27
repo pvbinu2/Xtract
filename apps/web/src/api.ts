@@ -17,6 +17,10 @@ export type AppConfigPayload = {
   classificationReasoningEffort: ReasoningEffort;
   classificationMode: 'vector' | 'llm' | 'rag';
   classificationRagTopK: number;
+  preprocessingConcurrency: number;
+  vectorClassificationConcurrency: number;
+  llmClassificationConcurrency: number;
+  extractionConcurrency: number;
 };
 export type ReprocessDocumentPayload = {
   documentTypeId?: string;
