@@ -15,6 +15,8 @@ export type AppConfigPayload = {
   ollamaEmbeddingModel: string;
   classificationModel: string;
   classificationReasoningEffort: ReasoningEffort;
+  classificationMode: 'vector' | 'llm' | 'rag';
+  classificationRagTopK: number;
 };
 export type ReprocessDocumentPayload = {
   documentTypeId?: string;

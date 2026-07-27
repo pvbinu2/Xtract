@@ -1416,6 +1416,11 @@ textarea {
   color: #92400e;
 }
 
+.method-icon.rag {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
 .method-icon.interactive {
   cursor: pointer;
 }
@@ -1423,10 +1428,6 @@ textarea {
 .method-icon.interactive:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: 2px;
-}
-
-.classification-justification-modal {
-  max-width: 620px;
 }
 
 .classification-justification-summary {
@@ -1444,6 +1445,50 @@ textarea {
   margin: 0;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+.rag-candidate-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.rag-candidate-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rag-candidate-table th,
+.rag-candidate-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.rag-candidate-table th {
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rag-candidate-table th:first-child,
+.rag-candidate-table td:first-child {
+  width: 60px;
+  text-align: center;
+}
+
+.rag-candidate-table th:last-child,
+.rag-candidate-table td:last-child {
+  width: 120px;
+  text-align: right;
+}
+
+.rag-candidate-table td:last-child {
+  color: #6d28d9;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .processing-mode-badge {
@@ -1745,9 +1790,21 @@ textarea {
   text-transform: capitalize;
 }
 
-.pill.processing {
+.pill.processing,
+.pill.uploaded,
+.pill.received {
   background: #fef3c7;
   color: #92400e;
+}
+
+.pill.preprocessed {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.pill.classified {
+  background: #ede9fe;
+  color: #6d28d9;
 }
 
 .pill.extracted {
@@ -2200,6 +2257,13 @@ textarea {
   width: min(460px, 100%);
   max-height: none;
   overflow: visible;
+}
+
+.confirm-modal.classification-justification-modal {
+  width: min(1200px, 100%);
+  max-width: 1200px;
+  max-height: min(850px, 90vh);
+  overflow: auto;
 }
 
 .reprocess-modal {

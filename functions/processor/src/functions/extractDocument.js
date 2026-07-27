@@ -1,4 +1,5 @@
 const { app } = require('@azure/functions');
+const { withAiConcurrency } = require('../aiConcurrency');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -15,6 +16,7 @@ const {
   recordBusinessReviewProcessing,
   removeTempFile,
   resolveDocumentFile,
+  resolvePreparedDocumentText,
   resolveMessage,
 } = require('../documentProcessingCommon');
 
@@ -326,12 +328,16 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const textMode = textOptions.mode === 'markdown' ? 'markdown' : 'ocr';
-  const useDocumentText = useOcr || providerName(aiOptions) === 'ollama';
-  const documentContent = useDocumentText ? await extractDocumentContent(document.filePath, undefined, {
-    mode: textMode,
-    markdownServiceUrl: textOptions.markdownServiceUrl,
-    fileName: document.originalName || document.fileName,
-  }) : { text: '', spatialItems: [] };
+  const useDocumentText = typeof textOptions.preparedText === 'string' || useOcr || providerName(aiOptions) === 'ollama';
+  const documentContent = typeof textOptions.preparedText === 'string'
+    ? { text: textOptions.preparedText, spatialItems: [] }
+    : useDocumentText
+      ? await extractDocumentContent(document.filePath, undefined, {
+        mode: textMode,
+        markdownServiceUrl: textOptions.markdownServiceUrl,
+        fileName: document.originalName || document.fileName,
+      })
+      : { text: '', spatialItems: [] };
   const documentText = documentContent.text;
   const textSourceLabel = textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text';
   const requestConfig = openAIRequestConfig({
@@ -372,7 +378,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
       documentType,
       selectedFields,
       values,
-      useOcr,
+      useOcr: useDocumentText,
       documentText,
       textSourceLabel,
     });
@@ -386,7 +392,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
         selectedFields,
         values,
         issues: verification.issues,
-        useOcr,
+        useOcr: useDocumentText,
         documentText,
         textSourceLabel,
       });
@@ -470,12 +476,20 @@ async function extractQueuedDocument(message, context) {
   let localFilePath;
   try {
     localFilePath = await resolveDocumentFile(document);
+    const preparedText = await resolvePreparedDocumentText(document);
+    const preparedTextMode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
     const localDocument = { ...document, ...payload.classificationUpdate, filePath: localFilePath };
     const effectiveDocumentType = {
       ...documentType,
       extractionModel: reprocessOptions.extractionModel || documentType.extractionModel,
     };
-    const extraction = await extractValuesWithOpenAI(localDocument, effectiveDocumentType, useOcrForDocumentProcessing, textOptions, aiOptions);
+    const extraction = await extractValuesWithOpenAI(
+      localDocument,
+      effectiveDocumentType,
+      useOcrForDocumentProcessing,
+      { ...textOptions, mode: preparedTextMode, preparedText },
+      aiOptions,
+    );
     const extractedData = await attachBoundingBoxes(
       localFilePath,
       extraction?.values ||
@@ -547,7 +561,7 @@ async function extractQueuedDocument(message, context) {
           extractedData,
           processingMetrics,
           classificationModel: localDocument.classificationModel,
-          processingMode: useOcrForDocumentProcessing && documentTextMode === 'markdown' ? 'markdown' : useOcrForDocumentProcessing ? 'ocr' : 'pdf',
+          processingMode: preparedTextMode,
           error: null,
           updatedAt: new Date(),
         },
@@ -567,5 +581,5 @@ async function extractQueuedDocument(message, context) {
 app.storageQueue('extractDocument', {
   queueName: 'document-extraction',
   connection: 'AzureWebJobsStorage',
-  handler: extractQueuedDocument,
+  handler: withAiConcurrency(extractQueuedDocument),
 });

@@ -26,6 +26,8 @@ export class ConfigurationService {
       ollamaEmbeddingModel: process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
       classificationModel: 'gpt-5-nano',
       classificationReasoningEffort: 'low',
+      classificationMode: 'vector',
+      classificationRagTopK: 5,
     };
     return {
       ...defaults,
@@ -40,6 +42,10 @@ export class ConfigurationService {
       ollamaEmbeddingModel: config?.ollamaEmbeddingModel || defaults.ollamaEmbeddingModel,
       classificationModel: config?.classificationModel || defaults.classificationModel,
       classificationReasoningEffort: config?.classificationReasoningEffort || defaults.classificationReasoningEffort,
+      classificationMode: ['vector', 'llm', 'rag'].includes(config?.classificationMode || '')
+        ? config?.classificationMode
+        : defaults.classificationMode,
+      classificationRagTopK: Math.min(50, Math.max(1, Number(config?.classificationRagTopK) || defaults.classificationRagTopK)),
     } as Configuration;
   }
 
@@ -58,10 +64,16 @@ export class ConfigurationService {
     ollamaEmbeddingModel?: string;
     classificationModel?: string;
     classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+    classificationMode?: 'vector' | 'llm' | 'rag';
+    classificationRagTopK?: number;
   }): Promise<Configuration> {
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
     const aiProvider = config.aiProvider === 'ollama' ? 'ollama' : 'openai';
     const embeddingProvider = config.embeddingProvider === 'ollama' ? 'ollama' : 'openai';
+    const classificationMode = ['vector', 'llm', 'rag'].includes(config.classificationMode || '')
+      ? config.classificationMode
+      : 'vector';
+    const classificationRagTopK = Math.min(50, Math.max(1, Number(config.classificationRagTopK) || 5));
     const updated = await this.configModel
       .findOneAndUpdate(
         {},
@@ -79,6 +91,8 @@ export class ConfigurationService {
           ollamaEmbeddingModel: config.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
           classificationModel: config.classificationModel || 'gpt-5-nano',
           classificationReasoningEffort: config.classificationReasoningEffort || 'low',
+          classificationMode,
+          classificationRagTopK,
         },
         {
           new: true,

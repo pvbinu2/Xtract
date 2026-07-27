@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { PDFDocument } from 'pdf-lib';
 import { DocumentType, DocumentTypeDocument } from '../schemas/document-type.schema';
 import {
@@ -46,7 +46,11 @@ export class DocumentsService {
     pageSize?: string;
   }) {
     const filter: Record<string, unknown> = {};
-    if (query.status) filter.status = query.status;
+    if (query.status === 'in-progress') {
+      filter.status = { $in: ['received', 'preprocessed', 'classified', 'uploaded', 'processing'] };
+    } else if (query.status) {
+      filter.status = query.status;
+    }
     if (query.category) filter.category = query.category;
     if (query.name) filter.originalName = new RegExp(this.escapeRegex(query.name), 'i');
     if (query.documentTypeId) filter.documentTypeId = query.documentTypeId;
@@ -83,10 +87,12 @@ export class DocumentsService {
       const docType = item.documentTypeId ? await this.documentTypeModel.findById(item.documentTypeId) : undefined;
       if (item.documentTypeId && !docType) throw new NotFoundException('Document type not found');
 
-      const blobName = this.blobStorage.createBlobName(item.originalName);
+      const documentId = new Types.ObjectId();
+      const blobName = this.blobStorage.createBlobName(item.originalName, documentId.toString());
       await this.blobStorage.uploadBuffer(PROCESSING_CONTAINER, blobName, item.buffer, item.mimeType);
 
       const document = await this.documentModel.create({
+        _id: documentId,
         fileName: blobName,
         originalName: item.originalName,
         filePath: `azure://${PROCESSING_CONTAINER}/${blobName}`,
@@ -98,7 +104,7 @@ export class DocumentsService {
         classificationScore: docType ? 1 : undefined,
         classificationMethod: docType ? 'manual' : 'vector',
         classificationModel: docType ? 'manual' : undefined,
-        status: 'processing',
+        status: 'received',
         extractedData: [],
       });
 
@@ -141,7 +147,7 @@ export class DocumentsService {
 
     this.queueConnectionString();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
-    document.status = 'processing';
+    document.status = 'received';
     document.extractedData = [];
     document.error = undefined;
     if (forceClassification) {
@@ -284,7 +290,9 @@ export class DocumentsService {
   async businessReviewSummary() {
     const [totalFiles, filesProcessing, filesFailed, persistedSummary, recentDocuments] = await Promise.all([
       this.documentModel.countDocuments(),
-      this.documentModel.countDocuments({ status: 'processing' }),
+      this.documentModel.countDocuments({
+        status: { $in: ['received', 'preprocessed', 'classified', 'uploaded', 'processing'] },
+      }),
       this.documentModel.countDocuments({ status: 'failed' }),
       this.businessReviewSummaryModel.findOneAndUpdate(
         { key: 'global' },
@@ -509,6 +517,9 @@ export class DocumentsService {
 
     if (document.storageContainer && document.storageBlobName) {
       await this.blobStorage.deleteBlob(document.storageContainer, document.storageBlobName);
+      if (document.textArtifactContainer && document.textArtifactBlobName) {
+        await this.blobStorage.deleteBlob(document.textArtifactContainer, document.textArtifactBlobName);
+      }
     } else {
       try {
         await unlink(document.filePath);

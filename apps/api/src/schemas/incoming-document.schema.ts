@@ -2,7 +2,16 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
 export type IncomingDocumentDocument = HydratedDocument<IncomingDocument>;
-export type DocumentStatus = 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
+export type DocumentStatus =
+  | 'received'
+  | 'preprocessed'
+  | 'classified'
+  | 'extracted'
+  | 'validated'
+  | 'rejected'
+  | 'failed'
+  | 'uploaded'
+  | 'processing';
 export type ReprocessOptions = {
   documentTypeId?: string;
   extractionModel?: string;
@@ -103,6 +112,15 @@ export class IncomingDocument {
   @Prop()
   storageBlobName?: string;
 
+  @Prop()
+  textArtifactContainer?: string;
+
+  @Prop()
+  textArtifactBlobName?: string;
+
+  @Prop()
+  textArtifactMode?: 'ocr' | 'markdown';
+
   @Prop({ default: 'Unclassified' })
   category!: string;
 
@@ -116,7 +134,7 @@ export class IncomingDocument {
   classificationScore?: number;
 
   @Prop({ default: 'manual' })
-  classificationMethod!: 'manual' | 'vector' | 'llm';
+  classificationMethod!: 'manual' | 'vector' | 'llm' | 'rag';
 
   @Prop()
   classificationModel?: string;
@@ -124,10 +142,27 @@ export class IncomingDocument {
   @Prop()
   classificationJustification?: string;
 
+  @Prop({
+    type: [{
+      documentTypeId: String,
+      category: String,
+      name: String,
+      score: Number,
+      _id: false,
+    }],
+    default: undefined,
+  })
+  classificationCandidates?: Array<{
+    documentTypeId: string;
+    category: string;
+    name: string;
+    score: number;
+  }>;
+
   @Prop()
   processingMode?: 'ocr' | 'pdf' | 'markdown';
 
-  @Prop({ default: 'uploaded' })
+  @Prop({ default: 'received' })
   status!: DocumentStatus;
 
   @Prop({ type: [ExtractedValueSchema], default: [] })

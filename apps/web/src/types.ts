@@ -56,14 +56,29 @@ export type IncomingDocument = {
   documentTypeId: string;
   documentTypeName: string;
   classificationScore?: number;
-  classificationMethod?: 'manual' | 'vector' | 'llm';
+  classificationMethod?: 'manual' | 'vector' | 'llm' | 'rag';
   classificationModel?: string;
   classificationJustification?: string;
+  classificationCandidates?: Array<{
+    documentTypeId: string;
+    category: string;
+    name: string;
+    score: number;
+  }>;
   processingMode?: 'ocr' | 'pdf' | 'markdown';
   processingMetrics?: {
     model?: string;
   };
-  status: 'uploaded' | 'processing' | 'extracted' | 'validated' | 'rejected' | 'failed';
+  status:
+    | 'received'
+    | 'preprocessed'
+    | 'classified'
+    | 'extracted'
+    | 'validated'
+    | 'rejected'
+    | 'failed'
+    | 'uploaded'
+    | 'processing';
   extractedData: ExtractedValue[];
   createdAt: string;
   updatedAt: string;

@@ -31,6 +31,8 @@ export class ConfigurationController {
       ollamaEmbeddingModel?: string;
       classificationModel?: string;
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+      classificationMode?: 'vector' | 'llm' | 'rag';
+      classificationRagTopK?: number;
     },
   ): Promise<Configuration> {
     return this.configurationService.save(body);

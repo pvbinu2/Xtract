@@ -38,7 +38,7 @@ Xtract is designed for organizations that need to automate document processing w
 
 - Document type management with configurable extraction schemas.
 - Sample PDF upload for template generation and classifier training.
-- Automatic document classification using vector search with LLM fallback.
+- Configurable classification using the top vector result, an LLM with all document types, or RAG with the top vector-retrieved types.
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
 - Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
 - Validation screen with source PDF preview and editable extracted fields.
@@ -85,7 +85,7 @@ Roles:
 
 ### Blob Trigger Ingestion
 
-The processor Function app includes a blob trigger for the `trigger` storage container. When a new file is uploaded to `trigger`, the function moves it to the `processing` container, creates an `IncomingDocument` record with `status: processing`, and enqueues the existing `document-processing` queue. The document then appears in the UI through the normal Documents and Validation screens as it moves through classification and extraction.
+The processor Function app includes a blob trigger for the `trigger` storage container. When a new file is uploaded to `trigger`, the function moves it to the `processing` container, creates an `IncomingDocument` record with `status: processing`, and enqueues the `document-processing` queue. Files in the processing container use a document-scoped layout: `{documentId}/{source-file}` plus `{documentId}/{source-name}.ocr` or `.md`. The prepared text artifact is reused by classification and extraction.
 
 ### Docling Markdown Extraction
 
@@ -219,7 +219,7 @@ The API runs on:
 http://localhost:3000
 ```
 
-Document processing always runs through the Azure Function worker. The API enqueues work on `document-processing`; the classification function then enqueues extraction work on `document-extraction`. Make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set for the API and function app, then start:
+Document processing always runs through the Azure Function worker. A document progresses through the persisted statuses **Received**, **Preprocessed**, **Classified**, and **Extracted**. The API enqueues work on `document-processing`; the text-preparation function creates the stored OCR/markdown artifact and enqueues `document-classification`; classification then enqueues `document-extraction`. The host processes up to four queue messages concurrently so native OCR/Docling preprocessing can run in parallel. Classification and extraction share a concurrency gate that defaults to one AI operation at a time; set `AI_PROCESSING_CONCURRENCY` to a positive integer to tune that limit. Make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set for the API and function app, then start:
 
 ```bash
 npm run dev:function
@@ -275,7 +275,7 @@ http://docling-markdown:7072/api/extract-markdown
 - With `OPENAI_API_KEY` present, uploads use Azure Blob Storage, template generation and extraction use OpenAI, and classifier training stores embeddings in Qdrant.
 - When using Ollama from Docker Compose, set the app configuration's Ollama base URL to `http://host.docker.internal:11434`. The `xtract-apps` service also defaults `OLLAMA_MODEL=llama3.2` and `OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b`.
 - If no OpenAI key is configured, the app falls back to deterministic mock values for local UI testing.
-- Automatic classification searches Qdrant first. If the best vector score is at least `CLASSIFIER_VECTOR_SCORE_THRESHOLD` (default `0.82`), the worker skips the LLM classifier call.
+- Classification mode is configured in the application: **Vector** selects Qdrant's top result, **LLM** sends all eligible document types to the model, and **RAG** sends only the configured top-K vector-retrieved types to the model.
 - Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`.
 - OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts.
 - The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.
