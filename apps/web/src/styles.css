@@ -2415,6 +2415,205 @@ textarea {
   overflow: auto;
 }
 
+.confirm-modal.document-flow-modal {
+  width: min(760px, 100%);
+  max-height: min(850px, 90vh);
+  overflow: auto;
+}
+
+.clickable-status {
+  cursor: pointer;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.clickable-status:hover,
+.clickable-status:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 0.2);
+  transform: translateY(-1px);
+}
+
+button.clickable-status {
+  border: 0;
+  font: inherit;
+}
+
+.document-flow {
+  display: grid;
+  gap: 0;
+}
+
+.document-flow-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.document-flow-summary > div {
+  display: grid;
+  gap: 3px;
+  padding: 14px 16px;
+  border: 1px solid rgb(37 99 235 / 0.25);
+  border-radius: 10px;
+  background: rgb(59 130 246 / 0.08);
+}
+
+.document-flow-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.document-flow-summary strong {
+  color: #2563eb;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.document-flow-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.document-flow-stage {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 112px;
+}
+
+.document-flow-marker {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.document-flow-marker > svg {
+  position: relative;
+  z-index: 1;
+  box-sizing: content-box;
+  padding: 5px;
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.document-flow-marker > span {
+  position: absolute;
+  top: 28px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--border);
+}
+
+.document-flow-stage.completed .document-flow-marker {
+  color: #15803d;
+}
+
+.document-flow-stage.current .document-flow-marker {
+  color: #2563eb;
+}
+
+.document-flow-stage-card {
+  align-self: start;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.document-flow-stage.current .document-flow-stage-card {
+  border-color: rgb(59 130 246 / 0.55);
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+}
+
+.document-flow-stage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.document-flow-stage-heading strong {
+  text-transform: capitalize;
+}
+
+.document-flow-stage-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.document-flow-stage-card dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.document-flow-stage-card dl > div {
+  min-width: 0;
+}
+
+.document-flow-stage-card dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.document-flow-stage-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.document-queue-wait {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: -14px 0 14px;
+  color: var(--muted);
+}
+
+.document-queue-wait-icon {
+  display: flex;
+  justify-content: center;
+  color: #b45309;
+}
+
+.document-queue-wait > div:nth-child(2) {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px dashed rgb(180 83 9 / 0.38);
+  border-radius: 8px;
+  background: rgb(245 158 11 / 0.08);
+}
+
+.document-queue-wait strong {
+  color: #b45309;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.document-queue-wait span {
+  font-size: 11px;
+}
+
+.document-queue-wait em {
+  min-width: 64px;
+  color: #b45309;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  text-align: right;
+}
+
 .reprocess-modal {
   width: min(520px, 100%);
 }

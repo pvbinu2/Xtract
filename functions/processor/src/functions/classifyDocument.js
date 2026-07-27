@@ -4,6 +4,8 @@ const { withClassificationConcurrency } = require('../aiConcurrency');
 const { publishDocumentChanged } = require('../documentEvents');
 const {
   ObjectId,
+  beginDocumentStage,
+  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -13,6 +15,7 @@ const {
   resolveDocumentFile,
   resolveDocumentId,
   resolvePreparedDocumentText,
+  transitionDocumentStatus,
 } = require('../documentProcessingCommon');
 
 const extractionQueueOutput = output.storageQueue({
@@ -36,6 +39,7 @@ async function classifyQueuedDocument(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
+  await beginDocumentStage(documents, document._id, 'classified');
 
   const configuration = await db.collection('configuration').findOne({});
   const {
@@ -57,13 +61,13 @@ async function classifyQueuedDocument(message, context) {
   try {
     let documentType = !forceClassification && documentTypeId ? await documentTypes.findOne({ _id: documentTypeId }) : null;
     if (!forceClassification && documentTypeId && !documentType) {
-      await documents.updateOne(
-        { _id: document._id },
-        {
-          $set: { status: 'failed', error: 'Document type not found', updatedAt: new Date() },
-          $inc: { revision: 1 },
-          $unset: { reprocessOptions: '' },
-        },
+      await transitionDocumentStatus(
+        documents,
+        document._id,
+        'failed',
+        { error: 'Document type not found' },
+        ['reprocessOptions'],
+        { completed: true },
       );
       await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
       return;
@@ -122,13 +126,7 @@ async function classifyQueuedDocument(message, context) {
       }
     }
 
-    await documents.updateOne(
-      { _id: document._id },
-      {
-        $set: { status: 'classified', updatedAt: new Date() },
-        $inc: { revision: 1 },
-      },
-    );
+    await completeDocumentStage(documents, document._id, 'classified');
     await publishDocumentChanged(
       documents,
       document._id,

@@ -39,6 +39,23 @@ export class DocumentsService {
     return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  private transitionStatus(
+    document: IncomingDocumentDocument,
+    status: IncomingDocument['status'],
+    reset = false,
+    completed = false,
+  ) {
+    const now = new Date();
+    const timings = reset ? [] : [...(document.stageTimings || [])];
+    for (const timing of timings) {
+      if (!timing.endTime) timing.endTime = now;
+    }
+    timings.push({ status, startTime: now, ...(completed ? { endTime: now } : {}) } as any);
+    document.stageTimings = timings as any;
+    document.status = status;
+    document.revision = Number(document.revision || 0) + 1;
+  }
+
   async list(query: {
     status?: string;
     category?: string;
@@ -108,6 +125,11 @@ export class DocumentsService {
         classificationMethod: docType ? 'manual' : 'vector',
         classificationModel: docType ? 'manual' : undefined,
         status: 'received',
+        stageTimings: [{
+          status: 'received',
+          startTime: new Date(),
+          endTime: new Date(),
+        }],
         revision: 1,
         extractedData: [],
       });
@@ -178,8 +200,7 @@ export class DocumentsService {
 
     this.queueConnectionString();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
-    document.status = 'received';
-    document.revision = Number(document.revision || 0) + 1;
+    this.transitionStatus(document, 'received', true, true);
     document.extractedData = [];
     document.error = undefined;
     if (forceClassification) {
@@ -512,12 +533,11 @@ export class DocumentsService {
     id: string,
     extractedData: ExtractedValue[],
   ) {
-    const updated = await this.documentModel.findByIdAndUpdate(
-      id,
-      { $set: { extractedData, status: 'validated' }, $inc: { revision: 1 } },
-      { new: true },
-    );
+    const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
+    updated.extractedData = extractedData;
+    this.transitionStatus(updated, 'validated');
+    await updated.save();
     await this.publishDocumentChanged(updated, ['status', 'extractedData']);
 
     const configuration = await this.configurationService.get();
@@ -540,12 +560,10 @@ export class DocumentsService {
   }
 
   async reject(id: string) {
-    const updated = await this.documentModel.findByIdAndUpdate(
-      id,
-      { $set: { status: 'rejected' }, $inc: { revision: 1 } },
-      { new: true },
-    );
+    const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
+    this.transitionStatus(updated, 'rejected');
+    await updated.save();
     await this.publishDocumentChanged(updated, ['status']);
 
     const configuration = await this.configurationService.get();

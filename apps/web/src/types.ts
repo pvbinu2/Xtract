@@ -54,6 +54,11 @@ export type IncomingDocument = {
   originalName: string;
   textArtifactBlobName?: string;
   textArtifactMode?: 'ocr' | 'markdown';
+  stageTimings?: Array<{
+    status: IncomingDocument['status'];
+    startTime: string;
+    endTime?: string;
+  }>;
   category: string;
   documentTypeId: string;
   documentTypeName: string;

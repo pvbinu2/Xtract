@@ -3,6 +3,8 @@ const { app, output } = require('@azure/functions');
 const { withPreprocessingConcurrency } = require('../aiConcurrency');
 const {
   ObjectId,
+  beginDocumentStage,
+  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -50,6 +52,7 @@ async function prepareDocumentText(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
+  await beginDocumentStage(documents, document._id, 'preprocessed');
   if (!hasResolvableDocumentFile(document)) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
@@ -105,17 +108,14 @@ async function prepareDocumentText(message, context) {
     ) {
       await deleteBlob(document.textArtifactContainer, document.textArtifactBlobName);
     }
-    await documents.updateOne(
-      { _id: document._id },
+    await completeDocumentStage(
+      documents,
+      document._id,
+      'preprocessed',
       {
-        $set: {
-          textArtifactContainer: PROCESSING_CONTAINER,
-          textArtifactBlobName: artifactBlobName,
-          textArtifactMode: documentTextMode,
-          status: 'preprocessed',
-          updatedAt: new Date(),
-        },
-        $inc: { revision: 1 },
+        textArtifactContainer: PROCESSING_CONTAINER,
+        textArtifactBlobName: artifactBlobName,
+        textArtifactMode: documentTextMode,
       },
     );
     await publishDocumentChanged(

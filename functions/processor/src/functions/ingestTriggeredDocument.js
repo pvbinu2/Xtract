@@ -70,6 +70,7 @@ async function ingestTriggeredDocument(_blob, context) {
     documentTypeName: 'Pending classification',
     classificationMethod: 'vector',
     status: 'received',
+    stageTimings: [{ status: 'received', startTime: now, endTime: now }],
     revision: 1,
     extractedData: [],
     createdAt: now,

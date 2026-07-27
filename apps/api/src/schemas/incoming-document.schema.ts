@@ -12,6 +12,20 @@ export type DocumentStatus =
   | 'failed'
   | 'uploaded'
   | 'processing';
+
+@Schema({ _id: false })
+export class DocumentStageTiming {
+  @Prop({ required: true })
+  status!: DocumentStatus;
+
+  @Prop({ required: true })
+  startTime!: Date;
+
+  @Prop()
+  endTime?: Date;
+}
+
+const DocumentStageTimingSchema = SchemaFactory.createForClass(DocumentStageTiming);
 export type ReprocessOptions = {
   documentTypeId?: string;
   extractionModel?: string;
@@ -120,6 +134,9 @@ export class IncomingDocument {
 
   @Prop()
   textArtifactMode?: 'ocr' | 'markdown';
+
+  @Prop({ type: [DocumentStageTimingSchema], default: [] })
+  stageTimings!: DocumentStageTiming[];
 
   @Prop({ default: 'Unclassified' })
   category!: string;
