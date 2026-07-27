@@ -76,6 +76,6 @@ export class AuthGuard implements CanActivate {
   }
 
   private jwtSecret() {
-    return process.env.JWT_SECRET || 'xtract-local-dev-secret';
+    return process.env.JWT_SECRET || 'xtract-local-dev-secret-change-me-32';
   }
 }

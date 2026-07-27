@@ -92,13 +92,146 @@ function hasResolvableDocumentFile(document) {
 }
 
 async function markDocumentFailed(documents, documentId, error) {
+  await transitionDocumentStatus(
+    documents,
+    documentId,
+    'failed',
+    { error },
+    ['reprocessOptions'],
+    { completed: true },
+  );
+}
+
+async function beginDocumentStage(documents, documentId, status) {
+  const now = new Date();
   await documents.updateOne(
     { _id: documentId },
-    {
-      $set: { status: 'failed', error, updatedAt: new Date() },
-      $unset: { reprocessOptions: '' },
-    },
+    [
+      {
+        $set: {
+          stageTimings: {
+            $concatArrays: [
+              {
+                $map: {
+                  input: { $ifNull: ['$stageTimings', []] },
+                  as: 'stage',
+                  in: {
+                    $cond: [
+                      { $eq: [{ $ifNull: ['$$stage.endTime', null] }, null] },
+                      { $mergeObjects: ['$$stage', { endTime: now }] },
+                      '$$stage',
+                    ],
+                  },
+                },
+              },
+              [{ status, startTime: now }],
+            ],
+          },
+        },
+      },
+    ],
   );
+}
+
+async function completeDocumentStage(
+  documents,
+  documentId,
+  status,
+  setFields = {},
+  unsetFields = [],
+) {
+  const now = new Date();
+  await documents.updateOne(
+    { _id: documentId },
+    [
+      {
+        $set: {
+          ...setFields,
+          status,
+          updatedAt: now,
+          revision: { $add: [{ $ifNull: ['$revision', 0] }, 1] },
+          stageTimings: {
+            $map: {
+              input: { $ifNull: ['$stageTimings', []] },
+              as: 'stage',
+              in: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$$stage.status', status] },
+                      { $eq: [{ $ifNull: ['$$stage.endTime', null] }, null] },
+                    ],
+                  },
+                  { $mergeObjects: ['$$stage', { endTime: now }] },
+                  '$$stage',
+                ],
+              },
+            },
+          },
+        },
+      },
+    ],
+  );
+  if (unsetFields.length) {
+    await documents.updateOne(
+      { _id: documentId },
+      { $unset: Object.fromEntries(unsetFields.map((field) => [field, ''])) },
+    );
+  }
+}
+
+async function transitionDocumentStatus(
+  documents,
+  documentId,
+  status,
+  setFields = {},
+  unsetFields = [],
+  timing = {},
+) {
+  const now = new Date();
+  const startTime = timing.startTime || now;
+  const newStageTiming = {
+    status,
+    startTime,
+    ...(timing.completed ? { endTime: now } : {}),
+  };
+  await documents.updateOne(
+    { _id: documentId },
+    [
+      {
+        $set: {
+          ...setFields,
+          status,
+          updatedAt: now,
+          revision: { $add: [{ $ifNull: ['$revision', 0] }, 1] },
+          stageTimings: {
+            $concatArrays: [
+              {
+                $map: {
+                  input: { $ifNull: ['$stageTimings', []] },
+                  as: 'stage',
+                  in: {
+                    $cond: [
+                      { $eq: [{ $ifNull: ['$$stage.endTime', null] }, null] },
+                      { $mergeObjects: ['$$stage', { endTime: now }] },
+                      '$$stage',
+                    ],
+                  },
+                },
+              },
+              [newStageTiming],
+            ],
+          },
+        },
+      },
+    ],
+  );
+  if (unsetFields.length) {
+    await documents.updateOne(
+      { _id: documentId },
+      { $unset: Object.fromEntries(unsetFields.map((field) => [field, ''])) },
+    );
+  }
 }
 
 async function recordBusinessReviewProcessing(db, document, documentType, metrics) {
@@ -167,6 +300,9 @@ module.exports = {
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
+  beginDocumentStage,
+  completeDocumentStage,
+  transitionDocumentStatus,
   normalizeDocumentTypeId,
   processingOptionsFor,
   recordBusinessReviewProcessing,

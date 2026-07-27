@@ -52,6 +52,13 @@ export type IncomingDocument = {
   _id: string;
   fileName: string;
   originalName: string;
+  textArtifactBlobName?: string;
+  textArtifactMode?: 'ocr' | 'markdown';
+  stageTimings?: Array<{
+    status: IncomingDocument['status'];
+    startTime: string;
+    endTime?: string;
+  }>;
   category: string;
   documentTypeId: string;
   documentTypeName: string;
@@ -79,6 +86,7 @@ export type IncomingDocument = {
     | 'failed'
     | 'uploaded'
     | 'processing';
+  revision?: number;
   extractedData: ExtractedValue[];
   createdAt: string;
   updatedAt: string;

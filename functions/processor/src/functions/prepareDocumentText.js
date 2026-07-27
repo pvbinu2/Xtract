@@ -3,6 +3,8 @@ const { app, output } = require('@azure/functions');
 const { withPreprocessingConcurrency } = require('../aiConcurrency');
 const {
   ObjectId,
+  beginDocumentStage,
+  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -12,6 +14,7 @@ const {
   resolveDocumentId,
 } = require('../documentProcessingCommon');
 const { extractDocumentContent } = require('../documentText');
+const { publishDocumentChanged } = require('../documentEvents');
 const {
   PROCESSING_CONTAINER,
   deleteBlob,
@@ -49,10 +52,12 @@ async function prepareDocumentText(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
+  await beginDocumentStage(documents, document._id, 'preprocessed');
   if (!hasResolvableDocumentFile(document)) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -103,17 +108,21 @@ async function prepareDocumentText(message, context) {
     ) {
       await deleteBlob(document.textArtifactContainer, document.textArtifactBlobName);
     }
-    await documents.updateOne(
-      { _id: document._id },
+    await completeDocumentStage(
+      documents,
+      document._id,
+      'preprocessed',
       {
-        $set: {
-          textArtifactContainer: PROCESSING_CONTAINER,
-          textArtifactBlobName: artifactBlobName,
-          textArtifactMode: documentTextMode,
-          status: 'preprocessed',
-          updatedAt: new Date(),
-        },
+        textArtifactContainer: PROCESSING_CONTAINER,
+        textArtifactBlobName: artifactBlobName,
+        textArtifactMode: documentTextMode,
       },
+    );
+    await publishDocumentChanged(
+      documents,
+      document._id,
+      ['status', 'textArtifactBlobName', 'textArtifactMode'],
+      context,
     );
 
     context.info(`Prepared ${documentTextMode} for document ${document._id} at ${artifactBlobName}.`);
@@ -122,6 +131,7 @@ async function prepareDocumentText(message, context) {
     const errorMessage = `Document text preparation failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
   } finally {
     if (localFilePath && document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
   }

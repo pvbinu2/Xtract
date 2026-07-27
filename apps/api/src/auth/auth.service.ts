@@ -88,6 +88,6 @@ export class AuthService implements OnModuleInit {
   }
 
   private jwtSecret() {
-    return process.env.JWT_SECRET || 'xtract-local-dev-secret';
+    return process.env.JWT_SECRET || 'xtract-local-dev-secret-change-me-32';
   }
 }

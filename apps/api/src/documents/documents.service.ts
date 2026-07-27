@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { QueueServiceClient } from '@azure/storage-queue';
+import { randomUUID } from 'crypto';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
 import { Model, Types } from 'mongoose';
@@ -23,6 +24,8 @@ import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storag
 
 @Injectable()
 export class DocumentsService {
+  private documentEventsQueue?: ReturnType<QueueServiceClient['getQueueClient']>;
+
   constructor(
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
@@ -34,6 +37,23 @@ export class DocumentsService {
 
   private escapeRegex(input: string) {
     return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private transitionStatus(
+    document: IncomingDocumentDocument,
+    status: IncomingDocument['status'],
+    reset = false,
+    completed = false,
+  ) {
+    const now = new Date();
+    const timings = reset ? [] : [...(document.stageTimings || [])];
+    for (const timing of timings) {
+      if (!timing.endTime) timing.endTime = now;
+    }
+    timings.push({ status, startTime: now, ...(completed ? { endTime: now } : {}) } as any);
+    document.stageTimings = timings as any;
+    document.status = status;
+    document.revision = Number(document.revision || 0) + 1;
   }
 
   async list(query: {
@@ -105,10 +125,17 @@ export class DocumentsService {
         classificationMethod: docType ? 'manual' : 'vector',
         classificationModel: docType ? 'manual' : undefined,
         status: 'received',
+        stageTimings: [{
+          status: 'received',
+          startTime: new Date(),
+          endTime: new Date(),
+        }],
+        revision: 1,
         extractedData: [],
       });
 
       documents.push(document);
+      await this.publishDocumentChanged(document, ['status']);
       await this.enqueueProcessing(document.id);
     }
 
@@ -130,6 +157,32 @@ export class DocumentsService {
     await queue.sendMessage(Buffer.from(JSON.stringify({ documentId })).toString('base64'));
   }
 
+  private async publishDocumentChanged(
+    document: any,
+    changedFields: string[],
+  ) {
+    if (process.env.SIGNALR_ENABLED === 'false' || !process.env.REALTIME_BROADCAST_URL) return;
+    try {
+      if (!this.documentEventsQueue) {
+        const connectionString = this.queueConnectionString();
+        this.documentEventsQueue = QueueServiceClient
+          .fromConnectionString(connectionString)
+          .getQueueClient('document-events');
+        await this.documentEventsQueue.createIfNotExists();
+      }
+      await this.documentEventsQueue.sendMessage(Buffer.from(JSON.stringify({
+        eventId: randomUUID(),
+        documentId: document.id || String(document._id),
+        revision: Number(document.revision || 0),
+        status: document.status,
+        changedFields,
+        updatedAt: new Date(document.updatedAt || Date.now()).toISOString(),
+      })).toString('base64'));
+    } catch (error) {
+      console.warn(`Document real-time event could not be queued: ${(error as Error)?.message || String(error)}`);
+    }
+  }
+
   async reprocess(id: string, options: ReprocessOptions = {}) {
     const document = await this.documentModel.findById(id);
     if (!document) throw new NotFoundException('Document not found');
@@ -147,7 +200,7 @@ export class DocumentsService {
 
     this.queueConnectionString();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
-    document.status = 'received';
+    this.transitionStatus(document, 'received', true, true);
     document.extractedData = [];
     document.error = undefined;
     if (forceClassification) {
@@ -160,6 +213,7 @@ export class DocumentsService {
       forceClassification,
     };
     await document.save();
+    await this.publishDocumentChanged(document, ['status', 'extractedData']);
 
     await this.enqueueProcessing(document.id);
 
@@ -187,6 +241,25 @@ export class DocumentsService {
     return {
       buffer: await readFile(document.filePath),
       contentType: 'application/pdf',
+    };
+  }
+
+  async getTextArtifact(id: string) {
+    const document = await this.documentModel.findById(id).lean();
+    if (!document) throw new NotFoundException('Document not found');
+    if (!document.textArtifactContainer || !document.textArtifactBlobName) {
+      throw new NotFoundException('OCR/markdown artifact is not available for this document');
+    }
+
+    return {
+      buffer: await this.blobStorage.downloadBuffer(
+        document.textArtifactContainer,
+        document.textArtifactBlobName,
+      ),
+      contentType: document.textArtifactMode === 'markdown'
+        ? 'text/markdown; charset=utf-8'
+        : 'text/plain; charset=utf-8',
+      fileName: document.textArtifactBlobName.split('/').at(-1) || `document.${document.textArtifactMode === 'markdown' ? 'md' : 'ocr'}`,
     };
   }
 
@@ -225,10 +298,11 @@ export class DocumentsService {
   async updateExtractedData(id: string, extractedData: ExtractedValue[]) {
     const updated = await this.documentModel.findByIdAndUpdate(
       id,
-      { extractedData },
+      { $set: { extractedData }, $inc: { revision: 1 } },
       { new: true },
     ).lean();
     if (!updated) throw new NotFoundException('Document not found');
+    await this.publishDocumentChanged(updated, ['extractedData']);
     return updated;
   }
 
@@ -459,12 +533,12 @@ export class DocumentsService {
     id: string,
     extractedData: ExtractedValue[],
   ) {
-    const updated = await this.documentModel.findByIdAndUpdate(
-      id,
-      { extractedData, status: 'validated' },
-      { new: true },
-    );
+    const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
+    updated.extractedData = extractedData;
+    this.transitionStatus(updated, 'validated');
+    await updated.save();
+    await this.publishDocumentChanged(updated, ['status', 'extractedData']);
 
     const configuration = await this.configurationService.get();
     const downstreamConfig = await this.getDownstreamConfig();
@@ -486,12 +560,11 @@ export class DocumentsService {
   }
 
   async reject(id: string) {
-    const updated = await this.documentModel.findByIdAndUpdate(
-      id,
-      { status: 'rejected' },
-      { new: true },
-    );
+    const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
+    this.transitionStatus(updated, 'rejected');
+    await updated.save();
+    await this.publishDocumentChanged(updated, ['status']);
 
     const configuration = await this.configurationService.get();
     const downstreamConfig = await this.getDownstreamConfig();

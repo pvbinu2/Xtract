@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import Chart from 'chart.js/auto';
 import {
@@ -11,6 +11,7 @@ import {
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
+  Clock3,
   Moon,
   PlusCircle,
   FilePlus2,
@@ -42,6 +43,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
@@ -117,6 +119,15 @@ function downloadJsonFile(fileName: string, data: unknown) {
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName.replace(/[^\w.-]+/g, '_') || 'document-data.json';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadBlobFile(fileName: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName.replace(/[^\w.-]+/g, '_') || 'document';
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -483,6 +494,10 @@ function OperationsApp() {
     status: DocumentStatusFilter;
     version: number;
   }>({ status: '', version: 0 });
+  const documentPageRef = useRef(documentPage);
+  const documentListStatusTargetRef = useRef(documentListStatusTarget);
+  documentPageRef.current = documentPage;
+  documentListStatusTargetRef.current = documentListStatusTarget;
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
@@ -600,12 +615,14 @@ function OperationsApp() {
   }
 
   async function refreshDocuments() {
+    const currentPage = documentPageRef.current;
+    const currentStatusTarget = documentListStatusTargetRef.current;
     const params = new URLSearchParams({
       sort: 'latest',
-      page: String(documentPage.page),
-      pageSize: String(documentPage.pageSize),
+      page: String(currentPage.page),
+      pageSize: String(currentPage.pageSize),
     });
-    if (documentListStatusTarget.status) params.set('status', documentListStatusTarget.status);
+    if (currentStatusTarget.status) params.set('status', currentStatusTarget.status);
     const docs = await api.listDocuments(params);
     setDocumentPage(docs);
     setDocuments(docs.items);
@@ -783,6 +800,70 @@ function OperationsApp() {
     if (!isAdmin || metricsLoaded) return;
     refreshOperationsMetrics().catch((error) => showToast(error.message, 'error'));
   }, [currentUser?.id, isAdmin, metricsLoaded]);
+
+  useEffect(() => {
+    if (!currentUser || !canManageDocuments) return;
+    let refreshTimer: number | undefined;
+    const connection = createDocumentRealtimeConnection(
+      currentUser.id,
+      (event) => {
+        setDocuments((items) => items.map((document) => {
+          if (document._id !== event.documentId || Number(document.revision || 0) > event.revision) return document;
+          return {
+            ...document,
+            status: event.status,
+            revision: event.revision,
+            updatedAt: event.updatedAt,
+          };
+        }));
+        setDocumentPage((page) => ({
+          ...page,
+          items: page.items.map((document) => {
+            if (document._id !== event.documentId || Number(document.revision || 0) > event.revision) return document;
+            return {
+              ...document,
+              status: event.status,
+              revision: event.revision,
+              updatedAt: event.updatedAt,
+            };
+          }),
+        }));
+        window.clearTimeout(refreshTimer);
+        refreshTimer = window.setTimeout(() => {
+          const refreshes: Array<Promise<unknown>> = [refreshDocuments()];
+          if (isAdmin) refreshes.push(refreshOperationsMetrics());
+          Promise.all(refreshes).catch((error) => {
+            console.warn('Unable to silently refresh document status and summary.', error);
+          });
+        }, 300);
+      },
+      () => {
+        const refreshes: Array<Promise<unknown>> = [refreshDocuments()];
+        if (isAdmin) refreshes.push(refreshOperationsMetrics());
+        Promise.all(refreshes).catch((error) => {
+          console.warn('Unable to silently refresh documents after reconnecting.', error);
+        });
+      },
+    );
+    if (!connection) return;
+
+    let stopped = false;
+    let retryTimer: number | undefined;
+    const startConnection = () => {
+      connection.start().catch((error) => {
+        if (stopped) return;
+        console.warn('Document real-time connection could not be started. Retrying.', error);
+        retryTimer = window.setTimeout(startConnection, 10000);
+      });
+    };
+    startConnection();
+    return () => {
+      stopped = true;
+      window.clearTimeout(refreshTimer);
+      window.clearTimeout(retryTimer);
+      connection.stop().catch(() => undefined);
+    };
+  }, [currentUser?.id, canManageDocuments, isAdmin]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -3464,6 +3545,7 @@ function DocumentList({
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyTarget, setReclassifyTarget] = useState<IncomingDocument | null>(null);
   const [justificationTarget, setJustificationTarget] = useState<IncomingDocument | null>(null);
+  const [flowTarget, setFlowTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
@@ -3633,7 +3715,24 @@ function DocumentList({
                   Classification: {displayModel(doc.classificationModel)} | Extraction: {displayModel(doc.processingMetrics?.model)}
                 </small>
               </span>
-              <span className={`pill ${doc.status}`}>{doc.status}</span>
+              <span
+                className={`pill ${doc.status} clickable-status`}
+                role="button"
+                tabIndex={0}
+                title="View document processing flow"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setFlowTarget(doc);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setFlowTarget(doc);
+                }}
+              >
+                {doc.status}
+              </span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
                 <ClassificationMethodIcon
@@ -3701,6 +3800,8 @@ function DocumentList({
       {justificationTarget && (
         <ClassificationJustificationDialog document={justificationTarget} onClose={() => setJustificationTarget(null)} />
       )}
+
+      {flowTarget && <DocumentFlowDialog document={flowTarget} onClose={() => setFlowTarget(null)} />}
 
       {reprocessTarget && (
         <ReprocessDialog
@@ -3833,6 +3934,165 @@ function ConfirmDialog({
   );
 }
 
+function formatStageTimestamp(value?: string) {
+  return value ? new Date(value).toLocaleString() : '—';
+}
+
+function formatStageDuration(startTime?: string, endTime?: string) {
+  if (!startTime) return '—';
+  const start = new Date(startTime).getTime();
+  const end = endTime ? new Date(endTime).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '—';
+  const totalSeconds = Math.max(0, Math.round((end - start) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+function formatDurationMilliseconds(duration: number) {
+  const totalSeconds = Math.max(0, Math.round(duration / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+function DocumentFlowDialog({
+  document,
+  onClose,
+}: {
+  document: IncomingDocument;
+  onClose: () => void;
+}) {
+  const baseStatuses: IncomingDocument['status'][] = ['received', 'preprocessed', 'classified', 'extracted'];
+  const recordedTimings = document.stageTimings || [];
+  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed'];
+  const statuses = [
+    ...baseStatuses,
+    ...optionalStatuses.filter((status) =>
+      status === document.status || recordedTimings.some((timing) => timing.status === status)),
+  ];
+  const processingTimings = baseStatuses
+    .map((status) => [...recordedTimings].reverse().find((timing) => timing.status === status))
+    .filter((timing): timing is NonNullable<typeof timing> => Boolean(timing?.startTime));
+  const now = Date.now();
+  const processingTimeExcludingQueue = processingTimings.reduce((total, timing) => {
+    const start = new Date(timing.startTime).getTime();
+    const end = timing.endTime
+      ? new Date(timing.endTime).getTime()
+      : timing.status === document.status
+        ? now
+        : start;
+    return total + Math.max(0, end - start);
+  }, 0);
+  const processingStart = processingTimings.length
+    ? Math.min(...processingTimings.map((timing) => new Date(timing.startTime).getTime()))
+    : now;
+  const extractedTiming = [...recordedTimings].reverse().find((timing) => timing.status === 'extracted');
+  const latestRecordedTime = recordedTimings.length
+    ? Math.max(...recordedTimings.flatMap((timing) => [
+      new Date(timing.startTime).getTime(),
+      timing.endTime ? new Date(timing.endTime).getTime() : now,
+    ]))
+    : now;
+  const processingEnd = extractedTiming?.endTime
+    ? new Date(extractedTiming.endTime).getTime()
+    : latestRecordedTime;
+  const processingTimeIncludingQueue = Math.max(0, processingEnd - processingStart);
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <section className="confirm-modal document-flow-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>Document flow</h2>
+            <p>{document.originalName}</p>
+          </div>
+          <button className="icon-button" title="Close document flow" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        <div className="document-flow-summary">
+          <div>
+            <span>Processing time</span>
+            <strong>{formatDurationMilliseconds(processingTimeExcludingQueue)}</strong>
+            <small>Function execution only</small>
+          </div>
+          <div>
+            <span>Total elapsed time</span>
+            <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
+            <small>Including queue wait</small>
+          </div>
+        </div>
+        <div className="document-flow">
+          {statuses.map((status, index) => {
+            const timing = [...recordedTimings].reverse().find((item) => item.status === status);
+            const nextStatus = statuses[index + 1];
+            const nextTiming = nextStatus
+              ? [...recordedTimings].reverse().find((item) => item.status === nextStatus)
+              : undefined;
+            const showQueueWait = index < baseStatuses.length - 1
+              && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
+            const isCurrent = status === document.status;
+            const completed = Boolean(timing?.endTime);
+            return (
+              <Fragment key={status}>
+                <div className={`document-flow-stage${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+                  <div className="document-flow-marker">
+                    {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
+                    {index < statuses.length - 1 && <span />}
+                  </div>
+                  <div className="document-flow-stage-card">
+                    <div className="document-flow-stage-heading">
+                      <strong>{status}</strong>
+                      <span>{isCurrent && !timing?.endTime ? 'In progress' : timing ? completed ? 'Completed' : 'Started' : 'Not started'}</span>
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>Start time</dt>
+                        <dd>{formatStageTimestamp(timing?.startTime)}</dd>
+                      </div>
+                      <div>
+                        <dt>End time</dt>
+                        <dd>{formatStageTimestamp(timing?.endTime)}</dd>
+                      </div>
+                      <div>
+                        <dt>Duration</dt>
+                        <dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+                {showQueueWait && (
+                  <div className="document-queue-wait">
+                    <div className="document-queue-wait-icon">
+                      <Clock3 size={16} />
+                    </div>
+                    <div>
+                      <strong>Queue wait for {nextStatus}</strong>
+                      <span>
+                        {formatStageTimestamp(timing?.endTime)}
+                        {' → '}
+                        {nextTiming?.startTime ? formatStageTimestamp(nextTiming.startTime) : 'Waiting'}
+                      </span>
+                    </div>
+                    <em>{formatStageDuration(timing?.endTime, nextTiming?.startTime)}</em>
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ReprocessDialog({
   document,
   documentType,
@@ -3954,6 +4214,7 @@ function ValidationScreen({
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [showClassificationJustification, setShowClassificationJustification] = useState(false);
+  const [showDocumentFlow, setShowDocumentFlow] = useState(false);
   const [showReclassifyDialog, setShowReclassifyDialog] = useState(false);
   const [showReprocessDialog, setShowReprocessDialog] = useState(false);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
@@ -4156,6 +4417,29 @@ function ValidationScreen({
     onNotify('JSON downloaded', 'success');
   }
 
+  async function downloadPdf() {
+    if (!document) return;
+    try {
+      downloadBlobFile(document.originalName || document.fileName || 'document.pdf', await api.documentFile(document._id));
+      onNotify('PDF downloaded', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to download PDF', 'error');
+    }
+  }
+
+  async function downloadTextArtifact() {
+    if (!document) return;
+    try {
+      const mode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
+      const extension = mode === 'markdown' ? 'md' : 'ocr';
+      const baseName = document.originalName.replace(/\.[^.]+$/, '') || document.fileName.replace(/\.[^.]+$/, '') || 'document';
+      downloadBlobFile(`${baseName}.${extension}`, await api.documentTextArtifact(document._id));
+      onNotify(`${mode === 'markdown' ? 'Markdown' : 'OCR'} file downloaded`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to download OCR/markdown file', 'error');
+    }
+  }
+
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
@@ -4193,7 +4477,14 @@ function ValidationScreen({
             </div>
             <div className="panel-heading-actions">
               <div className="validation-header-badges">
-                <span className={`pill ${document.status}`}>{document.status}</span>
+                <button
+                  type="button"
+                  className={`pill ${document.status} clickable-status`}
+                  title="View document processing flow"
+                  onClick={() => setShowDocumentFlow(true)}
+                >
+                  {document.status}
+                </button>
                 <span className="processing-mode-badge">
                   <ProcessingModeIcon mode={document.processingMode} />
                   {document.processingMode ? document.processingMode.toUpperCase() : 'N/A'}
@@ -4202,11 +4493,25 @@ function ValidationScreen({
               <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
+              <button className="icon-button" title="Download original PDF" onClick={downloadPdf}>
+                <FileText size={16} />
+              </button>
+              <button
+                className="icon-button"
+                title={`Download ${document.textArtifactMode === 'markdown' ? 'markdown' : 'OCR'} file`}
+                onClick={downloadTextArtifact}
+                disabled={!document.textArtifactBlobName}
+              >
+                <ScanText size={16} />
+              </button>
               <button className="icon-button" title="Download extracted data as JSON" onClick={downloadExtractedJson}>
                 <Download size={16} />
               </button>
             </div>
           </div>
+          {showDocumentFlow && (
+            <DocumentFlowDialog document={document} onClose={() => setShowDocumentFlow(false)} />
+          )}
           <div className="extraction-form">
             {values.map((item, index) => {
               const styles = fieldStyles[item.key];

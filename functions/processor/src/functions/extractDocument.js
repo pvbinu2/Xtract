@@ -1,5 +1,6 @@
 const { app } = require('@azure/functions');
 const { withExtractionConcurrency } = require('../aiConcurrency');
+const { publishDocumentChanged } = require('../documentEvents');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -8,6 +9,8 @@ const { extractDocumentContent, extractDocumentSpatialItems, extractDocumentText
 const { withOpenAIRetry } = require('../openaiRetry');
 const {
   ObjectId,
+  beginDocumentStage,
+  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -18,6 +21,7 @@ const {
   resolveDocumentFile,
   resolvePreparedDocumentText,
   resolveMessage,
+  transitionDocumentStatus,
 } = require('../documentProcessingCommon');
 
 let openai;
@@ -443,6 +447,7 @@ async function extractQueuedDocument(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
+  await beginDocumentStage(documents, document._id, 'extracted');
 
   const configuration = await db.collection('configuration').findOne({});
   const {
@@ -456,13 +461,15 @@ async function extractQueuedDocument(message, context) {
   const documentTypeId = normalizeDocumentTypeId(document);
   const documentType = documentTypeId ? await documentTypes.findOne({ _id: documentTypeId }) : null;
   if (!documentType) {
-    await documents.updateOne(
-      { _id: document._id },
-      {
-        $set: { status: 'failed', error: 'Document type not found for extraction', updatedAt: new Date() },
-        $unset: { reprocessOptions: '' },
-      },
+    await transitionDocumentStatus(
+      documents,
+      document._id,
+      'failed',
+      { error: 'Document type not found for extraction' },
+      ['reprocessOptions'],
+      { completed: true },
     );
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -470,6 +477,7 @@ async function extractQueuedDocument(message, context) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
@@ -552,27 +560,32 @@ async function extractQueuedDocument(message, context) {
       processingMetrics.embeddingCostUsd
     ).toFixed(8));
 
-    await documents.updateOne(
-      { _id: document._id },
+    await completeDocumentStage(
+      documents,
+      document._id,
+      'extracted',
       {
-        $set: {
-          status: 'extracted',
-          ...(payload.classificationUpdate || {}),
-          extractedData,
-          processingMetrics,
-          classificationModel: localDocument.classificationModel,
-          processingMode: preparedTextMode,
-          error: null,
-          updatedAt: new Date(),
-        },
-        $unset: { reprocessOptions: '' },
+        ...(payload.classificationUpdate || {}),
+        extractedData,
+        processingMetrics,
+        classificationModel: localDocument.classificationModel,
+        processingMode: preparedTextMode,
+        error: null,
       },
+      ['reprocessOptions'],
+    );
+    await publishDocumentChanged(
+      documents,
+      document._id,
+      ['status', 'extractedData', 'processingMetrics', 'processingMode'],
+      context,
     );
     await recordBusinessReviewProcessing(db, localDocument, documentType, processingMetrics);
   } catch (error) {
     const errorMessage = `Extraction failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
     await markDocumentFailed(documents, document._id, errorMessage);
+    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
   } finally {
     if (localFilePath && document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
   }

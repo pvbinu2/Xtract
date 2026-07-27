@@ -57,6 +57,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+async function requestFile(path: string) {
+  const headers = new Headers();
+  const token = authToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
 export const api = {
   login: (payload: { username: string; password: string }) =>
     request<{ token: string; user: AuthUser }>('/auth/login', {
@@ -109,6 +121,8 @@ export const api = {
     return new Uint8Array(await response.arrayBuffer());
   },
   documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
+  documentFile: (id: string) => requestFile(`/documents/${id}/file`),
+  documentTextArtifact: (id: string) => requestFile(`/documents/${id}/text-artifact`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),
   createDocumentType: (payload: { category: string; name: string; prompt?: string }) =>
     request<DocumentType>('/document-types', {
