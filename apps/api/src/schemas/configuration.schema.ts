@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 
 export type ConfigurationDocument = Configuration & Document;
 export type AiProvider = 'openai' | 'ollama';
+export type ClassificationMode = 'vector' | 'llm' | 'rag';
 
 @Schema({ collection: 'configuration' })
 export class Configuration {
@@ -47,6 +48,24 @@ export class Configuration {
 
   @Prop({ default: 'low' })
   classificationReasoningEffort!: 'low' | 'medium' | 'high' | 'xhigh';
+
+  @Prop({ default: 'vector' })
+  classificationMode!: ClassificationMode;
+
+  @Prop({ default: 5, min: 1, max: 50 })
+  classificationRagTopK!: number;
+
+  @Prop({ default: 4, min: 1, max: 16 })
+  preprocessingConcurrency!: number;
+
+  @Prop({ default: 4, min: 1, max: 16 })
+  vectorClassificationConcurrency!: number;
+
+  @Prop({ default: 1, min: 1, max: 16 })
+  llmClassificationConcurrency!: number;
+
+  @Prop({ default: 1, min: 1, max: 16 })
+  extractionConcurrency!: number;
 }
 
 export const ConfigurationSchema = SchemaFactory.createForClass(Configuration);

@@ -193,10 +193,6 @@ function vectorSize() {
   return Number(process.env.VECTOR_SIZE || 1536);
 }
 
-function vectorScoreThreshold() {
-  return Number(process.env.CLASSIFIER_VECTOR_SCORE_THRESHOLD || 0.82);
-}
-
 function pdfInput(filePath) {
   const data = fs.readFileSync(filePath).toString('base64');
   return {
@@ -290,7 +286,7 @@ function fallbackClassify(fileName, candidates, options = {}) {
   return {
     documentType: scored[0].candidate,
     score: Number(scored[0].score.toFixed(2)),
-    method: 'llm',
+    method: options.classificationMode === 'rag' ? 'rag' : 'llm',
     model: 'mock',
     justification: `Selected from the uploaded file name because it most closely matched the document type or category: ${scored[0].candidate.name}.`,
     classificationMetrics: emptyMetrics('mock'),
@@ -413,11 +409,13 @@ async function upsertDocumentTypeVectors(documentType, samples, options = {}) {
   await vectorDatabase.upsert(points);
 }
 
-async function searchDocumentTypeVectors(document, textOptions = {}, options = {}) {
-  const text = await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
-    ...textOptions,
-    fileName: document.originalName || document.fileName,
-  });
+async function searchDocumentTypeVectors(document, textOptions = {}, options = {}, resultLimit) {
+  const text = typeof options.preparedText === 'string'
+    ? options.preparedText.slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000))
+    : await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
+      ...textOptions,
+      fileName: document.originalName || document.fileName,
+    });
   const chunks = chunkText([
     `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
     text,
@@ -433,7 +431,10 @@ async function searchDocumentTypeVectors(document, textOptions = {}, options = {
       await ensureVectorCollection(ensuredVectorSize);
     }
     embeddingMetrics = addMetrics(embeddingMetrics, embedded.metrics);
-    const hits = await vectorDatabase.search(embedded.embedding, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5));
+    const hits = await vectorDatabase.search(
+      embedded.embedding,
+      resultLimit || Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5),
+    );
 
     for (const hit of hits) {
       const existing = hitsByPoint.get(hit.id);
@@ -486,49 +487,101 @@ async function classifyDocument(document, documentTypes, options = {}) {
   }
 
   const useOcr = Boolean(options.useOcr);
+  const classificationMode = ['vector', 'llm', 'rag'].includes(options.classificationMode)
+    ? options.classificationMode
+    : 'vector';
+  const ragTopK = Math.min(50, Math.max(1, Number(options.ragTopK) || 5));
   const textOptions = {
     mode: options.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
     markdownServiceUrl: options.markdownServiceUrl,
   };
   let vectorHits = [];
   let embeddingMetrics = emptyMetrics(embeddingModelName(options));
-  if (useOcr && (embeddingProviderName(options) === 'ollama' || process.env.OPENAI_API_KEY)) {
+  const needsVectorSearch = classificationMode === 'vector' || classificationMode === 'rag';
+  if (needsVectorSearch && (embeddingProviderName(options) === 'ollama' || process.env.OPENAI_API_KEY)) {
     try {
-      const vectorSearch = await searchDocumentTypeVectors(document, textOptions, options);
+      const vectorSearch = await searchDocumentTypeVectors(
+        document,
+        textOptions,
+        options,
+        classificationMode === 'rag'
+          ? Math.max(ragTopK * 3, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5))
+          : Math.max(9, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5)),
+      );
       vectorHits = vectorSearch.hits;
       embeddingMetrics = vectorSearch.metrics;
     } catch (error) {
       vectorHits = [];
     }
   }
-  const topHit = vectorHits[0];
-  const vectorDocumentType = topHit
-    ? candidates.find((candidate) => String(candidate._id) === topHit.payload?.documentTypeId)
-    : undefined;
-  if (vectorDocumentType && topHit.score >= vectorScoreThreshold()) {
+
+  const candidateById = new Map(candidates.map((candidate) => [String(candidate._id), candidate]));
+  const rankedDocumentTypes = [];
+  const rankedIds = new Set();
+  for (const hit of vectorHits) {
+    const documentTypeId = String(hit.payload?.documentTypeId || '');
+    const documentType = candidateById.get(documentTypeId);
+    if (!documentType || rankedIds.has(documentTypeId)) continue;
+    rankedIds.add(documentTypeId);
+    rankedDocumentTypes.push({ documentType, hit });
+  }
+
+  if (classificationMode === 'vector') {
+    const topResult = rankedDocumentTypes[0];
+    if (!topResult) {
+      throw new Error('Vector classification returned no trained document type. Train the classifier and verify the embedding provider configuration.');
+    }
+    const classificationCandidates = rankedDocumentTypes.slice(0, 3).map(({ documentType: candidate, hit }) => ({
+      documentTypeId: String(candidate._id),
+      category: candidate.category,
+      name: candidate.name,
+      score: Number(clampScore(hit.score).toFixed(4)),
+    }));
     return {
-      documentType: vectorDocumentType,
-      score: Number(clampScore(topHit.score).toFixed(2)),
+      documentType: topResult.documentType,
+      score: Number(clampScore(topResult.hit.score).toFixed(2)),
       method: 'vector',
       model: embeddingModelName(options),
+      justification: `${topResult.documentType.name} was selected because it was the top vector search result with a similarity score of ${(clampScore(topResult.hit.score) * 100).toFixed(2)}%.`,
+      classificationCandidates,
       classificationMetrics: emptyMetrics('vector'),
       embeddingMetrics,
     };
   }
 
-  if (providerName(options) === 'openai' && !getOpenAI()) return fallbackClassify(document.originalName || document.fileName || '', candidates, options);
+  const llmCandidates = classificationMode === 'rag'
+    ? rankedDocumentTypes.slice(0, ragTopK).map(({ documentType }) => documentType)
+    : candidates;
+  const classificationCandidates = classificationMode === 'rag'
+    ? rankedDocumentTypes.slice(0, ragTopK).map(({ documentType: candidate, hit }) => ({
+      documentTypeId: String(candidate._id),
+      category: candidate.category,
+      name: candidate.name,
+      score: Number(clampScore(hit.score).toFixed(4)),
+    }))
+    : undefined;
+  if (!llmCandidates.length) {
+    throw new Error('RAG classification returned no trained document types. Train the classifier and verify the embedding provider configuration.');
+  }
+  if (providerName(options) === 'openai' && !getOpenAI()) {
+    return {
+      ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
+      classificationCandidates,
+    };
+  }
 
-  const retrievedIds = new Set(vectorHits.map((hit) => hit.payload?.documentTypeId).filter(Boolean));
-  const llmCandidates = [
-    ...candidates.filter((candidate) => retrievedIds.has(String(candidate._id))),
-    ...candidates.filter((candidate) => !retrievedIds.has(String(candidate._id))),
-  ].slice(0, Number(process.env.CLASSIFIER_LLM_CANDIDATE_LIMIT || 8));
-
-  const useDocumentText = useOcr || providerName(options) === 'ollama';
-  const documentText = useDocumentText ? await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
-    ...textOptions,
-    fileName: document.originalName || document.fileName,
-  }) : '';
+  const useDocumentText = typeof options.preparedText === 'string' ||
+    useOcr ||
+    providerName(options) === 'ollama' ||
+    classificationMode === 'rag';
+  const documentText = useDocumentText
+    ? typeof options.preparedText === 'string'
+      ? options.preparedText.slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000))
+      : await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
+        ...textOptions,
+        fileName: document.originalName || document.fileName,
+      })
+    : '';
   const requestConfig = openAIRequestConfig({
     model: options.model,
     reasoningEffort: options.reasoningEffort,
@@ -555,9 +608,9 @@ async function classifyDocument(document, documentTypes, options = {}) {
         ...llmCandidates.map((candidate, index) => (
           `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`
         )),
-        vectorHits.length
-          ? `Vector search top results: ${vectorHits.map((hit) => `${hit.payload?.documentTypeName || hit.payload?.documentTypeId} score=${Number(hit.score).toFixed(3)}`).join('; ')}`
-          : 'Vector search returned no usable result.',
+        classificationMode === 'rag'
+          ? `RAG retrieval results: ${rankedDocumentTypes.slice(0, ragTopK).map(({ documentType: candidate, hit }) => `${candidate.name} score=${Number(hit.score).toFixed(3)}`).join('; ')}`
+          : 'All configured document types were provided for classification.',
       ].join('\n'),
     },
   ];
@@ -565,8 +618,13 @@ async function classifyDocument(document, documentTypes, options = {}) {
   const response = await createJsonResponse(content, {
     ...options,
     model: requestConfig.model,
-  }, `Classifier LLM fallback for ${document._id || document.fileName}`);
-  if (!response) return fallbackClassify(document.originalName || document.fileName || '', candidates, options);
+  }, `${classificationMode === 'rag' ? 'RAG' : 'LLM'} classifier for ${document._id || document.fileName}`);
+  if (!response) {
+    return {
+      ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
+      classificationCandidates,
+    };
+  }
   const classificationMetrics = metricsFromResponse(response.raw, response.model);
 
   const parsed = parseJsonObject(response.outputText);
@@ -574,11 +632,12 @@ async function classifyDocument(document, documentTypes, options = {}) {
   return {
     documentType: selected,
     score: Number(clampScore(parsed.score).toFixed(2)),
-    method: 'llm',
+    method: classificationMode === 'rag' ? 'rag' : 'llm',
     model: response.model,
     justification: typeof parsed.justification === 'string' && parsed.justification.trim()
       ? parsed.justification.trim().slice(0, 2000)
       : `The LLM selected ${selected.name} as the closest match among the candidate document types.`,
+    classificationCandidates,
     classificationMetrics,
     embeddingMetrics,
   };

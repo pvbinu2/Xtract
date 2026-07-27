@@ -15,6 +15,12 @@ export type AppConfigPayload = {
   ollamaEmbeddingModel: string;
   classificationModel: string;
   classificationReasoningEffort: ReasoningEffort;
+  classificationMode: 'vector' | 'llm' | 'rag';
+  classificationRagTopK: number;
+  preprocessingConcurrency: number;
+  vectorClassificationConcurrency: number;
+  llmClassificationConcurrency: number;
+  extractionConcurrency: number;
 };
 export type ReprocessDocumentPayload = {
   documentTypeId?: string;

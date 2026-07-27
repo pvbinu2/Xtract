@@ -57,7 +57,7 @@ type OperationsMetrics = {
   filesProcessing: number;
   filesReady: number;
 };
-type DocumentStatusFilter = IncomingDocument['status'] | '';
+type DocumentStatusFilter = IncomingDocument['status'] | 'in-progress' | '';
 type ReprocessProcessingMode = 'pdf' | 'ocr' | 'markdown';
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
@@ -199,17 +199,10 @@ function ClassificationMethodIcon({
 }) {
   if (method === 'vector') {
     return (
-      <span className="method-icon vector" title="Vector classification" aria-label="Vector classification">
-        <Network size={14} />
-      </span>
-    );
-  }
-  if (method === 'llm') {
-    return (
       <span
-        className={`method-icon llm${onShowJustification ? ' interactive' : ''}`}
-        title={onShowJustification ? 'Show LLM classification justification' : 'LLM classification'}
-        aria-label={onShowJustification ? 'Show LLM classification justification' : 'LLM classification'}
+        className={`method-icon vector${onShowJustification ? ' interactive' : ''}`}
+        title={onShowJustification ? 'Show vector classification results' : 'Vector classification'}
+        aria-label={onShowJustification ? 'Show vector classification results' : 'Vector classification'}
         role={onShowJustification ? 'button' : undefined}
         tabIndex={onShowJustification ? 0 : undefined}
         onClick={onShowJustification ? (event) => {
@@ -224,7 +217,33 @@ function ClassificationMethodIcon({
           }
         } : undefined}
       >
-        <BrainCircuit size={14} />
+        <Network size={14} />
+      </span>
+    );
+  }
+  if (method === 'llm' || method === 'rag') {
+    const isRag = method === 'rag';
+    const methodLabel = isRag ? 'RAG classification' : 'LLM classification';
+    return (
+      <span
+        className={`method-icon ${method}${onShowJustification ? ' interactive' : ''}`}
+        title={onShowJustification ? `Show ${methodLabel} justification` : methodLabel}
+        aria-label={onShowJustification ? `Show ${methodLabel} justification` : methodLabel}
+        role={onShowJustification ? 'button' : undefined}
+        tabIndex={onShowJustification ? 0 : undefined}
+        onClick={onShowJustification ? (event) => {
+          event.stopPropagation();
+          onShowJustification();
+        } : undefined}
+        onKeyDown={onShowJustification ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            onShowJustification();
+          }
+        } : undefined}
+      >
+        {isRag ? <FileSearch size={14} /> : <BrainCircuit size={14} />}
       </span>
     );
   }
@@ -257,6 +276,37 @@ function ClassificationJustificationDialog({
           <strong>{displayModel(document.classificationModel)}</strong>
           <span>Justification</span>
           <p>{document.classificationJustification || 'No justification was recorded for this previously processed document.'}</p>
+          {(document.classificationMethod === 'rag' || document.classificationMethod === 'vector') && (
+            <>
+              <span>Retrieved types</span>
+              {document.classificationCandidates?.length ? (
+                <div className="rag-candidate-table-wrap">
+                  <table className="rag-candidate-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Rank</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Document type</th>
+                        <th scope="col">Vector score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {document.classificationCandidates.map((candidate, index) => (
+                        <tr key={candidate.documentTypeId}>
+                          <td>{index + 1}</td>
+                          <td>{candidate.category}</td>
+                          <td>{candidate.name}</td>
+                          <td>{(candidate.score * 100).toFixed(2)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p>No vector retrieval scores were recorded for this previously processed document.</p>
+              )}
+            </>
+          )}
         </div>
       </section>
     </div>
@@ -459,6 +509,12 @@ function OperationsApp() {
     ollamaEmbeddingModel: defaultOllamaEmbeddingModel,
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
+    classificationMode: 'vector',
+    classificationRagTopK: 5,
+    preprocessingConcurrency: 4,
+    vectorClassificationConcurrency: 4,
+    llmClassificationConcurrency: 1,
+    extractionConcurrency: 1,
   });
   const isAdmin = currentUser?.role === 'admin';
   const canManageDocuments = currentUser?.role === 'admin' || currentUser?.role === 'validator';
@@ -481,6 +537,12 @@ function OperationsApp() {
         ollamaEmbeddingModel: saved.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
         classificationModel: saved.classificationModel || lowCostOpenAIModel,
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
+        classificationMode: saved.classificationMode === 'llm' || saved.classificationMode === 'rag' ? saved.classificationMode : 'vector',
+        classificationRagTopK: Math.min(50, Math.max(1, Number(saved.classificationRagTopK) || 5)),
+        preprocessingConcurrency: Math.min(16, Math.max(1, Number(saved.preprocessingConcurrency) || 4)),
+        vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.vectorClassificationConcurrency) || 4)),
+        llmClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.llmClassificationConcurrency) || 1)),
+        extractionConcurrency: Math.min(16, Math.max(1, Number(saved.extractionConcurrency) || 1)),
       });
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
@@ -502,6 +564,12 @@ function OperationsApp() {
             ollamaEmbeddingModel: parsed.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
             classificationModel: parsed.classificationModel || lowCostOpenAIModel,
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
+            classificationMode: parsed.classificationMode === 'llm' || parsed.classificationMode === 'rag' ? parsed.classificationMode : 'vector',
+            classificationRagTopK: Math.min(50, Math.max(1, Number(parsed.classificationRagTopK) || 5)),
+            preprocessingConcurrency: Math.min(16, Math.max(1, Number(parsed.preprocessingConcurrency) || 4)),
+            vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.vectorClassificationConcurrency) || 4)),
+            llmClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.llmClassificationConcurrency) || 1)),
+            extractionConcurrency: Math.min(16, Math.max(1, Number(parsed.extractionConcurrency) || 1)),
           });
         } catch {
           // ignore invalid saved config
@@ -923,9 +991,9 @@ function OperationsApp() {
                   onClick={() => setView('business-review')}
                 />
                 <StatusMetric
-                  label="Processing"
+                  label="In progress"
                   value={operationsMetrics.filesProcessing}
-                  onClick={() => openDocuments('processing')}
+                  onClick={() => openDocuments('in-progress')}
                 />
                 <StatusMetric
                   label="Extracted"
@@ -1944,6 +2012,48 @@ function BusinessReviewScreen({
   );
 }
 
+function ClassificationModeControls({
+  config,
+  onConfigChange,
+}: {
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+}) {
+  return (
+    <>
+      <label>
+        Classification mode
+        <select
+          value={config.classificationMode}
+          onChange={(event) => onConfigChange({
+            ...config,
+            classificationMode: event.target.value as AppConfig['classificationMode'],
+          })}
+        >
+          <option value="vector">Vector classification</option>
+          <option value="llm">LLM classification (all types)</option>
+          <option value="rag">RAG classification</option>
+        </select>
+      </label>
+      {config.classificationMode === 'rag' && (
+        <label>
+          RAG top results
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={config.classificationRagTopK}
+            onChange={(event) => onConfigChange({
+              ...config,
+              classificationRagTopK: Math.min(50, Math.max(1, Number(event.target.value) || 1)),
+            })}
+          />
+        </label>
+      )}
+    </>
+  );
+}
+
 function ConfigurationScreen({
   config,
   onConfigChange,
@@ -1955,14 +2065,11 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
-  const [expandedSections, setExpandedSections] = useState({
-    aiService: true,
-    documentProcessing: true,
-    downstream: true,
-  });
+  type ConfigurationSection = 'aiService' | 'documentProcessing' | 'scaling' | 'downstream';
+  const [expandedSection, setExpandedSection] = useState<ConfigurationSection | null>(null);
 
-  function toggleSection(section: keyof typeof expandedSections) {
-    setExpandedSections((current) => ({ ...current, [section]: !current[section] }));
+  function toggleSection(section: ConfigurationSection) {
+    setExpandedSection((current) => current === section ? null : section);
   }
 
   async function refreshConfig() {
@@ -1980,14 +2087,15 @@ function ConfigurationScreen({
           <button
             className="configuration-section-toggle"
             type="button"
-            aria-expanded={expandedSections.aiService}
+            aria-expanded={expandedSection === 'aiService'}
             onClick={() => toggleSection('aiService')}
           >
             <span>AI Service Configuration</span>
-            {expandedSections.aiService ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expandedSection === 'aiService' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
-          {expandedSections.aiService && (
-            <div className="configuration-section-body">
+          {expandedSection === 'aiService' && (
+            <div className="configuration-section-body configuration-card-grid ai-settings">
+              <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
               <label>
                 AI provider
                 <select
@@ -2071,14 +2179,117 @@ function ConfigurationScreen({
           <button
             className="configuration-section-toggle"
             type="button"
-            aria-expanded={expandedSections.documentProcessing}
+            aria-expanded={expandedSection === 'scaling'}
+            onClick={() => toggleSection('scaling')}
+          >
+            <span>Scaling</span>
+            {expandedSection === 'scaling' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {expandedSection === 'scaling' && (
+            <div className="configuration-section-body scaling-controls">
+              <label className="scaling-control preprocessing">
+                <span className="scaling-control-heading">
+                  Preprocessing concurrency
+                  <output>{config.preprocessingConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.preprocessingConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      preprocessingConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum OCR or Docling preparations running at the same time.</small>
+              </label>
+              <label className="scaling-control vector">
+                <span className="scaling-control-heading">
+                  Vector classification concurrency
+                  <output>{config.vectorClassificationConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.vectorClassificationConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      vectorClassificationConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum vector-only classifications running at the same time.</small>
+              </label>
+              <label className="scaling-control llm">
+                <span className="scaling-control-heading">
+                  LLM classification concurrency
+                  <output>{config.llmClassificationConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.llmClassificationConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      llmClassificationConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum LLM or RAG classifications running at the same time.</small>
+              </label>
+              <label className="scaling-control extraction">
+                <span className="scaling-control-heading">
+                  Extraction concurrency
+                  <output>{config.extractionConcurrency}</output>
+                </span>
+                <span className="scaling-slider">
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={config.extractionConcurrency}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      extractionConcurrency: Number(event.target.value),
+                    })}
+                  />
+                  <span><small>1</small><small>16</small></span>
+                </span>
+                <small>Maximum field extractions running at the same time.</small>
+              </label>
+              <p className="help-text">
+                Limits apply to new queue invocations after saving. Higher AI concurrency may increase model rate-limit errors.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="configuration-section">
+          <button
+            className="configuration-section-toggle"
+            type="button"
+            aria-expanded={expandedSection === 'documentProcessing'}
             onClick={() => toggleSection('documentProcessing')}
           >
             <span>Document Processing Configuration</span>
-            {expandedSections.documentProcessing ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expandedSection === 'documentProcessing' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
-          {expandedSections.documentProcessing && (
-            <div className="configuration-section-body">
+          {expandedSection === 'documentProcessing' && (
+            <div className="configuration-section-body configuration-card-grid processing-settings">
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -2126,14 +2337,14 @@ function ConfigurationScreen({
           <button
             className="configuration-section-toggle"
             type="button"
-            aria-expanded={expandedSections.downstream}
+            aria-expanded={expandedSection === 'downstream'}
             onClick={() => toggleSection('downstream')}
           >
             <span>Downstream Configuration</span>
-            {expandedSections.downstream ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expandedSection === 'downstream' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
-          {expandedSections.downstream && (
-            <div className="configuration-section-body">
+          {expandedSection === 'downstream' && (
+            <div className="configuration-section-body configuration-card-grid downstream-settings">
               <label>
                 Downstream API URL
                 <input
@@ -2286,7 +2497,16 @@ function ClassificationScreen({
         <div className="model-settings-band">
           <div>
             <strong>{aiModelLabel(config)}</strong>
-            <small>LLM fallback for classification. Vectors use {embeddingModelLabel(config)}.</small>
+            <small>
+              {config.classificationMode === 'vector'
+                ? `Top vector result using ${embeddingModelLabel(config)}.`
+                : config.classificationMode === 'rag'
+                  ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
+                  : 'LLM chooses from all configured document types.'}
+            </small>
+          </div>
+          <div className="model-controls">
+            <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
           </div>
           {config.aiProvider === 'openai' ? (
             <OpenAIModelControls
@@ -2306,6 +2526,14 @@ function ClassificationScreen({
               </label>
             </div>
           )}
+          <button
+            className="primary-button compact"
+            type="button"
+            onClick={() => onRun(() => onSaveConfig(config).then(() => undefined), 'Classification configuration saved')}
+          >
+            <Save size={16} />
+            Save
+          </button>
         </div>
 
         <div className="classification-table">
@@ -3340,7 +3568,10 @@ function DocumentList({
           Status
           <select value={status} onChange={(event) => setStatus(event.target.value as DocumentStatusFilter)}>
             <option value="">All</option>
-            <option value="processing">Processing</option>
+            <option value="in-progress">In progress</option>
+            <option value="received">Received</option>
+            <option value="preprocessed">Preprocessed</option>
+            <option value="classified">Classified</option>
             <option value="extracted">Extracted</option>
             <option value="validated">Validated</option>
             <option value="rejected">Rejected</option>
@@ -3407,7 +3638,7 @@ function DocumentList({
                 {formatScore(doc.classificationScore)}
                 <ClassificationMethodIcon
                   method={doc.classificationMethod}
-                  onShowJustification={doc.classificationMethod === 'llm' ? () => setJustificationTarget(doc) : undefined}
+                  onShowJustification={doc.classificationMethod === 'llm' || doc.classificationMethod === 'rag' || doc.classificationMethod === 'vector' ? () => setJustificationTarget(doc) : undefined}
                 />
               </span>
               <span className="processing-mode-badge">
@@ -3952,7 +4183,7 @@ function ValidationScreen({
                 </strong>
                 <ClassificationMethodIcon
                   method={document.classificationMethod}
-                  onShowJustification={document.classificationMethod === 'llm' ? () => setShowClassificationJustification(true) : undefined}
+                  onShowJustification={document.classificationMethod === 'llm' || document.classificationMethod === 'rag' || document.classificationMethod === 'vector' ? () => setShowClassificationJustification(true) : undefined}
                 />
               </div>
               <div className="document-model-line">

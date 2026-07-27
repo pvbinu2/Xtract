@@ -1,6 +1,6 @@
 const path = require('path');
 const { app, output } = require('@azure/functions');
-const { getClient } = require('../documentProcessingCommon');
+const { ObjectId, getClient } = require('../documentProcessingCommon');
 const {
   PROCESSING_CONTAINER,
   TRIGGER_CONTAINER,
@@ -44,18 +44,20 @@ async function ingestTriggeredDocument(_blob, context) {
   });
   if (existingDocument) {
     context.info(`Trigger blob ${triggerBlobName} was already ingested as document ${existingDocument._id}.`);
-    if (existingDocument.status === 'processing') {
+    if (['received', 'preprocessed', 'classified', 'uploaded', 'processing'].includes(existingDocument.status)) {
       context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(existingDocument._id) }));
     }
     return;
   }
 
   const originalName = path.basename(triggerBlobName);
-  const processingBlobName = createBlobName(originalName);
+  const documentId = new ObjectId();
+  const processingBlobName = createBlobName(originalName, String(documentId));
   await moveBlob(TRIGGER_CONTAINER, triggerBlobName, PROCESSING_CONTAINER, processingBlobName);
 
   const now = new Date();
   const result = await documents.insertOne({
+    _id: documentId,
     fileName: processingBlobName,
     originalName,
     filePath: `azure://${PROCESSING_CONTAINER}/${processingBlobName}`,
@@ -66,7 +68,7 @@ async function ingestTriggeredDocument(_blob, context) {
     category: 'Unclassified',
     documentTypeName: 'Pending classification',
     classificationMethod: 'vector',
-    status: 'processing',
+    status: 'received',
     extractedData: [],
     createdAt: now,
     updatedAt: now,

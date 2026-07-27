@@ -1,6 +1,6 @@
 const fs = require('fs');
 const { MongoDatabase, ObjectId } = require('@xtract/common');
-const { downloadToTemp, removeTempFile } = require('./blobStorage');
+const { downloadBuffer, downloadToTemp, removeTempFile } = require('./blobStorage');
 
 const database = new MongoDatabase();
 const getClient = () => database.connect();
@@ -41,6 +41,13 @@ async function resolveDocumentFile(document) {
     return downloadToTemp(document.storageContainer, document.storageBlobName);
   }
   return document.filePath;
+}
+
+async function resolvePreparedDocumentText(document) {
+  if (!document.textArtifactContainer || !document.textArtifactBlobName) {
+    throw new Error('Prepared OCR/markdown artifact is missing. Run document text preparation before classification.');
+  }
+  return (await downloadBuffer(document.textArtifactContainer, document.textArtifactBlobName)).toString('utf8');
 }
 
 function processingOptionsFor(document, configuration = {}) {
@@ -166,5 +173,6 @@ module.exports = {
   removeTempFile,
   resolveDocumentFile,
   resolveDocumentId,
+  resolvePreparedDocumentText,
   resolveMessage,
 };

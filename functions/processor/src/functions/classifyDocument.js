@@ -1,5 +1,6 @@
 const { app, output } = require('@azure/functions');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
+const { withClassificationConcurrency } = require('../aiConcurrency');
 const {
   ObjectId,
   getClient,
@@ -10,6 +11,7 @@ const {
   removeTempFile,
   resolveDocumentFile,
   resolveDocumentId,
+  resolvePreparedDocumentText,
 } = require('../documentProcessingCommon');
 
 const extractionQueueOutput = output.storageQueue({
@@ -69,6 +71,7 @@ async function classifyQueuedDocument(message, context) {
 
     if (!documentType) {
       const localFilePath = await resolveDocumentFile(document);
+      const preparedText = await resolvePreparedDocumentText(document);
       const localDocument = { ...document, filePath: localFilePath };
       try {
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
@@ -77,8 +80,11 @@ async function classifyQueuedDocument(message, context) {
           useOcr: useOcrForDocumentProcessing,
           model: configuration?.classificationModel,
           reasoningEffort: configuration?.classificationReasoningEffort,
-          documentTextMode: textOptions.mode,
+          classificationMode: configuration?.classificationMode,
+          ragTopK: configuration?.classificationRagTopK,
+          documentTextMode: document.textArtifactMode || textOptions.mode,
           markdownServiceUrl: textOptions.markdownServiceUrl,
+          preparedText,
         });
         documentType = classification.documentType;
         classificationMetrics = classification.classificationMetrics;
@@ -91,6 +97,9 @@ async function classifyQueuedDocument(message, context) {
           classificationMethod: classification.method || 'llm',
           classificationModel: classification.model || 'unknown',
           classificationJustification: classification.justification,
+          ...(classification.classificationCandidates
+            ? { classificationCandidates: classification.classificationCandidates }
+            : {}),
         };
         await documents.updateOne(
           { _id: document._id },
@@ -99,6 +108,9 @@ async function classifyQueuedDocument(message, context) {
               ...classificationUpdate,
               updatedAt: new Date(),
             },
+            ...(classification.classificationCandidates
+              ? {}
+              : { $unset: { classificationCandidates: '' } }),
           },
         );
       } finally {
@@ -106,6 +118,10 @@ async function classifyQueuedDocument(message, context) {
       }
     }
 
+    await documents.updateOne(
+      { _id: document._id },
+      { $set: { status: 'classified', updatedAt: new Date() } },
+    );
     context.extraOutputs.set(extractionQueueOutput, JSON.stringify({
       documentId: String(document._id),
       classificationMetrics,
@@ -120,8 +136,8 @@ async function classifyQueuedDocument(message, context) {
 }
 
 app.storageQueue('classifyDocument', {
-  queueName: 'document-processing',
+  queueName: 'document-classification',
   connection: 'AzureWebJobsStorage',
   extraOutputs: [extractionQueueOutput],
-  handler: classifyQueuedDocument,
+  handler: withClassificationConcurrency(classifyQueuedDocument),
 });
