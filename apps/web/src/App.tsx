@@ -2960,9 +2960,6 @@ function DocumentTypeManagement({
   const [isSchemaExpanded, setIsSchemaExpanded] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
-  const finalizedTypeCount = documentTypes.filter((type) => type.finalized).length;
-  const classificationTypeCount = documentTypes.filter((type) => type.includeInClassification).length;
-  const sampleFileCount = documentTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
@@ -2995,13 +2992,6 @@ function DocumentTypeManagement({
 
   return (
     <div className="document-type-layout">
-      <section className="panel document-type-summary">
-        <StatusMetric label="Document Types" value={documentTypes.length} />
-        <StatusMetric label="Finalized" value={finalizedTypeCount} />
-        <StatusMetric label="In Classification" value={classificationTypeCount} />
-        <StatusMetric label="Sample Files" value={sampleFileCount} />
-      </section>
-
       <div className="two-column document-type-workspace">
       <section className="panel document-type-list-panel">
         <div className="panel-heading">

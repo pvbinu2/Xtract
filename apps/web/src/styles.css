@@ -2879,8 +2879,7 @@ textarea {
   gap: 18px;
 }
 
-.classification-summary,
-.document-type-summary {
+.classification-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
@@ -2889,10 +2888,6 @@ textarea {
 .document-type-layout {
   display: grid;
   gap: 18px;
-}
-
-.document-type-summary {
-  padding: 14px;
 }
 
 .document-type-workspace {
@@ -5172,7 +5167,6 @@ button.clickable-status {
   .form-grid,
   .filters,
   .classification-summary,
-  .document-type-summary,
   .document-type-config-grid,
   .configuration-card-grid,
   .scaling-controls,
