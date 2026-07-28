@@ -1268,98 +1268,188 @@ function MarketingSite() {
   return (
     <main className="marketing-site">
       <section className="marketing-hero">
-        <div className="marketing-workflow-bg" aria-hidden="true">
-          <span title="Intake"><Upload size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Classification"><BrainCircuit size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Extraction"><ScanText size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Validation"><ClipboardCheck size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Downstream"><Network size={22} /></span>
-        </div>
         <div className="marketing-nav">
           <div className="marketing-brand">
             <img src="/icon-192.png" alt="" />
             <strong>Xtractor</strong>
           </div>
-          <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>
-            Open app
-          </button>
+          <div className="marketing-nav-links">
+            <a href="#how-it-works">How it works</a>
+            <a href="#business-applications">Solutions</a>
+            <a href="#demo-request-form">Contact</a>
+          </div>
+          <div className="marketing-nav-actions">
+            <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>Sign in</button>
+            <button type="button" className="marketing-nav-cta" onClick={focusRequestForm}>Book a demo</button>
+          </div>
         </div>
         <div className="marketing-hero-content">
           <div className="marketing-copy">
-            <span className="marketing-kicker">AI document intake for business teams</span>
-            <h1>Turn document-heavy operations into validated structured data.</h1>
+            <span className="marketing-kicker"><Sparkles size={14} /> Intelligent document operations</span>
+            <h1>From complex documents to <em>trusted data.</em></h1>
             <p>
-              Xtractor classifies PDFs, extracts business fields, routes exceptions for human validation, and sends clean JSON to your downstream systems.
+              Xtractor classifies, extracts, and validates business documents—then delivers clean, structured data to the systems your teams already use.
             </p>
             <div className="marketing-actions">
               <button type="button" className="marketing-primary-button" onClick={focusRequestForm}>
-                Request a demo
+                See Xtractor in action
                 <ChevronRight size={18} />
               </button>
-              <a className="marketing-text-link" href="#business-applications">Explore use cases</a>
+              <a className="marketing-text-link" href="#how-it-works">Explore the workflow</a>
+            </div>
+            <div className="marketing-proof-points">
+              <span><CheckCircle2 size={15} /> Human-in-the-loop validation</span>
+              <span><CheckCircle2 size={15} /> Flexible AI providers</span>
+              <span><CheckCircle2 size={15} /> API-ready output</span>
             </div>
           </div>
           <div className="marketing-product-visual" aria-label="Xtractor workflow preview">
             <div className="visual-toolbar">
-              <span>Processing queue</span>
-              <strong>Live validation</strong>
+              <div><i /><i /><i /></div>
+              <span>Document operations</span>
+              <strong><span /> Live</strong>
             </div>
-            <div className="visual-grid">
-              <div className="visual-panel primary">
-                <FileText size={24} />
-                <strong>Invoice_0428.pdf</strong>
-                <span>Classified as Accounts Payable</span>
+            <div className="visual-app">
+              <div className="visual-app-nav">
+                <span className="active"><Files size={15} /> Documents</span>
+                <span><BrainCircuit size={15} /> Classification</span>
+                <span><ClipboardCheck size={15} /> Validation</span>
               </div>
-              <div className="visual-panel">
-                <ShieldCheck size={22} />
-                <strong>96%</strong>
-                <span>Validation confidence</span>
+              <div className="visual-app-main">
+                <div className="visual-app-heading">
+                  <div><small>Processing queue</small><strong>12 documents</strong></div>
+                  <span>Live updates</span>
+                </div>
+                <div className="visual-document-row">
+                  <div className="visual-file-icon"><FileText size={20} /></div>
+                  <div><strong>Invoice_0428.pdf</strong><small>Accounts Payable</small></div>
+                  <span className="visual-status extracted">Extracted</span><em>96%</em>
+                </div>
+                <div className="visual-document-row">
+                  <div className="visual-file-icon"><FileText size={20} /></div>
+                  <div><strong>Policy_Renewal.pdf</strong><small>Insurance</small></div>
+                  <span className="visual-status classified">Classified</span><em>92%</em>
+                </div>
+                <div className="visual-progress-card">
+                  <div><span>Intake</span><span>Classify</span><span>Extract</span><span>Validate</span></div>
+                  <div className="visual-progress-line"><i /><i /><i /><i /></div>
+                </div>
               </div>
-              <div className="visual-panel">
-                <TrendingUp size={22} />
-                <strong>JSON ready</strong>
-                <span>ERP payload prepared</span>
-              </div>
+            </div>
+            <div className="visual-float-card">
+              <ShieldCheck size={20} />
+              <div><strong>Validated output</strong><span>Ready for downstream delivery</span></div>
             </div>
           </div>
+        </div>
+        <div className="marketing-client-strip">
+          <span>Built for document-heavy teams in</span>
+          <div><strong>FINANCE</strong><strong>INSURANCE</strong><strong>OPERATIONS</strong><strong>COMPLIANCE</strong></div>
+        </div>
+      </section>
+
+      <section className="marketing-outcomes" aria-label="Platform outcomes">
+        <article><strong>3 modes</strong><span>Vector, LLM, and RAG classification</span></article>
+        <article><strong>Live</strong><span>Real-time processing visibility</span></article>
+        <article><strong>Flexible</strong><span>OpenAI or Self Hosted models</span></article>
+        <article><strong>Ready</strong><span>Structured JSON for downstream systems</span></article>
+      </section>
+
+      <section className="marketing-automation-demo" aria-label="Animated Xtractor document workflow">
+        <div className="marketing-automation-heading">
+          <span><i /> Live automation</span>
+          <strong>Watch a document move through Xtractor</strong>
+        </div>
+        <div className="marketing-animation-track">
+          <div className="marketing-animation-line"><span /></div>
+          <div className="marketing-moving-document" aria-hidden="true">
+            <FileText size={18} />
+            <span>PDF</span>
+          </div>
+          {[
+            { icon: Upload, label: 'Received', detail: 'Document intake' },
+            { icon: BrainCircuit, label: 'Classified', detail: 'Type identified' },
+            { icon: ScanText, label: 'Extracted', detail: 'Fields captured' },
+            { icon: Network, label: 'Delivered', detail: 'Sent downstream' },
+          ].map(({ icon: Icon, label, detail }, index) => (
+            <article className={`marketing-animation-stage stage-${index + 1}`} key={label}>
+              <div><Icon size={20} /></div>
+              <strong>{label}</strong>
+              <span>{detail}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="marketing-section marketing-how" id="how-it-works">
+        <div className="marketing-section-heading centered">
+          <span className="marketing-kicker">One intelligent workflow</span>
+          <h2>Every document, handled from intake to action.</h2>
+          <p>Replace fragmented tools and manual handoffs with a transparent workflow your team can control.</p>
+        </div>
+        <div className="marketing-workflow-grid">
+          {[
+            { icon: Upload, step: '01', title: 'Receive', text: 'Upload PDFs or drop them into monitored storage for immediate processing.' },
+            { icon: BrainCircuit, step: '02', title: 'Classify', text: 'Route documents accurately using vector search, LLM, or RAG classification.' },
+            { icon: ScanText, step: '03', title: 'Extract', text: 'Generate OCR or markdown and capture the business fields that matter.' },
+            { icon: ClipboardCheck, step: '04', title: 'Validate', text: 'Review low-confidence data against the source document before delivery.' },
+          ].map(({ icon: Icon, step, title, text }) => (
+            <article key={title}>
+              <span className="marketing-step">{step}</span>
+              <div className="marketing-workflow-icon"><Icon size={22} /></div>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
         </div>
       </section>
 
       <section className="marketing-section" id="business-applications">
         <div className="marketing-section-heading">
-          <span className="marketing-kicker">Business applications</span>
-          <h2>Built for repeatable document operations.</h2>
+          <span className="marketing-kicker">Designed for real operations</span>
+          <h2>Turn high-volume paperwork into business momentum.</h2>
+          <p>Adapt extraction schemas, validation rules, and downstream delivery to the way your teams work.</p>
         </div>
         <div className="marketing-card-grid">
           <article>
-            <Building2 size={22} />
-            <h3>Finance and AP</h3>
+            <div className="marketing-card-icon"><Building2 size={22} /></div>
+            <span>FINANCE</span>
+            <h3>Accelerate accounts payable</h3>
             <p>Capture invoice totals, vendor details, tax, due dates, and line items before sending clean data downstream.</p>
+            <a href="#demo-request-form">Transform invoice intake <ChevronRight size={15} /></a>
           </article>
           <article>
-            <ClipboardCheck size={22} />
-            <h3>Compliance review</h3>
-            <p>Validate extracted fields side by side with the original PDF and preserve clear operational visibility.</p>
+            <div className="marketing-card-icon"><ShieldCheck size={22} /></div>
+            <span>COMPLIANCE</span>
+            <h3>Review with confidence</h3>
+            <p>Validate extracted fields beside the original PDF and maintain clear visibility into every processing step.</p>
+            <a href="#demo-request-form">Strengthen review workflows <ChevronRight size={15} /></a>
           </article>
           <article>
-            <Sparkles size={22} />
-            <h3>Template flexibility</h3>
-            <p>Create extraction schemas for new document classes and reprocess files as business needs change.</p>
+            <div className="marketing-card-icon"><Network size={22} /></div>
+            <span>OPERATIONS</span>
+            <h3>Connect every handoff</h3>
+            <p>Deliver validated JSON to ERP, claims, workflow, and analytics systems without repetitive data entry.</p>
+            <a href="#demo-request-form">Modernize document operations <ChevronRight size={15} /></a>
           </article>
         </div>
       </section>
 
       <section className="marketing-demo-band">
         <div>
-          <span className="marketing-kicker">Request a walkthrough</span>
-          <h2>See how Xtractor fits your intake workflow.</h2>
-          <p>Share your email and optional phone number. Your request will be saved for the Xtract team to follow up.</p>
+          <span className="marketing-kicker">A better document workflow starts here</span>
+          <h2>Bring us a document. We’ll show you what Xtractor can do.</h2>
+          <p>Book a tailored walkthrough and see how classification, extraction, validation, and delivery fit your operation.</p>
+          <div className="marketing-demo-points">
+            <span><CheckCircle2 size={16} /> Tailored to your document types</span>
+            <span><CheckCircle2 size={16} /> No commitment required</span>
+          </div>
         </div>
         <form className="marketing-demo-form" id="demo-request-form" onSubmit={submitDemoRequest}>
+          <div className="marketing-form-heading">
+            <strong>Request your demo</strong>
+            <span>We’ll get back to you shortly.</span>
+          </div>
           <label>
             Work email
             <div className="marketing-input-wrap">
@@ -1391,8 +1481,14 @@ function MarketingSite() {
             Request demo
           </button>
           {status && <div className={`marketing-form-status ${status.type}`}>{status.text}</div>}
+          <small>By submitting, you agree to be contacted about Xtractor.</small>
         </form>
       </section>
+      <footer className="marketing-footer">
+        <div className="marketing-brand"><img src="/icon-192.png" alt="" /><strong>Xtractor</strong></div>
+        <p>Intelligent document operations, built for trusted outcomes.</p>
+        <button type="button" onClick={() => { window.location.href = '/'; }}>Sign in to Xtractor <ChevronRight size={15} /></button>
+      </footer>
     </main>
   );
 }
