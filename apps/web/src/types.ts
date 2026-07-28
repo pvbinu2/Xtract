@@ -25,6 +25,7 @@ export type DocumentType = {
   classifierTrainingStatus?: 'untrained' | 'training' | 'trained' | 'failed';
   classifierProfile?: string;
   classifierTrainedAt?: string;
+  classifierTrainedBy?: string;
   classifierTrainingError?: string;
   fields: ExtractionField[];
   extractionModel?: string;
@@ -52,6 +53,7 @@ export type IncomingDocument = {
   _id: string;
   fileName: string;
   originalName: string;
+  mimeType?: string;
   textArtifactBlobName?: string;
   textArtifactMode?: 'ocr' | 'markdown';
   stageTimings?: Array<{

@@ -153,7 +153,7 @@ export class DocumentTypesService {
     return docType.save();
   }
 
-  async trainClassifier() {
+  async trainClassifier(trainedBy: string) {
     if (!this.hasQueueConnection()) {
       throw new BadRequestException('Classifier training requires Azure queue storage and the function worker.');
     }
@@ -178,7 +178,7 @@ export class DocumentTypesService {
       },
       { $set: { classifierTrainingStatus: 'untrained' } },
     );
-    await this.enqueueClassifierTraining();
+    await this.enqueueClassifierTraining(trainedBy);
     return this.list();
   }
 
@@ -190,6 +190,7 @@ export class DocumentTypesService {
         $unset: {
           classifierTrainingError: '',
           classifierTrainedAt: '',
+          classifierTrainedBy: '',
         },
       },
     );
@@ -235,12 +236,12 @@ export class DocumentTypesService {
     return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
   }
 
-  private async enqueueClassifierTraining() {
+  private async enqueueClassifierTraining(trainedBy: string) {
     const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
     if (!connectionString) return;
     const queue = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('classifier-training');
     await queue.createIfNotExists();
-    await queue.sendMessage(Buffer.from(JSON.stringify({ trainAll: true })).toString('base64'));
+    await queue.sendMessage(Buffer.from(JSON.stringify({ trainAll: true, trainedBy })).toString('base64'));
   }
 
   async generateTemplate(id: string, prompt: string) {

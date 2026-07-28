@@ -30,6 +30,25 @@ export type ReprocessDocumentPayload = {
   forceClassification?: boolean;
 };
 
+export type HealthCheckResult = {
+  status: 'ready' | 'degraded';
+  checkedAt: string;
+  summary: {
+    total: number;
+    ready: number;
+    unavailable: number;
+    notConfigured: number;
+  };
+  checks: Array<{
+    id: string;
+    name: string;
+    group: 'Application' | 'Data' | 'Storage' | 'Queues' | 'Services' | 'AI';
+    status: 'ready' | 'unavailable' | 'not_configured';
+    detail: string;
+    latencyMs: number;
+  }>;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
 const AUTH_TOKEN_KEY = 'xtract-auth-token';
 
@@ -77,6 +96,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   me: () => request<AuthUser>('/auth/me'),
+  getHealth: () => request<HealthCheckResult>('/health'),
   changePassword: (payload: { currentPassword: string; newPassword: string }) =>
     request<{ changed: boolean }>('/auth/change-password', {
       method: 'POST',

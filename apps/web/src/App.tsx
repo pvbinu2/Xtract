@@ -3,6 +3,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mj
 import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
+  Activity,
   BarChart3,
   Building2,
   BrainCircuit,
@@ -28,10 +29,15 @@ import {
   Save,
   Sun,
   X,
+  CircleX,
+  CircleHelp,
   Trash2,
   Upload,
   Download,
   FileText,
+  FileImage,
+  FileSpreadsheet,
+  File as GenericFileIcon,
   KeyRound,
   Mail,
   Phone,
@@ -42,13 +48,13 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users' | 'health';
 
 type AppConfig = AppConfigPayload;
 type AiProvider = AppConfig['aiProvider'];
@@ -347,6 +353,25 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
     );
   }
   return null;
+}
+
+function DocumentFileTypeIcon({ document }: { document: IncomingDocument }) {
+  const mimeType = (document.mimeType || '').toLowerCase();
+  const extension = document.originalName.split('.').pop()?.toLowerCase() || '';
+  if (mimeType === 'application/pdf' || extension === 'pdf') {
+    return <span className="document-file-type pdf" title="PDF document"><FileText size={19} /><small>PDF</small></span>;
+  }
+  if (mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'tif', 'tiff'].includes(extension)) {
+    return <span className="document-file-type image" title="Image document"><FileImage size={19} /><small>IMG</small></span>;
+  }
+  if (
+    mimeType.includes('spreadsheet')
+    || mimeType.includes('excel')
+    || ['csv', 'xls', 'xlsx'].includes(extension)
+  ) {
+    return <span className="document-file-type spreadsheet" title="Spreadsheet document"><FileSpreadsheet size={19} /><small>SHEET</small></span>;
+  }
+  return <span className="document-file-type generic" title={extension ? `${extension.toUpperCase()} document` : 'Document'}><GenericFileIcon size={19} /><small>{extension ? extension.slice(0, 5).toUpperCase() : 'FILE'}</small></span>;
 }
 
 function OpenAIModelControls({
@@ -967,6 +992,7 @@ function OperationsApp() {
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
     { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
     { id: 'users' as View, label: 'User Management', icon: UsersIcon },
+    { id: 'health' as View, label: 'Health Check', icon: Activity },
     { id: 'password-reset' as View, label: 'Password Reset', icon: KeyRound },
   ];
   const visibleNavigation = navigation.filter((item) => (
@@ -1175,6 +1201,9 @@ function OperationsApp() {
         {!selectedPageLoading && isAdmin && view === 'users' && (
           <UserManagementScreen currentUser={currentUser} onNotify={showToast} />
         )}
+        {!selectedPageLoading && isAdmin && view === 'health' && (
+          <HealthDashboard onNotify={showToast} />
+        )}
         {!selectedPageLoading && view === 'password-reset' && (
           <PasswordResetScreen onNotify={showToast} />
         )}
@@ -1261,98 +1290,188 @@ function MarketingSite() {
   return (
     <main className="marketing-site">
       <section className="marketing-hero">
-        <div className="marketing-workflow-bg" aria-hidden="true">
-          <span title="Intake"><Upload size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Classification"><BrainCircuit size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Extraction"><ScanText size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Validation"><ClipboardCheck size={22} /></span>
-          <ChevronRight size={26} />
-          <span title="Downstream"><Network size={22} /></span>
-        </div>
         <div className="marketing-nav">
           <div className="marketing-brand">
             <img src="/icon-192.png" alt="" />
             <strong>Xtractor</strong>
           </div>
-          <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>
-            Open app
-          </button>
+          <div className="marketing-nav-links">
+            <a href="#how-it-works">How it works</a>
+            <a href="#business-applications">Solutions</a>
+            <a href="#demo-request-form">Contact</a>
+          </div>
+          <div className="marketing-nav-actions">
+            <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>Sign in</button>
+            <button type="button" className="marketing-nav-cta" onClick={focusRequestForm}>Book a demo</button>
+          </div>
         </div>
         <div className="marketing-hero-content">
           <div className="marketing-copy">
-            <span className="marketing-kicker">AI document intake for business teams</span>
-            <h1>Turn document-heavy operations into validated structured data.</h1>
+            <span className="marketing-kicker"><Sparkles size={14} /> Intelligent document operations</span>
+            <h1>From complex documents to <em>trusted data.</em></h1>
             <p>
-              Xtractor classifies PDFs, extracts business fields, routes exceptions for human validation, and sends clean JSON to your downstream systems.
+              Xtractor classifies, extracts, and validates business documents—then delivers clean, structured data to the systems your teams already use.
             </p>
             <div className="marketing-actions">
               <button type="button" className="marketing-primary-button" onClick={focusRequestForm}>
-                Request a demo
+                See Xtractor in action
                 <ChevronRight size={18} />
               </button>
-              <a className="marketing-text-link" href="#business-applications">Explore use cases</a>
+              <a className="marketing-text-link" href="#how-it-works">Explore the workflow</a>
+            </div>
+            <div className="marketing-proof-points">
+              <span><CheckCircle2 size={15} /> Human-in-the-loop validation</span>
+              <span><CheckCircle2 size={15} /> Flexible AI providers</span>
+              <span><CheckCircle2 size={15} /> API-ready output</span>
             </div>
           </div>
           <div className="marketing-product-visual" aria-label="Xtractor workflow preview">
             <div className="visual-toolbar">
-              <span>Processing queue</span>
-              <strong>Live validation</strong>
+              <div><i /><i /><i /></div>
+              <span>Document operations</span>
+              <strong><span /> Live</strong>
             </div>
-            <div className="visual-grid">
-              <div className="visual-panel primary">
-                <FileText size={24} />
-                <strong>Invoice_0428.pdf</strong>
-                <span>Classified as Accounts Payable</span>
+            <div className="visual-app">
+              <div className="visual-app-nav">
+                <span className="active"><Files size={15} /> Documents</span>
+                <span><BrainCircuit size={15} /> Classification</span>
+                <span><ClipboardCheck size={15} /> Validation</span>
               </div>
-              <div className="visual-panel">
-                <ShieldCheck size={22} />
-                <strong>96%</strong>
-                <span>Validation confidence</span>
+              <div className="visual-app-main">
+                <div className="visual-app-heading">
+                  <div><small>Processing queue</small><strong>12 documents</strong></div>
+                  <span>Live updates</span>
+                </div>
+                <div className="visual-document-row">
+                  <div className="visual-file-icon"><FileText size={20} /></div>
+                  <div><strong>Invoice_0428.pdf</strong><small>Accounts Payable</small></div>
+                  <span className="visual-status extracted">Extracted</span><em>96%</em>
+                </div>
+                <div className="visual-document-row">
+                  <div className="visual-file-icon"><FileText size={20} /></div>
+                  <div><strong>Policy_Renewal.pdf</strong><small>Insurance</small></div>
+                  <span className="visual-status classified">Classified</span><em>92%</em>
+                </div>
+                <div className="visual-progress-card">
+                  <div><span>Intake</span><span>Classify</span><span>Extract</span><span>Validate</span></div>
+                  <div className="visual-progress-line"><i /><i /><i /><i /></div>
+                </div>
               </div>
-              <div className="visual-panel">
-                <TrendingUp size={22} />
-                <strong>JSON ready</strong>
-                <span>ERP payload prepared</span>
-              </div>
+            </div>
+            <div className="visual-float-card">
+              <ShieldCheck size={20} />
+              <div><strong>Validated output</strong><span>Ready for downstream delivery</span></div>
             </div>
           </div>
+        </div>
+        <div className="marketing-client-strip">
+          <span>Built for document-heavy teams in</span>
+          <div><strong>FINANCE</strong><strong>INSURANCE</strong><strong>OPERATIONS</strong><strong>COMPLIANCE</strong></div>
+        </div>
+      </section>
+
+      <section className="marketing-outcomes" aria-label="Platform outcomes">
+        <article><strong>3 modes</strong><span>Vector, LLM, and RAG classification</span></article>
+        <article><strong>Live</strong><span>Real-time processing visibility</span></article>
+        <article><strong>Flexible</strong><span>OpenAI or Self Hosted models</span></article>
+        <article><strong>Ready</strong><span>Structured JSON for downstream systems</span></article>
+      </section>
+
+      <section className="marketing-automation-demo" aria-label="Animated Xtractor document workflow">
+        <div className="marketing-automation-heading">
+          <span><i /> Live automation</span>
+          <strong>Watch a document move through Xtractor</strong>
+        </div>
+        <div className="marketing-animation-track">
+          <div className="marketing-animation-line"><span /></div>
+          <div className="marketing-moving-document" aria-hidden="true">
+            <FileText size={18} />
+            <span>PDF</span>
+          </div>
+          {[
+            { icon: Upload, label: 'Received', detail: 'Document intake' },
+            { icon: BrainCircuit, label: 'Classified', detail: 'Type identified' },
+            { icon: ScanText, label: 'Extracted', detail: 'Fields captured' },
+            { icon: Network, label: 'Delivered', detail: 'Sent downstream' },
+          ].map(({ icon: Icon, label, detail }, index) => (
+            <article className={`marketing-animation-stage stage-${index + 1}`} key={label}>
+              <div><Icon size={20} /></div>
+              <strong>{label}</strong>
+              <span>{detail}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="marketing-section marketing-how" id="how-it-works">
+        <div className="marketing-section-heading centered">
+          <span className="marketing-kicker">One intelligent workflow</span>
+          <h2>Every document, handled from intake to action.</h2>
+          <p>Replace fragmented tools and manual handoffs with a transparent workflow your team can control.</p>
+        </div>
+        <div className="marketing-workflow-grid">
+          {[
+            { icon: Upload, step: '01', title: 'Receive', text: 'Upload PDFs or drop them into monitored storage for immediate processing.' },
+            { icon: BrainCircuit, step: '02', title: 'Classify', text: 'Route documents accurately using vector search, LLM, or RAG classification.' },
+            { icon: ScanText, step: '03', title: 'Extract', text: 'Generate OCR or markdown and capture the business fields that matter.' },
+            { icon: ClipboardCheck, step: '04', title: 'Validate', text: 'Review low-confidence data against the source document before delivery.' },
+          ].map(({ icon: Icon, step, title, text }) => (
+            <article key={title}>
+              <span className="marketing-step">{step}</span>
+              <div className="marketing-workflow-icon"><Icon size={22} /></div>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
         </div>
       </section>
 
       <section className="marketing-section" id="business-applications">
         <div className="marketing-section-heading">
-          <span className="marketing-kicker">Business applications</span>
-          <h2>Built for repeatable document operations.</h2>
+          <span className="marketing-kicker">Designed for real operations</span>
+          <h2>Turn high-volume paperwork into business momentum.</h2>
+          <p>Adapt extraction schemas, validation rules, and downstream delivery to the way your teams work.</p>
         </div>
         <div className="marketing-card-grid">
           <article>
-            <Building2 size={22} />
-            <h3>Finance and AP</h3>
+            <div className="marketing-card-icon"><Building2 size={22} /></div>
+            <span>FINANCE</span>
+            <h3>Accelerate accounts payable</h3>
             <p>Capture invoice totals, vendor details, tax, due dates, and line items before sending clean data downstream.</p>
+            <a href="#demo-request-form">Transform invoice intake <ChevronRight size={15} /></a>
           </article>
           <article>
-            <ClipboardCheck size={22} />
-            <h3>Compliance review</h3>
-            <p>Validate extracted fields side by side with the original PDF and preserve clear operational visibility.</p>
+            <div className="marketing-card-icon"><ShieldCheck size={22} /></div>
+            <span>COMPLIANCE</span>
+            <h3>Review with confidence</h3>
+            <p>Validate extracted fields beside the original PDF and maintain clear visibility into every processing step.</p>
+            <a href="#demo-request-form">Strengthen review workflows <ChevronRight size={15} /></a>
           </article>
           <article>
-            <Sparkles size={22} />
-            <h3>Template flexibility</h3>
-            <p>Create extraction schemas for new document classes and reprocess files as business needs change.</p>
+            <div className="marketing-card-icon"><Network size={22} /></div>
+            <span>OPERATIONS</span>
+            <h3>Connect every handoff</h3>
+            <p>Deliver validated JSON to ERP, claims, workflow, and analytics systems without repetitive data entry.</p>
+            <a href="#demo-request-form">Modernize document operations <ChevronRight size={15} /></a>
           </article>
         </div>
       </section>
 
       <section className="marketing-demo-band">
         <div>
-          <span className="marketing-kicker">Request a walkthrough</span>
-          <h2>See how Xtractor fits your intake workflow.</h2>
-          <p>Share your email and optional phone number. Your request will be saved for the Xtract team to follow up.</p>
+          <span className="marketing-kicker">A better document workflow starts here</span>
+          <h2>Bring us a document. We’ll show you what Xtractor can do.</h2>
+          <p>Book a tailored walkthrough and see how classification, extraction, validation, and delivery fit your operation.</p>
+          <div className="marketing-demo-points">
+            <span><CheckCircle2 size={16} /> Tailored to your document types</span>
+            <span><CheckCircle2 size={16} /> No commitment required</span>
+          </div>
         </div>
         <form className="marketing-demo-form" id="demo-request-form" onSubmit={submitDemoRequest}>
+          <div className="marketing-form-heading">
+            <strong>Request your demo</strong>
+            <span>We’ll get back to you shortly.</span>
+          </div>
           <label>
             Work email
             <div className="marketing-input-wrap">
@@ -1384,8 +1503,14 @@ function MarketingSite() {
             Request demo
           </button>
           {status && <div className={`marketing-form-status ${status.type}`}>{status.text}</div>}
+          <small>By submitting, you agree to be contacted about Xtractor.</small>
         </form>
       </section>
+      <footer className="marketing-footer">
+        <div className="marketing-brand"><img src="/icon-192.png" alt="" /><strong>Xtractor</strong></div>
+        <p>Intelligent document operations, built for trusted outcomes.</p>
+        <button type="button" onClick={() => { window.location.href = '/'; }}>Sign in to Xtractor <ChevronRight size={15} /></button>
+      </footer>
     </main>
   );
 }
@@ -1477,14 +1602,25 @@ function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, ty
   }
 
   return (
-    <section className="panel narrow-panel">
+    <section className="panel narrow-panel password-reset-card">
       <div className="panel-heading">
-        <div>
-          <h2>Password Reset</h2>
-          <p>Change your own password.</p>
+        <div className="password-reset-heading">
+          <span><KeyRound size={21} /></span>
+          <div>
+            <small>Account security</small>
+            <h2>Password Reset</h2>
+            <p>Change the password used to access your account.</p>
+          </div>
         </div>
       </div>
-      <form className="form-grid" onSubmit={submit}>
+      <div className="password-security-note">
+        <ShieldCheck size={18} />
+        <span>
+          <strong>Keep your account secure</strong>
+          <small>Use a strong password that is different from passwords used elsewhere.</small>
+        </span>
+      </div>
+      <form className="form-grid password-reset-form" onSubmit={submit}>
         <label className="full-label">
           Current password
           <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
@@ -1597,17 +1733,39 @@ function UserManagementScreen({
     }
   }
 
+  const enabledUsers = users.filter((user) => user.enabled).length;
+  const adminUsers = users.filter((user) => user.role === 'admin').length;
+
   return (
     <div className="user-management">
-      <section className="panel">
+      <section className="panel user-management-overview">
         <div className="panel-heading">
-          <div>
-            <h2>User Management</h2>
-            <p>Add users, assign roles, and control access.</p>
+          <div className="user-management-heading">
+            <span><UsersIcon size={21} /></span>
+            <div>
+              <small>Access administration</small>
+              <h2>User Management</h2>
+              <p>Add users, assign roles, and control access.</p>
+            </div>
           </div>
           <button className="icon-button" title="Refresh users" onClick={loadUsers}>
             {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
           </button>
+        </div>
+        <div className="user-management-summary">
+          <div><UsersIcon size={17} /><span>Total users<strong>{users.length}</strong></span></div>
+          <div><CheckCircle2 size={17} /><span>Enabled<strong>{enabledUsers}</strong></span></div>
+          <div><ShieldCheck size={17} /><span>Administrators<strong>{adminUsers}</strong></span></div>
+        </div>
+      </section>
+
+      <section className="panel user-create-card">
+        <div className="user-section-heading">
+          <div>
+            <strong>Create User</strong>
+            <small>Set up a new account with its initial role and password.</small>
+          </div>
+          <span><Plus size={17} /></span>
         </div>
         <form className="user-create-form" onSubmit={createUser}>
           <label>
@@ -1631,8 +1789,15 @@ function UserManagementScreen({
           </button>
         </form>
       </section>
-      <section className="panel">
-        <div className="business-review-table">
+      <section className="panel user-directory-card">
+        <div className="user-directory-heading">
+          <div>
+            <strong>User Directory</strong>
+            <small>Manage account roles, status, passwords, and access.</small>
+          </div>
+          <span>{users.length} account{users.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="business-review-table user-directory-table">
           <table>
             <thead>
               <tr>
@@ -1649,7 +1814,12 @@ function UserManagementScreen({
                 const isSelf = id === currentUser.id;
                 return (
                   <tr key={id || user.username}>
-                    <td>{user.username}</td>
+                    <td>
+                      <span className="user-identity">
+                        <span>{user.username.slice(0, 1).toUpperCase()}</span>
+                        <strong>{user.username}{isSelf ? ' (you)' : ''}</strong>
+                      </span>
+                    </td>
                     <td>
                       <select
                         value={user.role}
@@ -1660,7 +1830,7 @@ function UserManagementScreen({
                         <option value="admin">Admin</option>
                       </select>
                     </td>
-                    <td>{user.enabled ? 'Enabled' : 'Disabled'}</td>
+                    <td><span className={user.enabled ? 'user-status enabled' : 'user-status disabled'}>{user.enabled ? 'Enabled' : 'Disabled'}</span></td>
                     <td>{user.createdAt ? new Date(user.createdAt).toLocaleString() : 'N/A'}</td>
                     <td>
                       <div className="table-actions">
@@ -1726,6 +1896,142 @@ function UserManagementScreen({
   );
 }
 
+function HealthDashboard({
+  onNotify,
+}: {
+  onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
+}) {
+  const [health, setHealth] = useState<HealthCheckResult | null>(null);
+  const [checking, setChecking] = useState(true);
+  const groups: HealthCheckResult['checks'][number]['group'][] = [
+    'Application',
+    'Data',
+    'Storage',
+    'Queues',
+    'Services',
+    'AI',
+  ];
+
+  async function refresh() {
+    setChecking(true);
+    try {
+      setHealth(await api.getHealth());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Health check failed', 'error');
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  return (
+    <section className="health-dashboard">
+      <div className="panel health-overview">
+        <div className="panel-heading">
+          <div className="health-overview-heading">
+            <span><Activity size={20} /></span>
+            <div>
+              <small>Infrastructure status</small>
+              <h2>System health</h2>
+              <p>
+                {health
+                  ? `Last checked ${new Date(health.checkedAt).toLocaleString()}`
+                  : 'Checking application resources.'}
+              </p>
+            </div>
+          </div>
+          <button className="secondary-button compact" onClick={() => refresh()} disabled={checking}>
+            {checking ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            Check now
+          </button>
+        </div>
+        {health && (
+          <div className="health-summary">
+            <div className={health.status === 'ready' ? 'ready' : 'unavailable'}>
+              {health.status === 'ready' ? <CheckCircle2 size={22} /> : <CircleX size={22} />}
+              <span>Overall</span>
+              <strong>{health.status}</strong>
+            </div>
+            <div className="ready">
+              <CheckCircle2 size={22} />
+              <span>Ready</span>
+              <strong>{health.summary.ready}</strong>
+            </div>
+            <div className="unavailable">
+              <CircleX size={22} />
+              <span>Unavailable</span>
+              <strong>{health.summary.unavailable}</strong>
+            </div>
+            <div className="not-configured">
+              <CircleHelp size={22} />
+              <span>Not configured</span>
+              <strong>{health.summary.notConfigured}</strong>
+            </div>
+          </div>
+        )}
+        {health && health.summary.unavailable > 0 && (
+          <div className="health-degraded-list" role="alert">
+            <div className="health-degraded-heading">
+              <CircleX size={18} />
+              <strong>Degraded resources</strong>
+              <span>{health.summary.unavailable}</span>
+            </div>
+            <div>
+              {health.checks
+                .filter((check) => check.status === 'unavailable')
+                .map((check) => (
+                  <article key={check.id}>
+                    <strong>{check.name}</strong>
+                    <span>{check.detail}</span>
+                  </article>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {!health && checking && <EmptyState text="Checking system resources." />}
+
+      {health && groups.map((group) => {
+        const checks = health.checks.filter((check) => check.group === group);
+        if (!checks.length) return null;
+        return (
+          <section className="panel health-group" key={group}>
+            <div className="health-group-heading">
+              <h3>{group}</h3>
+              <span>{checks.filter((check) => check.status === 'ready').length} / {checks.length} ready</span>
+            </div>
+            <div className="health-resource-grid">
+              {checks.map((check) => (
+                <article className={`health-resource ${check.status}`} key={check.id}>
+                  <div className="health-resource-icon">
+                    {check.status === 'ready'
+                      ? <CheckCircle2 size={20} />
+                      : check.status === 'unavailable'
+                        ? <CircleX size={20} />
+                        : <CircleHelp size={20} />}
+                  </div>
+                  <div>
+                    <div className="health-resource-heading">
+                      <strong>{check.name}</strong>
+                      <span>{check.status.replace('_', ' ')}</span>
+                    </div>
+                    <p>{check.detail}</p>
+                    <small>{check.latencyMs ? `${check.latencyMs} ms response time` : 'No latency recorded'}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </section>
+  );
+}
+
 function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
   const [requests, setRequests] = useState<DemoRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
@@ -1745,18 +2051,43 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
     loadRequests();
   }, []);
 
+  const sourceCount = new Set(requests.map((request) => request.source).filter(Boolean)).size;
+  const latestRequest = requests
+    .map((request) => new Date(request.createdAt))
+    .sort((left, right) => right.getTime() - left.getTime())[0];
+
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2>Demo Requests</h2>
-          <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
+    <div className="demo-requests-page">
+      <section className="panel demo-requests-overview">
+        <div className="panel-heading">
+          <div className="demo-requests-heading">
+            <span><Mail size={21} /></span>
+            <div>
+              <small>Sales pipeline</small>
+              <h2>Demo Requests</h2>
+              <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
+            </div>
+          </div>
+          <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
+            {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
         </div>
-        <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
-          {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-        </button>
-      </div>
-      <div className="business-review-table">
+        <div className="demo-request-summary">
+          <div><Mail size={17} /><span>Total requests<strong>{requests.length}</strong></span></div>
+          <div><TrendingUp size={17} /><span>Lead sources<strong>{sourceCount}</strong></span></div>
+          <div><Clock3 size={17} /><span>Latest request<strong>{latestRequest ? latestRequest.toLocaleDateString() : '—'}</strong></span></div>
+        </div>
+      </section>
+
+      <section className="panel demo-requests-list">
+        <div className="demo-requests-list-heading">
+          <div>
+            <strong>Request inbox</strong>
+            <small>Contact details and acquisition source for every demo lead.</small>
+          </div>
+          <span>{requests.length} lead{requests.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="business-review-table demo-requests-table">
         <table>
           <thead>
             <tr>
@@ -1769,9 +2100,9 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
           <tbody>
             {requests.map((request) => (
               <tr key={request._id}>
-                <td>{request.email}</td>
-                <td>{request.phone || 'N/A'}</td>
-                <td>{request.source}</td>
+                <td><span className="demo-contact"><Mail size={14} />{request.email}</span></td>
+                <td><span className="demo-contact"><Phone size={14} />{request.phone || 'N/A'}</span></td>
+                <td><span className="demo-source-pill">{request.source}</span></td>
                 <td>{new Date(request.createdAt).toLocaleString()}</td>
               </tr>
             ))}
@@ -1782,8 +2113,9 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
             {loadingRequests ? 'Loading demo requests.' : 'No demo requests yet.'}
           </div>
         )}
+        </div>
+      </section>
       </div>
-    </section>
   );
 }
 
@@ -1998,11 +2330,15 @@ function BusinessReviewScreen({
 
   return (
     <div className="business-review">
-      <section className="panel">
+      <section className="panel business-review-overview">
         <div className="panel-heading">
-          <div>
-            <h2>Processing Summary</h2>
-            <p>Persisted processing volume, token usage, and estimated OpenAI processing cost.</p>
+          <div className="business-review-heading">
+            <span><BarChart3 size={20} /></span>
+            <div>
+              <small>Executive overview</small>
+              <h2>Processing Summary</h2>
+              <p>Persisted processing volume, token usage, and estimated AI processing cost.</p>
+            </div>
           </div>
           <div className="toolbar-actions">
             <label className="currency-selector">
@@ -2037,11 +2373,15 @@ function BusinessReviewScreen({
         />
       </section>
 
-      <section className="panel">
+      <section className="panel business-review-recent">
         <div className="panel-heading">
-          <div>
-            <h2>Recent Processed Files</h2>
-            <p>Last five processed documents persisted by the business review.</p>
+          <div className="business-review-heading">
+            <span><Files size={20} /></span>
+            <div>
+              <small>Recent activity</small>
+              <h2>Recent Processed Files</h2>
+              <p>Last five processed documents persisted by the business review.</p>
+            </div>
           </div>
         </div>
         <div className="business-review-table">
@@ -2146,7 +2486,7 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
-  type ConfigurationSection = 'aiService' | 'documentProcessing' | 'scaling' | 'downstream';
+  type ConfigurationSection = 'documentProcessing' | 'scaling' | 'downstream';
   const [expandedSection, setExpandedSection] = useState<ConfigurationSection | null>(null);
 
   function toggleSection(section: ConfigurationSection) {
@@ -2163,107 +2503,33 @@ function ConfigurationScreen({
 
   return (
     <div className="panel configuration-panel">
-      <div className="configuration-form">
-        <div className="configuration-section">
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'aiService'}
-            onClick={() => toggleSection('aiService')}
-          >
-            <span>AI Service Configuration</span>
-            {expandedSection === 'aiService' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'aiService' && (
-            <div className="configuration-section-body configuration-card-grid ai-settings">
-              <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
-              <label>
-                AI provider
-                <select
-                  value={config.aiProvider}
-                  onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="ollama">Ollama</option>
-                </select>
-              </label>
-              {config.aiProvider === 'ollama' ? (
-                <>
-                  <label>
-                    Ollama base URL
-                    <input
-                      type="url"
-                      value={config.ollamaBaseUrl}
-                      placeholder={defaultOllamaBaseUrl}
-                      onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Ollama model
-                    <input
-                      value={config.ollamaModel}
-                      placeholder={defaultOllamaModel}
-                      onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
-                    />
-                  </label>
-                </>
-              ) : (
-                <OpenAIModelControls
-                  model={config.classificationModel || lowCostOpenAIModel}
-                  reasoningEffort={config.classificationReasoningEffort || 'low'}
-                  onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
-                  onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
-                />
-              )}
-              <label>
-                Embedding provider
-                <select
-                  value={config.embeddingProvider}
-                  onChange={(event) => onConfigChange({ ...config, embeddingProvider: event.target.value as EmbeddingProvider })}
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="ollama">Ollama</option>
-                </select>
-              </label>
-              {config.embeddingProvider === 'ollama' ? (
-                <label>
-                  Ollama embedding model
-                  <input
-                    value={config.ollamaEmbeddingModel}
-                    placeholder={defaultOllamaEmbeddingModel}
-                    onChange={(event) => onConfigChange({ ...config, ollamaEmbeddingModel: event.target.value })}
-                  />
-                </label>
-              ) : (
-                <label>
-                  OpenAI embedding model
-                  <select
-                    value={config.embeddingModel}
-                    onChange={(event) => onConfigChange({ ...config, embeddingModel: event.target.value })}
-                  >
-                    {config.embeddingModel && !openAIEmbeddingModelOptions.some((option) => option.value === config.embeddingModel) && (
-                      <option value={config.embeddingModel}>{config.embeddingModel}</option>
-                    )}
-                    {openAIEmbeddingModelOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-          )}
+      <div className="configuration-hero">
+        <div className="configuration-hero-icon"><Gauge size={24} /></div>
+        <div>
+          <span>System settings</span>
+          <h2>Configure your processing pipeline</h2>
+          <p>Manage document preparation, workload capacity, and downstream delivery from one place.</p>
         </div>
-
-        <div className="configuration-section">
+        <div className="configuration-hero-note">
+          <Save size={16} />
+          <span>Changes take effect after saving</span>
+        </div>
+      </div>
+      <div className="configuration-form">
+        <div className={`configuration-section scaling${expandedSection === 'scaling' ? ' expanded' : ''}`}>
           <button
             className="configuration-section-toggle"
             type="button"
             aria-expanded={expandedSection === 'scaling'}
             onClick={() => toggleSection('scaling')}
           >
-            <span>Scaling</span>
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><TrendingUp size={20} /></span>
+              <span>
+                <strong>Scaling & Concurrency</strong>
+                <small>Control parallel processing capacity for every pipeline stage</small>
+              </span>
+            </span>
             {expandedSection === 'scaling' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
           {expandedSection === 'scaling' && (
@@ -2359,73 +2625,88 @@ function ConfigurationScreen({
           )}
         </div>
 
-        <div className="configuration-section">
+        <div className={`configuration-section processing${expandedSection === 'documentProcessing' ? ' expanded' : ''}`}>
           <button
             className="configuration-section-toggle"
             type="button"
             aria-expanded={expandedSection === 'documentProcessing'}
             onClick={() => toggleSection('documentProcessing')}
           >
-            <span>Document Processing Configuration</span>
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><ScanText size={20} /></span>
+              <span>
+                <strong>Document Processing</strong>
+                <small>Choose how document content is prepared for AI processing</small>
+              </span>
+            </span>
             {expandedSection === 'documentProcessing' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
           {expandedSection === 'documentProcessing' && (
-            <div className="configuration-section-body configuration-card-grid processing-settings">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.useOcrForDocumentProcessing}
-                  onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
-                />
-                <span>
-                  Use extracted text for document processing
-                  <small>Extract text before classification, schema generation, and extraction.</small>
-                </span>
-              </label>
-              {config.useOcrForDocumentProcessing && (
-                <label>
-                  Text extraction engine
-                  <select
-                    value={config.documentTextMode}
-                    onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
-                  >
-                    <option value="ocr">Built in</option>
-                    <option value="markdown">Markdown (Docling service)</option>
-                  </select>
-                </label>
-              )}
-              {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
-                <label>
-                  Docling markdown service URL
+            <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+              <div className="document-processing-option-card">
+                <strong>Text preparation</strong>
+                <label className="checkbox-row">
                   <input
-                    type="url"
-                    placeholder="https://your-function-app.azurewebsites.net/api/extract-markdown"
-                    value={config.markdownServiceUrl}
-                    onChange={(event) => onConfigChange({ ...config, markdownServiceUrl: event.target.value })}
+                    type="checkbox"
+                    checked={config.useOcrForDocumentProcessing}
+                    onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
                   />
+                  <span>
+                    Use extracted text for document processing
+                    <small>Extract text before classification, schema generation, and extraction.</small>
+                  </span>
                 </label>
-              )}
-              {!config.useOcrForDocumentProcessing && (
-                <p className="warning-text">
-                  Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
-                </p>
-              )}
+                {config.useOcrForDocumentProcessing && (
+                  <label className="document-processing-field">
+                    Text extraction engine
+                    <select
+                      value={config.documentTextMode}
+                      onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
+                    >
+                      <option value="ocr">Built in</option>
+                      <option value="markdown">Markdown (Docling service)</option>
+                    </select>
+                  </label>
+                )}
+                {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
+                  <label className="document-processing-field">
+                    Docling markdown service URL
+                    <input
+                      type="url"
+                      placeholder="https://your-function-app.azurewebsites.net/api/extract-markdown"
+                      value={config.markdownServiceUrl}
+                      onChange={(event) => onConfigChange({ ...config, markdownServiceUrl: event.target.value })}
+                    />
+                  </label>
+                )}
+                {!config.useOcrForDocumentProcessing && (
+                  <p className="warning-text">
+                    Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
 
-        <div className="configuration-section">
+        <div className={`configuration-section downstream${expandedSection === 'downstream' ? ' expanded' : ''}`}>
           <button
             className="configuration-section-toggle"
             type="button"
             aria-expanded={expandedSection === 'downstream'}
             onClick={() => toggleSection('downstream')}
           >
-            <span>Downstream Configuration</span>
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Network size={20} /></span>
+              <span>
+                <strong>Downstream Delivery</strong>
+                <small>Configure where validated document data is sent</small>
+              </span>
+            </span>
             {expandedSection === 'downstream' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
           {expandedSection === 'downstream' && (
-            <div className="configuration-section-body configuration-card-grid downstream-settings">
+            <div className="configuration-section-body configuration-card-grid downstream-settings classification-style-settings">
               <label>
                 Downstream API URL
                 <input
@@ -2435,22 +2716,25 @@ function ConfigurationScreen({
                   onChange={(event) => onConfigChange({ ...config, downstreamUrl: event.target.value })}
                 />
               </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.deleteAfterDownstream}
-                  onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
-                />
-                <span>Delete document after sending to downstream</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.sendKeyValuePairs}
-                  onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
-                />
-                <span>Send key value pairs</span>
-              </label>
+              <div className="downstream-option-card">
+                <strong>Delivery options</strong>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={config.deleteAfterDownstream}
+                    onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
+                  />
+                  <span>Delete document after sending to downstream</span>
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={config.sendKeyValuePairs}
+                    onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
+                  />
+                  <span>Send key value pairs</span>
+                </label>
+              </div>
               <p className="help-text">
                 When saved, validation submits will forward clean JSON data to the downstream system using this URL.
               </p>
@@ -2507,6 +2791,10 @@ function ClassificationScreen({
       : trainableTypes.length && trainedCount === trainableTypes.length
         ? 'trained'
         : 'untrained';
+  const lastTrainedType = includedTypes
+    .filter((type) => type.classifierTrainedAt)
+    .sort((left, right) =>
+      new Date(right.classifierTrainedAt!).getTime() - new Date(left.classifierTrainedAt!).getTime())[0];
 
   async function trainIncludedTypes() {
     await api.trainClassifier();
@@ -2521,110 +2809,215 @@ function ClassificationScreen({
         <StatusMetric label="Sample Files" value={includedFileCount} />
       </section>
 
-      <section className="panel">
+      <section className="panel classification-training-panel">
         <div className="panel-heading">
           <div>
+            <span className="section-kicker">Classifier workspace</span>
             <h2>Classifier Training</h2>
             <p>Train classification for all document types marked for inclusion.</p>
-            <div className="classifier-status-line">
-              <span>Status</span>
-              <strong className={`classifier-pill ${overallStatus}`}>{overallStatus}</strong>
+          </div>
+          <div className="classification-training-side">
+            <div className="classifier-training-overview">
+              <div>
+                <span>Status</span>
+                <strong className={`classifier-pill ${overallStatus}`}>{overallStatus}</strong>
+              </div>
+              <div>
+                <span>Last trained</span>
+                <strong>
+                  {lastTrainedType?.classifierTrainedAt
+                    ? new Date(lastTrainedType.classifierTrainedAt).toLocaleString()
+                    : 'Never'}
+                </strong>
+              </div>
+              <div>
+                <span>Last trained by</span>
+                <strong>{lastTrainedType?.classifierTrainedBy || '—'}</strong>
+              </div>
+            </div>
+            <div className="panel-heading-actions">
+              <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
+                <RefreshCw size={16} />
+              </button>
+              <button
+                className="secondary-button"
+                disabled={overallStatus === 'training'}
+                onClick={() =>
+                  onRun(async () => {
+                    await api.resetClassifierTraining();
+                    await onRefresh();
+                  }, 'Classifier training status reset')
+                }
+              >
+                <RotateCcw size={16} />
+                Reset Status
+              </button>
+              <button
+                className="primary-button"
+                disabled={!trainableTypes.length || overallStatus === 'training'}
+                onClick={() =>
+                  onRun(async () => {
+                    await trainIncludedTypes();
+                    await onRefresh();
+                  }, 'Classifier training queued')
+                }
+              >
+                <BrainCircuit size={16} />
+                Train
+              </button>
             </div>
           </div>
-          <div className="panel-heading-actions">
+        </div>
+
+        <div className="classification-settings">
+          <div className="classification-settings-heading">
+            <div>
+              <span>Classification configuration</span>
+              <strong>{aiModelLabel(config)}</strong>
+              <small>
+                {config.classificationMode === 'vector'
+                  ? `Top vector result using ${embeddingModelLabel(config)}.`
+                  : config.classificationMode === 'rag'
+                    ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
+                    : 'LLM chooses from all configured document types.'}
+              </small>
+            </div>
             <button
-              className="secondary-button"
-              onClick={() =>
-                onRun(async () => {
-                  await onSaveConfig(config);
-                }, 'Classification model saved')
-              }
+              className="primary-button compact"
+              type="button"
+              onClick={() => onRun(() => onSaveConfig(config).then(() => undefined), 'Classification configuration saved')}
             >
               <Save size={16} />
-              Save Model
+              Save settings
             </button>
-            <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
-              <RefreshCw size={16} />
-            </button>
-            <button
-              className="secondary-button"
-              disabled={overallStatus === 'training'}
-              onClick={() =>
-                onRun(async () => {
-                  await api.resetClassifierTraining();
-                  await onRefresh();
-                }, 'Classifier training status reset')
-              }
-            >
-              <RotateCcw size={16} />
-              Reset Status
-            </button>
-            <button
-              className="primary-button"
-              disabled={!trainableTypes.length || overallStatus === 'training'}
-              onClick={() =>
-                onRun(async () => {
-                  await trainIncludedTypes();
-                  await onRefresh();
-                }, 'Classifier training queued')
-              }
-            >
-              <BrainCircuit size={16} />
-              Train
-            </button>
+          </div>
+          <div className="classification-settings-grid">
+            <section className="classification-setting-card strategy">
+              <div className="classification-setting-card-heading">
+                <BrainCircuit size={18} />
+                <div><strong>Classification strategy</strong><small>Choose how document types are selected.</small></div>
+              </div>
+              <div className="classification-setting-fields">
+                <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
+              </div>
+            </section>
+
+            <section className="classification-setting-card model">
+              <div className="classification-setting-card-heading">
+                <Sparkles size={18} />
+                <div><strong>Classification model</strong><small>Configure the AI provider and model.</small></div>
+              </div>
+              <div className="classification-setting-fields">
+                <label>
+                  AI provider
+                  <select
+                    value={config.aiProvider}
+                    onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="ollama">Self Hosted (Ollama)</option>
+                  </select>
+                </label>
+                {config.aiProvider === 'openai' ? (
+                  <OpenAIModelControls
+                    model={config.classificationModel || lowCostOpenAIModel}
+                    reasoningEffort={config.classificationReasoningEffort || 'low'}
+                    onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
+                    onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
+                  />
+                ) : (
+                  <>
+                    <label>
+                      Ollama base URL
+                      <input
+                        type="url"
+                        value={config.ollamaBaseUrl}
+                        placeholder={defaultOllamaBaseUrl}
+                        onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Ollama model
+                      <input
+                        value={config.ollamaModel}
+                        placeholder={defaultOllamaModel}
+                        onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            </section>
+
+            <section className="classification-setting-card embedding">
+              <div className="classification-setting-card-heading">
+                <Network size={18} />
+                <div><strong>Embedding settings</strong><small>Configure vectors used for search and RAG.</small></div>
+              </div>
+              <div className="classification-setting-fields">
+                <label>
+                  Embedding provider
+                  <select
+                    value={config.embeddingProvider}
+                    onChange={(event) => onConfigChange({ ...config, embeddingProvider: event.target.value as EmbeddingProvider })}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="ollama">Self Hosted (Ollama)</option>
+                  </select>
+                </label>
+                {config.embeddingProvider === 'ollama' ? (
+                  <label>
+                    Ollama embedding model
+                    <input
+                      value={config.ollamaEmbeddingModel}
+                      placeholder={defaultOllamaEmbeddingModel}
+                      onChange={(event) => onConfigChange({ ...config, ollamaEmbeddingModel: event.target.value })}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    OpenAI embedding model
+                    <select
+                      value={config.embeddingModel}
+                      onChange={(event) => onConfigChange({ ...config, embeddingModel: event.target.value })}
+                    >
+                      {config.embeddingModel && !openAIEmbeddingModelOptions.some((option) => option.value === config.embeddingModel) && (
+                        <option value={config.embeddingModel}>{config.embeddingModel}</option>
+                      )}
+                      {openAIEmbeddingModelOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </section>
           </div>
         </div>
+      </section>
 
-        <div className="model-settings-band">
-          <div>
-            <strong>{aiModelLabel(config)}</strong>
-            <small>
-              {config.classificationMode === 'vector'
-                ? `Top vector result using ${embeddingModelLabel(config)}.`
-                : config.classificationMode === 'rag'
-                  ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
-                  : 'LLM chooses from all configured document types.'}
-            </small>
-          </div>
-          <div className="model-controls">
-            <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
-          </div>
-          {config.aiProvider === 'openai' ? (
-            <OpenAIModelControls
-              model={config.classificationModel || lowCostOpenAIModel}
-              reasoningEffort={config.classificationReasoningEffort || 'low'}
-              onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
-              onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
-            />
-          ) : (
-            <div className="model-controls">
-              <label>
-                Model
-                <input
-                  value={config.ollamaModel}
-                  onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
-                />
-              </label>
+      <section className="panel classification-types-card">
+        <div className="classification-types-heading">
+          <div className="classification-types-title">
+            <span><Files size={18} /></span>
+            <div>
+              <strong>Document Types</strong>
+              <small>Types currently included in classifier training.</small>
             </div>
-          )}
-          <button
-            className="primary-button compact"
-            type="button"
-            onClick={() => onRun(() => onSaveConfig(config).then(() => undefined), 'Classification configuration saved')}
-          >
-            <Save size={16} />
-            Save
-          </button>
+          </div>
+          <span className="classification-types-count">{includedTypes.length} included</span>
         </div>
-
         <div className="classification-table">
           {includedTypes.map((type) => {
             const status = classifierStatus(type);
             return (
               <div className="classification-row" key={type._id}>
-                <div>
-                  <strong>{type.name}</strong>
-                  <small>{type.category}</small>
+                <div className="classification-type-identity">
+                  <span className="classification-type-icon"><FileText size={16} /></span>
+                  <div>
+                    <strong>{type.name}</strong>
+                    <small>{type.category}</small>
+                  </div>
                 </div>
                 <span className="file-count">{type.sampleFiles.length} file{type.sampleFiles.length === 1 ? '' : 's'}</span>
                 <span className={`classifier-pill ${status.replace(/\s+/g, '-')}`}>{status}</span>
@@ -2699,11 +3092,14 @@ function DocumentTypeManagement({
   }
 
   return (
-    <div className="two-column">
-      <section className="panel">
+    <div className="document-type-layout">
+      <div className="two-column document-type-workspace">
+      <section className="panel document-type-list-panel">
         <div className="panel-heading">
           <div>
+            <span className="section-kicker">Type library</span>
             <h2>Document Types</h2>
+            <p>Select a type to manage its samples and extraction schema.</p>
           </div>
           <div className="panel-heading-actions">
             <button className="icon-button" title="Refresh document types" onClick={onRefresh}>
@@ -2721,11 +3117,14 @@ function DocumentTypeManagement({
               className={activeType?._id === type._id ? 'type-row active' : 'type-row'}
               onClick={() => setActiveTypeId(type._id)}
             >
-              <span>
-                <strong>{type.name}</strong>
-                <small>{type.category}</small>
+              <span className="type-row-identity">
+                <span className="type-row-icon"><FileText size={17} /></span>
+                <span>
+                  <strong>{type.name}</strong>
+                  <small>{type.category}</small>
+                </span>
               </span>
-              <em>
+              <em className={`type-state ${!type.finalized ? 'draft' : type.classifierTrainingStatus || 'untrained'}`}>
                 {!type.finalized
                   ? 'Draft'
                   : type.classifierTrainingStatus === 'trained'
@@ -2741,13 +3140,18 @@ function DocumentTypeManagement({
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel document-type-editor-panel">
         {activeType ? (
           <>
-            <div className="panel-heading">
+            <div className="panel-heading document-type-editor-heading">
               <div>
+                <span className="section-kicker">Type configuration</span>
                 <h2>{activeType.name}</h2>
-                <p>{activeType.category}</p>
+                <div className="document-type-heading-meta">
+                  <span>{activeType.category}</span>
+                  <span>{fields.length} field{fields.length === 1 ? '' : 's'}</span>
+                  <span>{activeType.sampleFiles.length} sample{activeType.sampleFiles.length === 1 ? '' : 's'}</span>
+                </div>
               </div>
               <button
                 className="icon-button danger"
@@ -2758,7 +3162,7 @@ function DocumentTypeManagement({
               </button>
             </div>
 
-            <div className={activeType.classifierTrainingStatus === 'trained' ? 'training-status ready' : 'training-status'}>
+            <div className={activeType.classifierTrainingStatus === 'trained' ? 'training-status ready document-type-training-status' : 'training-status document-type-training-status'}>
               <Gauge size={16} />
               <span>
                 Classifier training: {activeType.classifierTrainingStatus || 'untrained'} with {activeType.sampleFiles.length} sample
@@ -2766,11 +3170,16 @@ function DocumentTypeManagement({
               </span>
             </div>
 
-            <div className="model-settings-band">
-              <div>
-                <strong>{config.aiProvider === 'ollama' ? `Ollama ${config.ollamaModel || defaultOllamaModel}` : modelLabel(activeType.extractionModel || lowCostOpenAIModel)}</strong>
-                <small>Used for template generation and extraction for this document type.</small>
+            <div className="document-type-config-grid">
+            <section className="document-type-config-card model-card">
+              <div className="document-type-card-heading">
+                <span><BrainCircuit size={18} /></span>
+                <div>
+                  <strong>Extraction Model</strong>
+                  <small>Model and reasoning settings used for this document type.</small>
+                </div>
               </div>
+              <div className="model-settings-band">
               {config.aiProvider === 'openai' ? (
                 <OpenAIModelControls
                   model={activeType.extractionModel || lowCostOpenAIModel}
@@ -2809,9 +3218,19 @@ function DocumentTypeManagement({
                   </label>
                 </div>
               )}
-            </div>
+              </div>
+            </section>
 
-            <label className="checkbox-row">
+            <section className="document-type-config-card options-card">
+              <div className="document-type-card-heading">
+                <span><ClipboardCheck size={18} /></span>
+                <div>
+                  <strong>Processing Options</strong>
+                  <small>Control verification and classification behavior.</small>
+                </div>
+              </div>
+              <div className="document-type-option-list">
+              <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={Boolean(activeType.extractionVerification)}
@@ -2837,9 +3256,9 @@ function DocumentTypeManagement({
                 Extraction verification
                 <small>Have the LLM verify extracted data against the document content and correct mismatches.</small>
               </span>
-            </label>
+              </label>
 
-            <label className="checkbox-row">
+              <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={Boolean(activeType.includeInClassification)}
@@ -2854,9 +3273,19 @@ function DocumentTypeManagement({
                 Include in classification
                 <small>Use this document type and its samples when running classifier training.</small>
               </span>
-            </label>
+              </label>
+              </div>
+            </section>
 
-            <div className="sample-row">
+            <section className="document-type-config-card files-card">
+              <div className="document-type-card-heading">
+                <span><Files size={18} /></span>
+                <div>
+                  <strong>Training Files</strong>
+                  <small>Upload and manage representative samples for classification.</small>
+                </div>
+              </div>
+              <div className="sample-row">
               <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
               <button
                 className="secondary-button"
@@ -2873,9 +3302,9 @@ function DocumentTypeManagement({
                 <Upload size={16} />
                 Sample
               </button>
-            </div>
+              </div>
 
-            <div className="sample-file-list">
+              <div className="sample-file-list">
               <button
                 className="collapsible-section-heading"
                 type="button"
@@ -2910,8 +3339,17 @@ function DocumentTypeManagement({
                   <div className="empty-table">No documents uploaded for this type.</div>
                 )
               )}
-            </div>
+              </div>
+            </section>
 
+            <section className="document-type-config-card schema-card">
+              <div className="document-type-card-heading">
+                <span><ScanText size={18} /></span>
+                <div>
+                  <strong>Extraction Schema</strong>
+                  <small>Define the fields and tables extracted from this document type.</small>
+                </div>
+              </div>
             {!fields.length && (
               <>
                 <label className="full-label">
@@ -2938,7 +3376,7 @@ function DocumentTypeManagement({
             )}
 
             {!!fields.length && (
-              <div className="collapsible-section">
+              <div className="collapsible-section schema-card-content">
                 <div className="schema-toolbar">
                   <button
                     className="collapsible-section-title"
@@ -3170,11 +3608,14 @@ function DocumentTypeManagement({
                 )}
               </div>
             )}
+            </section>
+            </div>
           </>
         ) : (
           <EmptyState text="Select a document type to view details." />
         )}
       </section>
+      </div>
       {showCreateModal && (
         <CreateDocumentTypeModal
           documentTypes={documentTypes}
@@ -3633,19 +4074,24 @@ function DocumentList({
   }
 
   return (
-    <section className="panel">
-      <div className="panel-heading">
+    <section className="panel document-list-panel">
+      <div className="panel-heading document-list-heading">
         <div>
-          <h2>Documents</h2>
-          <p>Browse uploaded files and manage document state.</p>
+          <h2 className="document-workspace-title"><Files size={18} /> Document workspace</h2>
         </div>
         <div className="panel-heading-actions">
+          <span className="document-total-badge"><strong>{pagination.total}</strong> total documents</span>
           <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
             <RefreshCw size={16} />
           </button>
         </div>
       </div>
-      <div className="filters">
+      <div className="document-filter-panel">
+        <div className="document-filter-heading">
+          <span><FileSearch size={15} /> Filter documents</span>
+          {(status || category || nameFilter) && <em>Filters active</em>}
+        </div>
+        <div className="filters">
         <label>
           Status
           <select value={status} onChange={(event) => setStatus(event.target.value as DocumentStatusFilter)}>
@@ -3700,20 +4146,23 @@ function DocumentList({
         <button className="secondary-button compact" onClick={resetFilters}>
           Reset
         </button>
+        </div>
       </div>
 
       <div className="document-table">
         {documents.map((doc) => (
           <div className="document-row" key={doc._id}>
             <button className="document-open" onClick={() => onOpen(doc._id)}>
-              <span>
-                <strong>{doc.originalName}</strong>
-                <small>
-                  {doc.category} / {doc.documentTypeName}
-                </small>
-                <small>
-                  Classification: {displayModel(doc.classificationModel)} | Extraction: {displayModel(doc.processingMetrics?.model)}
-                </small>
+              <span className="document-primary-info">
+                <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
+                <span>
+                  <strong>{doc.originalName}</strong>
+                </span>
+              </span>
+              <span className="document-type-capsule">
+                <span>{doc.category}</span>
+                <i>/</i>
+                <strong>{doc.documentTypeName}</strong>
               </span>
               <span
                 className={`pill ${doc.status} clickable-status`}

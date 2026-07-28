@@ -61,6 +61,7 @@ async function ingestTriggeredDocument(_blob, context) {
     _id: documentId,
     fileName: processingBlobName,
     originalName,
+    mimeType: path.extname(originalName).toLowerCase() === '.pdf' ? 'application/pdf' : undefined,
     filePath: `azure://${PROCESSING_CONTAINER}/${processingBlobName}`,
     storageContainer: PROCESSING_CONTAINER,
     storageBlobName: processingBlobName,

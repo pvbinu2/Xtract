@@ -98,6 +98,9 @@ services:
       - SIGNALR_ENABLED=${SIGNALR_ENABLED:-true}
       - JWT_SECRET=${JWT_SECRET:-xtract-local-dev-secret-change-me-32}
       - REALTIME_BROADCAST_URL=http://realtime:5080/internal/document-changed
+      - REALTIME_HEALTH_URL=http://realtime:5080/health
+      - PROCESSOR_HEALTH_URL=http://127.0.0.1:7071/admin/host/status
+      - DOCLING_HEALTH_URL=http://docling-markdown:7072/admin/host/status
       - REALTIME_BROADCAST_SECRET=${REALTIME_BROADCAST_SECRET:-xtract-local-realtime-secret}
       - VITE_REALTIME_URL=${VITE_REALTIME_URL:-http://127.0.0.1:5080/hubs/documents}
     depends_on:
