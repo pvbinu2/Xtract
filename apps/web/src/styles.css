@@ -2883,6 +2883,170 @@ textarea {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+  border-radius: 12px;
+  background: var(--surface-muted);
+  padding: 14px;
+  box-shadow: 0 6px 22px rgb(15 23 42 / 0.04);
+}
+
+.classification-summary .metric {
+  border-left: 4px solid #7c3aed;
+  border-radius: 10px;
+  background: var(--surface-strong);
+  box-shadow: 0 3px 12px rgb(15 23 42 / 0.04);
+}
+
+.classification-summary .metric:nth-child(2) {
+  border-left-color: #2563eb;
+}
+
+.classification-summary .metric:nth-child(3) {
+  border-left-color: #059669;
+}
+
+.classification-summary .metric:nth-child(4) {
+  border-left-color: #d97706;
+}
+
+.classification-training-panel {
+  border-top: 3px solid #7c3aed;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(15 23 42 / 0.05);
+}
+
+.classification-training-panel > .panel-heading {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 15px;
+}
+
+.classification-training-panel .section-kicker {
+  color: #7c3aed;
+}
+
+.classification-training-side {
+  display: grid;
+  min-width: min(100%, 590px);
+  justify-items: end;
+  gap: 10px;
+}
+
+.classifier-training-overview {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 110px minmax(170px, 1fr) minmax(140px, 1fr);
+  gap: 8px;
+}
+
+.classifier-training-overview > div {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  padding: 9px 11px;
+}
+
+.classifier-training-overview span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.classifier-training-overview strong:not(.classifier-pill) {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.classification-types-card {
+  border-top: 3px solid #059669;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(15 23 42 / 0.05);
+}
+
+.classification-types-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.classification-types-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.classification-types-title > span,
+.classification-type-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, #059669 10%, var(--surface));
+  color: #059669;
+}
+
+.classification-types-title > span {
+  width: 36px;
+  height: 36px;
+}
+
+.classification-types-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.classification-types-title strong {
+  font-size: 16px;
+}
+
+.classification-types-title small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.classification-types-count {
+  border-radius: 999px;
+  background: color-mix(in srgb, #059669 10%, var(--surface));
+  padding: 5px 9px;
+  color: #047857;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.classification-types-card .classification-table {
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.classification-types-card .classification-row {
+  border-radius: 10px;
+  padding: 10px 12px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.classification-types-card .classification-row:hover {
+  border-color: color-mix(in srgb, #059669 35%, var(--border));
+  box-shadow: 0 5px 16px rgb(15 23 42 / 0.06);
+  transform: translateY(-1px);
+}
+
+.classification-type-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.classification-type-icon {
+  width: 32px;
+  height: 32px;
 }
 
 .document-type-layout {
@@ -5066,6 +5230,20 @@ button.clickable-status {
 }
 
 @media (max-width: 980px) {
+  .classification-training-panel > .panel-heading {
+    flex-wrap: wrap;
+  }
+
+  .classification-training-side {
+    width: 100%;
+    min-width: 0;
+    justify-items: stretch;
+  }
+
+  .classification-training-side .panel-heading-actions {
+    justify-content: flex-end;
+  }
+
   .app-shell,
   .app-shell.sidebar-collapsed,
   .two-column,
@@ -5182,6 +5360,10 @@ button.clickable-status {
   .document-type-config-card.files-card,
   .document-type-config-card.schema-card {
     grid-column: auto;
+  }
+
+  .classifier-training-overview {
+    grid-template-columns: 1fr;
   }
 
   .span-2 {

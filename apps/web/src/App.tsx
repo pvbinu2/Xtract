@@ -2726,16 +2726,19 @@ function ClassificationScreen({
         <StatusMetric label="Sample Files" value={includedFileCount} />
       </section>
 
-      <section className="panel">
+      <section className="panel classification-training-panel">
         <div className="panel-heading">
           <div>
+            <span className="section-kicker">Classifier workspace</span>
             <h2>Classifier Training</h2>
             <p>Train classification for all document types marked for inclusion.</p>
-            <div className="classifier-status-line">
-              <span>Status</span>
-              <strong className={`classifier-pill ${overallStatus}`}>{overallStatus}</strong>
-            </div>
-            <div className="classifier-training-audit">
+          </div>
+          <div className="classification-training-side">
+            <div className="classifier-training-overview">
+              <div>
+                <span>Status</span>
+                <strong className={`classifier-pill ${overallStatus}`}>{overallStatus}</strong>
+              </div>
               <div>
                 <span>Last trained</span>
                 <strong>
@@ -2749,37 +2752,37 @@ function ClassificationScreen({
                 <strong>{lastTrainedType?.classifierTrainedBy || '—'}</strong>
               </div>
             </div>
-          </div>
-          <div className="panel-heading-actions">
-            <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
-              <RefreshCw size={16} />
-            </button>
-            <button
-              className="secondary-button"
-              disabled={overallStatus === 'training'}
-              onClick={() =>
-                onRun(async () => {
-                  await api.resetClassifierTraining();
-                  await onRefresh();
-                }, 'Classifier training status reset')
-              }
-            >
-              <RotateCcw size={16} />
-              Reset Status
-            </button>
-            <button
-              className="primary-button"
-              disabled={!trainableTypes.length || overallStatus === 'training'}
-              onClick={() =>
-                onRun(async () => {
-                  await trainIncludedTypes();
-                  await onRefresh();
-                }, 'Classifier training queued')
-              }
-            >
-              <BrainCircuit size={16} />
-              Train
-            </button>
+            <div className="panel-heading-actions">
+              <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
+                <RefreshCw size={16} />
+              </button>
+              <button
+                className="secondary-button"
+                disabled={overallStatus === 'training'}
+                onClick={() =>
+                  onRun(async () => {
+                    await api.resetClassifierTraining();
+                    await onRefresh();
+                  }, 'Classifier training status reset')
+                }
+              >
+                <RotateCcw size={16} />
+                Reset Status
+              </button>
+              <button
+                className="primary-button"
+                disabled={!trainableTypes.length || overallStatus === 'training'}
+                onClick={() =>
+                  onRun(async () => {
+                    await trainIncludedTypes();
+                    await onRefresh();
+                  }, 'Classifier training queued')
+                }
+              >
+                <BrainCircuit size={16} />
+                Train
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2908,15 +2911,30 @@ function ClassificationScreen({
             </section>
           </div>
         </div>
+      </section>
 
+      <section className="panel classification-types-card">
+        <div className="classification-types-heading">
+          <div className="classification-types-title">
+            <span><Files size={18} /></span>
+            <div>
+              <strong>Document Types</strong>
+              <small>Types currently included in classifier training.</small>
+            </div>
+          </div>
+          <span className="classification-types-count">{includedTypes.length} included</span>
+        </div>
         <div className="classification-table">
           {includedTypes.map((type) => {
             const status = classifierStatus(type);
             return (
               <div className="classification-row" key={type._id}>
-                <div>
-                  <strong>{type.name}</strong>
-                  <small>{type.category}</small>
+                <div className="classification-type-identity">
+                  <span className="classification-type-icon"><FileText size={16} /></span>
+                  <div>
+                    <strong>{type.name}</strong>
+                    <small>{type.category}</small>
+                  </div>
                 </div>
                 <span className="file-count">{type.sampleFiles.length} file{type.sampleFiles.length === 1 ? '' : 's'}</span>
                 <span className={`classifier-pill ${status.replace(/\s+/g, '-')}`}>{status}</span>
