@@ -28,7 +28,7 @@ Xtract is designed for organizations that need to automate document processing w
 
 1. **Define** document categories and extraction templates.
 2. **Train** classification with sample documents.
-3. **Process** incoming PDFs through classification and extraction.
+3. **Process** incoming PDFs or images through classification and extraction. Images are converted to PDF during preprocessing, including one PDF page per page of a multipage TIFF.
 4. **Validate** extracted data against the source PDF.
 5. **Export** clean JSON data to downstream systems.
 
@@ -156,7 +156,7 @@ This is useful for misclassified documents, schema changes, and manual correctio
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - npm
 - Docker Desktop or another Docker Compose-compatible runtime
 - OpenAI API key for real AI extraction and classification

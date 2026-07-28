@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs/promises');
 const { app, output } = require('@azure/functions');
 const { withPreprocessingConcurrency } = require('../aiConcurrency');
 const {
@@ -15,6 +16,7 @@ const {
 } = require('../documentProcessingCommon');
 const { extractDocumentContent } = require('../documentText');
 const { publishDocumentChanged } = require('../documentEvents');
+const { imageBufferToPdf, isImageDocument } = require('../imageToPdf');
 const {
   PROCESSING_CONTAINER,
   deleteBlob,
@@ -29,6 +31,13 @@ const classificationQueueOutput = output.storageQueue({
 
 function sourceBlobName(document) {
   return `${document._id}/${path.posix.basename(document.storageBlobName || document.originalName || document.fileName)}`;
+}
+
+function convertedPdfBlobName(document) {
+  const sourceName = path.posix.basename(document.originalName || document.fileName || 'document');
+  const extension = path.posix.extname(sourceName);
+  const stem = sourceName.slice(0, sourceName.length - extension.length) || 'document';
+  return `${document._id}/${stem}.pdf`;
 }
 
 function textArtifactBlobName(document, mode) {
@@ -63,6 +72,44 @@ async function prepareDocumentText(message, context) {
 
   let localFilePath;
   try {
+    if (isImageDocument(document) && !document.convertedToPdf) {
+      localFilePath = await resolveDocumentFile(document);
+      const pdfBuffer = await imageBufferToPdf(await fs.readFile(localFilePath));
+      const previousContainer = document.storageContainer;
+      const previousBlobName = document.storageBlobName;
+      const pdfBlobName = convertedPdfBlobName(document);
+      await uploadBuffer(PROCESSING_CONTAINER, pdfBlobName, pdfBuffer, 'application/pdf');
+      await documents.updateOne(
+        { _id: document._id },
+        {
+          $set: {
+            fileName: pdfBlobName,
+            filePath: `azure://${PROCESSING_CONTAINER}/${pdfBlobName}`,
+            storageContainer: PROCESSING_CONTAINER,
+            storageBlobName: pdfBlobName,
+            convertedToPdf: true,
+            updatedAt: new Date(),
+          },
+        },
+      );
+      if (previousContainer && previousBlobName && previousBlobName !== pdfBlobName) {
+        await deleteBlob(previousContainer, previousBlobName);
+      }
+      if (document.storageContainer && document.storageBlobName) {
+        await removeTempFile(localFilePath);
+        localFilePath = undefined;
+      }
+      document = {
+        ...document,
+        fileName: pdfBlobName,
+        filePath: `azure://${PROCESSING_CONTAINER}/${pdfBlobName}`,
+        storageContainer: PROCESSING_CONTAINER,
+        storageBlobName: pdfBlobName,
+        convertedToPdf: true,
+      };
+      context.info(`Converted image ${document.originalName || document._id} to ${pdfBlobName}.`);
+    }
+
     if (document.storageContainer === PROCESSING_CONTAINER && document.storageBlobName) {
       const nextSourceBlobName = sourceBlobName(document);
       if (document.storageBlobName !== nextSourceBlobName) {
@@ -92,7 +139,9 @@ async function prepareDocumentText(message, context) {
     localFilePath = await resolveDocumentFile(document);
     const content = await extractDocumentContent(localFilePath, undefined, {
       ...textOptions,
-      fileName: document.originalName || document.fileName,
+      fileName: document.convertedToPdf
+        ? path.posix.basename(document.storageBlobName || document.fileName)
+        : document.originalName || document.fileName,
     });
     const artifactBlobName = textArtifactBlobName(document, documentTextMode);
     await uploadBuffer(
@@ -144,4 +193,4 @@ app.storageQueue('prepareDocumentText', {
   handler: withPreprocessingConcurrency(prepareDocumentText),
 });
 
-module.exports = { prepareDocumentText, sourceBlobName, textArtifactBlobName };
+module.exports = { convertedPdfBlobName, prepareDocumentText, sourceBlobName, textArtifactBlobName };

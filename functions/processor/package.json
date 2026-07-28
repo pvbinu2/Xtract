@@ -4,7 +4,8 @@
   "private": true,
   "main": "src/functions/*.js",
   "scripts": {
-    "start": "func start"
+    "start": "func start",
+    "test": "node --test src/*.test.js"
   },
   "dependencies": {
     "@azure/functions": "^4.5.0",
@@ -13,7 +14,9 @@
     "@xtract/common": "0.1.0",
     "mongodb": "^6.8.0",
     "openai": "^5.0.0",
-    "pdfjs-dist": "^4.10.38"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "azure-functions-core-tools": "^4.0.5907"

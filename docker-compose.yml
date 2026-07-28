@@ -25,7 +25,7 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
   mock-downstream-api:
-    image: node:20
+    image: node:22
     container_name: xtract-mock-downstream
     working_dir: /app/apps/mock-downstream-api
     volumes:

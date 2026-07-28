@@ -3934,12 +3934,12 @@ function UploadScreen({
           <Upload size={28} />
           <span>
             {files.length > 0
-              ? `${files.length} PDF${files.length === 1 ? '' : 's'} selected`
-              : 'Choose PDFs for extraction'}
+              ? `${files.length} file${files.length === 1 ? '' : 's'} selected`
+              : 'Choose PDFs or images for extraction'}
           </span>
           <input
             type="file"
-            accept="application/pdf"
+            accept="application/pdf,image/*,.tif,.tiff"
             multiple
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
@@ -4239,7 +4239,7 @@ function DocumentList({
       {deleteTarget && (
         <ConfirmDialog
           title="Delete Document"
-          body={`Delete "${deleteTarget.originalName}" and its uploaded PDF file?`}
+          body={`Delete "${deleteTarget.originalName}" and its uploaded file?`}
           confirmLabel="Delete"
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => deleteDocument(deleteTarget)}
@@ -4869,8 +4869,10 @@ function ValidationScreen({
   async function downloadPdf() {
     if (!document) return;
     try {
-      downloadBlobFile(document.originalName || document.fileName || 'document.pdf', await api.documentFile(document._id));
-      onNotify('PDF downloaded', 'success');
+      const displayName = document.originalName || document.fileName || 'document.pdf';
+      const processingPdfName = `${displayName.replace(/\.[^.]+$/, '') || 'document'}.pdf`;
+      downloadBlobFile(processingPdfName, await api.documentFile(document._id));
+      onNotify('Processing PDF downloaded', 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to download PDF', 'error');
     }
@@ -4942,7 +4944,7 @@ function ValidationScreen({
               <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
-              <button className="icon-button" title="Download original PDF" onClick={downloadPdf}>
+              <button className="icon-button" title="Download processing PDF" onClick={downloadPdf}>
                 <FileText size={16} />
               </button>
               <button

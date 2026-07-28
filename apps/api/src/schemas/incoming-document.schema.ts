@@ -120,6 +120,9 @@ export class IncomingDocument {
   @Prop()
   mimeType?: string;
 
+  @Prop({ default: false })
+  convertedToPdf?: boolean;
+
   @Prop({ required: true })
   filePath!: string;
 

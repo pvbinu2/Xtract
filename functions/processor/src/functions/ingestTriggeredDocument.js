@@ -14,6 +14,26 @@ const processingQueueOutput = output.storageQueue({
   connection: 'AzureWebJobsStorage',
 });
 
+const IMAGE_MIME_TYPES = {
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
+  '.webp': 'image/webp',
+};
+
+function mimeTypeForFileName(fileName) {
+  const extension = path.extname(fileName).toLowerCase();
+  return extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension];
+}
+
 function resolveBlobName(context) {
   const metadata = context.triggerMetadata || {};
   const name = metadata.name || metadata.Name;
@@ -61,7 +81,7 @@ async function ingestTriggeredDocument(_blob, context) {
     _id: documentId,
     fileName: processingBlobName,
     originalName,
-    mimeType: path.extname(originalName).toLowerCase() === '.pdf' ? 'application/pdf' : undefined,
+    mimeType: mimeTypeForFileName(originalName),
     filePath: `azure://${PROCESSING_CONTAINER}/${processingBlobName}`,
     storageContainer: PROCESSING_CONTAINER,
     storageBlobName: processingBlobName,
