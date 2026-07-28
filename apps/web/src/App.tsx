@@ -2960,6 +2960,9 @@ function DocumentTypeManagement({
   const [isSchemaExpanded, setIsSchemaExpanded] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
+  const finalizedTypeCount = documentTypes.filter((type) => type.finalized).length;
+  const classificationTypeCount = documentTypes.filter((type) => type.includeInClassification).length;
+  const sampleFileCount = documentTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
@@ -2991,11 +2994,21 @@ function DocumentTypeManagement({
   }
 
   return (
-    <div className="two-column">
-      <section className="panel">
+    <div className="document-type-layout">
+      <section className="panel document-type-summary">
+        <StatusMetric label="Document Types" value={documentTypes.length} />
+        <StatusMetric label="Finalized" value={finalizedTypeCount} />
+        <StatusMetric label="In Classification" value={classificationTypeCount} />
+        <StatusMetric label="Sample Files" value={sampleFileCount} />
+      </section>
+
+      <div className="two-column document-type-workspace">
+      <section className="panel document-type-list-panel">
         <div className="panel-heading">
           <div>
+            <span className="section-kicker">Type library</span>
             <h2>Document Types</h2>
+            <p>Select a type to manage its samples and extraction schema.</p>
           </div>
           <div className="panel-heading-actions">
             <button className="icon-button" title="Refresh document types" onClick={onRefresh}>
@@ -3013,11 +3026,14 @@ function DocumentTypeManagement({
               className={activeType?._id === type._id ? 'type-row active' : 'type-row'}
               onClick={() => setActiveTypeId(type._id)}
             >
-              <span>
-                <strong>{type.name}</strong>
-                <small>{type.category}</small>
+              <span className="type-row-identity">
+                <span className="type-row-icon"><FileText size={17} /></span>
+                <span>
+                  <strong>{type.name}</strong>
+                  <small>{type.category}</small>
+                </span>
               </span>
-              <em>
+              <em className={`type-state ${!type.finalized ? 'draft' : type.classifierTrainingStatus || 'untrained'}`}>
                 {!type.finalized
                   ? 'Draft'
                   : type.classifierTrainingStatus === 'trained'
@@ -3033,13 +3049,18 @@ function DocumentTypeManagement({
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel document-type-editor-panel">
         {activeType ? (
           <>
-            <div className="panel-heading">
+            <div className="panel-heading document-type-editor-heading">
               <div>
+                <span className="section-kicker">Type configuration</span>
                 <h2>{activeType.name}</h2>
-                <p>{activeType.category}</p>
+                <div className="document-type-heading-meta">
+                  <span>{activeType.category}</span>
+                  <span>{fields.length} field{fields.length === 1 ? '' : 's'}</span>
+                  <span>{activeType.sampleFiles.length} sample{activeType.sampleFiles.length === 1 ? '' : 's'}</span>
+                </div>
               </div>
               <button
                 className="icon-button danger"
@@ -3050,7 +3071,7 @@ function DocumentTypeManagement({
               </button>
             </div>
 
-            <div className={activeType.classifierTrainingStatus === 'trained' ? 'training-status ready' : 'training-status'}>
+            <div className={activeType.classifierTrainingStatus === 'trained' ? 'training-status ready document-type-training-status' : 'training-status document-type-training-status'}>
               <Gauge size={16} />
               <span>
                 Classifier training: {activeType.classifierTrainingStatus || 'untrained'} with {activeType.sampleFiles.length} sample
@@ -3058,11 +3079,16 @@ function DocumentTypeManagement({
               </span>
             </div>
 
-            <div className="model-settings-band">
-              <div>
-                <strong>{config.aiProvider === 'ollama' ? `Ollama ${config.ollamaModel || defaultOllamaModel}` : modelLabel(activeType.extractionModel || lowCostOpenAIModel)}</strong>
-                <small>Used for template generation and extraction for this document type.</small>
+            <div className="document-type-config-grid">
+            <section className="document-type-config-card model-card">
+              <div className="document-type-card-heading">
+                <span><BrainCircuit size={18} /></span>
+                <div>
+                  <strong>Extraction Model</strong>
+                  <small>Model and reasoning settings used for this document type.</small>
+                </div>
               </div>
+              <div className="model-settings-band">
               {config.aiProvider === 'openai' ? (
                 <OpenAIModelControls
                   model={activeType.extractionModel || lowCostOpenAIModel}
@@ -3101,9 +3127,19 @@ function DocumentTypeManagement({
                   </label>
                 </div>
               )}
-            </div>
+              </div>
+            </section>
 
-            <label className="checkbox-row">
+            <section className="document-type-config-card options-card">
+              <div className="document-type-card-heading">
+                <span><ClipboardCheck size={18} /></span>
+                <div>
+                  <strong>Processing Options</strong>
+                  <small>Control verification and classification behavior.</small>
+                </div>
+              </div>
+              <div className="document-type-option-list">
+              <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={Boolean(activeType.extractionVerification)}
@@ -3129,9 +3165,9 @@ function DocumentTypeManagement({
                 Extraction verification
                 <small>Have the LLM verify extracted data against the document content and correct mismatches.</small>
               </span>
-            </label>
+              </label>
 
-            <label className="checkbox-row">
+              <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={Boolean(activeType.includeInClassification)}
@@ -3146,9 +3182,19 @@ function DocumentTypeManagement({
                 Include in classification
                 <small>Use this document type and its samples when running classifier training.</small>
               </span>
-            </label>
+              </label>
+              </div>
+            </section>
 
-            <div className="sample-row">
+            <section className="document-type-config-card files-card">
+              <div className="document-type-card-heading">
+                <span><Files size={18} /></span>
+                <div>
+                  <strong>Training Files</strong>
+                  <small>Upload and manage representative samples for classification.</small>
+                </div>
+              </div>
+              <div className="sample-row">
               <input type="file" accept="application/pdf" onChange={(event) => setSample(event.target.files?.[0] ?? null)} />
               <button
                 className="secondary-button"
@@ -3165,9 +3211,9 @@ function DocumentTypeManagement({
                 <Upload size={16} />
                 Sample
               </button>
-            </div>
+              </div>
 
-            <div className="sample-file-list">
+              <div className="sample-file-list">
               <button
                 className="collapsible-section-heading"
                 type="button"
@@ -3202,8 +3248,17 @@ function DocumentTypeManagement({
                   <div className="empty-table">No documents uploaded for this type.</div>
                 )
               )}
-            </div>
+              </div>
+            </section>
 
+            <section className="document-type-config-card schema-card">
+              <div className="document-type-card-heading">
+                <span><ScanText size={18} /></span>
+                <div>
+                  <strong>Extraction Schema</strong>
+                  <small>Define the fields and tables extracted from this document type.</small>
+                </div>
+              </div>
             {!fields.length && (
               <>
                 <label className="full-label">
@@ -3230,7 +3285,7 @@ function DocumentTypeManagement({
             )}
 
             {!!fields.length && (
-              <div className="collapsible-section">
+              <div className="collapsible-section schema-card-content">
                 <div className="schema-toolbar">
                   <button
                     className="collapsible-section-title"
@@ -3462,11 +3517,14 @@ function DocumentTypeManagement({
                 )}
               </div>
             )}
+            </section>
+            </div>
           </>
         ) : (
           <EmptyState text="Select a document type to view details." />
         )}
       </section>
+      </div>
       {showCreateModal && (
         <CreateDocumentTypeModal
           documentTypes={documentTypes}
