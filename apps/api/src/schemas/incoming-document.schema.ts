@@ -117,6 +117,9 @@ export class IncomingDocument {
   @Prop({ required: true })
   originalName!: string;
 
+  @Prop()
+  mimeType?: string;
+
   @Prop({ required: true })
   filePath!: string;
 

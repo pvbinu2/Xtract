@@ -35,6 +35,9 @@ import {
   Upload,
   Download,
   FileText,
+  FileImage,
+  FileSpreadsheet,
+  File as GenericFileIcon,
   KeyRound,
   Mail,
   Phone,
@@ -350,6 +353,25 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
     );
   }
   return null;
+}
+
+function DocumentFileTypeIcon({ document }: { document: IncomingDocument }) {
+  const mimeType = (document.mimeType || '').toLowerCase();
+  const extension = document.originalName.split('.').pop()?.toLowerCase() || '';
+  if (mimeType === 'application/pdf' || extension === 'pdf') {
+    return <span className="document-file-type pdf" title="PDF document"><FileText size={19} /><small>PDF</small></span>;
+  }
+  if (mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'tif', 'tiff'].includes(extension)) {
+    return <span className="document-file-type image" title="Image document"><FileImage size={19} /><small>IMG</small></span>;
+  }
+  if (
+    mimeType.includes('spreadsheet')
+    || mimeType.includes('excel')
+    || ['csv', 'xls', 'xlsx'].includes(extension)
+  ) {
+    return <span className="document-file-type spreadsheet" title="Spreadsheet document"><FileSpreadsheet size={19} /><small>SHEET</small></span>;
+  }
+  return <span className="document-file-type generic" title={extension ? `${extension.toUpperCase()} document` : 'Document'}><GenericFileIcon size={19} /><small>{extension ? extension.slice(0, 5).toUpperCase() : 'FILE'}</small></span>;
 }
 
 function OpenAIModelControls({
@@ -3983,7 +4005,7 @@ function DocumentList({
           <div className="document-row" key={doc._id}>
             <button className="document-open" onClick={() => onOpen(doc._id)}>
               <span className="document-primary-info">
-                <span className="document-file-icon"><FileText size={19} /></span>
+                <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
                 <span>
                   <strong>{doc.originalName}</strong>
                 </span>

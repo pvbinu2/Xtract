@@ -115,6 +115,7 @@ export class DocumentsService {
         _id: documentId,
         fileName: blobName,
         originalName: item.originalName,
+        mimeType: item.mimeType,
         filePath: `azure://${PROCESSING_CONTAINER}/${blobName}`,
         storageContainer: PROCESSING_CONTAINER,
         storageBlobName: blobName,
