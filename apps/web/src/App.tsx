@@ -1602,14 +1602,25 @@ function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, ty
   }
 
   return (
-    <section className="panel narrow-panel">
+    <section className="panel narrow-panel password-reset-card">
       <div className="panel-heading">
-        <div>
-          <h2>Password Reset</h2>
-          <p>Change your own password.</p>
+        <div className="password-reset-heading">
+          <span><KeyRound size={21} /></span>
+          <div>
+            <small>Account security</small>
+            <h2>Password Reset</h2>
+            <p>Change the password used to access your account.</p>
+          </div>
         </div>
       </div>
-      <form className="form-grid" onSubmit={submit}>
+      <div className="password-security-note">
+        <ShieldCheck size={18} />
+        <span>
+          <strong>Keep your account secure</strong>
+          <small>Use a strong password that is different from passwords used elsewhere.</small>
+        </span>
+      </div>
+      <form className="form-grid password-reset-form" onSubmit={submit}>
         <label className="full-label">
           Current password
           <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
@@ -1920,13 +1931,17 @@ function HealthDashboard({
     <section className="health-dashboard">
       <div className="panel health-overview">
         <div className="panel-heading">
-          <div>
-            <h2>System health</h2>
-            <p>
-              {health
-                ? `Last checked ${new Date(health.checkedAt).toLocaleString()}`
-                : 'Checking application resources.'}
-            </p>
+          <div className="health-overview-heading">
+            <span><Activity size={20} /></span>
+            <div>
+              <small>Infrastructure status</small>
+              <h2>System health</h2>
+              <p>
+                {health
+                  ? `Last checked ${new Date(health.checkedAt).toLocaleString()}`
+                  : 'Checking application resources.'}
+              </p>
+            </div>
           </div>
           <button className="secondary-button compact" onClick={() => refresh()} disabled={checking}>
             {checking ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
