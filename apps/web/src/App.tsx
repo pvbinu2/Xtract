@@ -1722,17 +1722,39 @@ function UserManagementScreen({
     }
   }
 
+  const enabledUsers = users.filter((user) => user.enabled).length;
+  const adminUsers = users.filter((user) => user.role === 'admin').length;
+
   return (
     <div className="user-management">
-      <section className="panel">
+      <section className="panel user-management-overview">
         <div className="panel-heading">
-          <div>
-            <h2>User Management</h2>
-            <p>Add users, assign roles, and control access.</p>
+          <div className="user-management-heading">
+            <span><UsersIcon size={21} /></span>
+            <div>
+              <small>Access administration</small>
+              <h2>User Management</h2>
+              <p>Add users, assign roles, and control access.</p>
+            </div>
           </div>
           <button className="icon-button" title="Refresh users" onClick={loadUsers}>
             {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
           </button>
+        </div>
+        <div className="user-management-summary">
+          <div><UsersIcon size={17} /><span>Total users<strong>{users.length}</strong></span></div>
+          <div><CheckCircle2 size={17} /><span>Enabled<strong>{enabledUsers}</strong></span></div>
+          <div><ShieldCheck size={17} /><span>Administrators<strong>{adminUsers}</strong></span></div>
+        </div>
+      </section>
+
+      <section className="panel user-create-card">
+        <div className="user-section-heading">
+          <div>
+            <strong>Create User</strong>
+            <small>Set up a new account with its initial role and password.</small>
+          </div>
+          <span><Plus size={17} /></span>
         </div>
         <form className="user-create-form" onSubmit={createUser}>
           <label>
@@ -1756,8 +1778,15 @@ function UserManagementScreen({
           </button>
         </form>
       </section>
-      <section className="panel">
-        <div className="business-review-table">
+      <section className="panel user-directory-card">
+        <div className="user-directory-heading">
+          <div>
+            <strong>User Directory</strong>
+            <small>Manage account roles, status, passwords, and access.</small>
+          </div>
+          <span>{users.length} account{users.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="business-review-table user-directory-table">
           <table>
             <thead>
               <tr>
@@ -1774,7 +1803,12 @@ function UserManagementScreen({
                 const isSelf = id === currentUser.id;
                 return (
                   <tr key={id || user.username}>
-                    <td>{user.username}</td>
+                    <td>
+                      <span className="user-identity">
+                        <span>{user.username.slice(0, 1).toUpperCase()}</span>
+                        <strong>{user.username}{isSelf ? ' (you)' : ''}</strong>
+                      </span>
+                    </td>
                     <td>
                       <select
                         value={user.role}
@@ -1785,7 +1819,7 @@ function UserManagementScreen({
                         <option value="admin">Admin</option>
                       </select>
                     </td>
-                    <td>{user.enabled ? 'Enabled' : 'Disabled'}</td>
+                    <td><span className={user.enabled ? 'user-status enabled' : 'user-status disabled'}>{user.enabled ? 'Enabled' : 'Disabled'}</span></td>
                     <td>{user.createdAt ? new Date(user.createdAt).toLocaleString() : 'N/A'}</td>
                     <td>
                       <div className="table-actions">
@@ -2002,18 +2036,43 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
     loadRequests();
   }, []);
 
+  const sourceCount = new Set(requests.map((request) => request.source).filter(Boolean)).size;
+  const latestRequest = requests
+    .map((request) => new Date(request.createdAt))
+    .sort((left, right) => right.getTime() - left.getTime())[0];
+
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2>Demo Requests</h2>
-          <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
+    <div className="demo-requests-page">
+      <section className="panel demo-requests-overview">
+        <div className="panel-heading">
+          <div className="demo-requests-heading">
+            <span><Mail size={21} /></span>
+            <div>
+              <small>Sales pipeline</small>
+              <h2>Demo Requests</h2>
+              <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
+            </div>
+          </div>
+          <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
+            {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
         </div>
-        <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
-          {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-        </button>
-      </div>
-      <div className="business-review-table">
+        <div className="demo-request-summary">
+          <div><Mail size={17} /><span>Total requests<strong>{requests.length}</strong></span></div>
+          <div><TrendingUp size={17} /><span>Lead sources<strong>{sourceCount}</strong></span></div>
+          <div><Clock3 size={17} /><span>Latest request<strong>{latestRequest ? latestRequest.toLocaleDateString() : '—'}</strong></span></div>
+        </div>
+      </section>
+
+      <section className="panel demo-requests-list">
+        <div className="demo-requests-list-heading">
+          <div>
+            <strong>Request inbox</strong>
+            <small>Contact details and acquisition source for every demo lead.</small>
+          </div>
+          <span>{requests.length} lead{requests.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="business-review-table demo-requests-table">
         <table>
           <thead>
             <tr>
@@ -2026,9 +2085,9 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
           <tbody>
             {requests.map((request) => (
               <tr key={request._id}>
-                <td>{request.email}</td>
-                <td>{request.phone || 'N/A'}</td>
-                <td>{request.source}</td>
+                <td><span className="demo-contact"><Mail size={14} />{request.email}</span></td>
+                <td><span className="demo-contact"><Phone size={14} />{request.phone || 'N/A'}</span></td>
+                <td><span className="demo-source-pill">{request.source}</span></td>
                 <td>{new Date(request.createdAt).toLocaleString()}</td>
               </tr>
             ))}
@@ -2039,8 +2098,9 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
             {loadingRequests ? 'Loading demo requests.' : 'No demo requests yet.'}
           </div>
         )}
+        </div>
+      </section>
       </div>
-    </section>
   );
 }
 
@@ -2255,11 +2315,15 @@ function BusinessReviewScreen({
 
   return (
     <div className="business-review">
-      <section className="panel">
+      <section className="panel business-review-overview">
         <div className="panel-heading">
-          <div>
-            <h2>Processing Summary</h2>
-            <p>Persisted processing volume, token usage, and estimated OpenAI processing cost.</p>
+          <div className="business-review-heading">
+            <span><BarChart3 size={20} /></span>
+            <div>
+              <small>Executive overview</small>
+              <h2>Processing Summary</h2>
+              <p>Persisted processing volume, token usage, and estimated AI processing cost.</p>
+            </div>
           </div>
           <div className="toolbar-actions">
             <label className="currency-selector">
@@ -2294,11 +2358,15 @@ function BusinessReviewScreen({
         />
       </section>
 
-      <section className="panel">
+      <section className="panel business-review-recent">
         <div className="panel-heading">
-          <div>
-            <h2>Recent Processed Files</h2>
-            <p>Last five processed documents persisted by the business review.</p>
+          <div className="business-review-heading">
+            <span><Files size={20} /></span>
+            <div>
+              <small>Recent activity</small>
+              <h2>Recent Processed Files</h2>
+              <p>Last five processed documents persisted by the business review.</p>
+            </div>
           </div>
         </div>
         <div className="business-review-table">
