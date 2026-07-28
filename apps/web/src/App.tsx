@@ -3903,19 +3903,24 @@ function DocumentList({
   }
 
   return (
-    <section className="panel">
-      <div className="panel-heading">
+    <section className="panel document-list-panel">
+      <div className="panel-heading document-list-heading">
         <div>
-          <h2>Documents</h2>
-          <p>Browse uploaded files and manage document state.</p>
+          <h2 className="document-workspace-title"><Files size={18} /> Document workspace</h2>
         </div>
         <div className="panel-heading-actions">
+          <span className="document-total-badge"><strong>{pagination.total}</strong> total documents</span>
           <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
             <RefreshCw size={16} />
           </button>
         </div>
       </div>
-      <div className="filters">
+      <div className="document-filter-panel">
+        <div className="document-filter-heading">
+          <span><FileSearch size={15} /> Filter documents</span>
+          {(status || category || nameFilter) && <em>Filters active</em>}
+        </div>
+        <div className="filters">
         <label>
           Status
           <select value={status} onChange={(event) => setStatus(event.target.value as DocumentStatusFilter)}>
@@ -3970,20 +3975,23 @@ function DocumentList({
         <button className="secondary-button compact" onClick={resetFilters}>
           Reset
         </button>
+        </div>
       </div>
 
       <div className="document-table">
         {documents.map((doc) => (
           <div className="document-row" key={doc._id}>
             <button className="document-open" onClick={() => onOpen(doc._id)}>
-              <span>
-                <strong>{doc.originalName}</strong>
-                <small>
-                  {doc.category} / {doc.documentTypeName}
-                </small>
-                <small>
-                  Classification: {displayModel(doc.classificationModel)} | Extraction: {displayModel(doc.processingMetrics?.model)}
-                </small>
+              <span className="document-primary-info">
+                <span className="document-file-icon"><FileText size={19} /></span>
+                <span>
+                  <strong>{doc.originalName}</strong>
+                </span>
+              </span>
+              <span className="document-type-capsule">
+                <span>{doc.category}</span>
+                <i>/</i>
+                <strong>{doc.documentTypeName}</strong>
               </span>
               <span
                 className={`pill ${doc.status} clickable-status`}
