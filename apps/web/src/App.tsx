@@ -3,6 +3,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mj
 import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
+  Activity,
   BarChart3,
   Building2,
   BrainCircuit,
@@ -28,6 +29,8 @@ import {
   Save,
   Sun,
   X,
+  CircleX,
+  CircleHelp,
   Trash2,
   Upload,
   Download,
@@ -42,13 +45,13 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { api, AppConfigPayload, clearAuthToken, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users' | 'health';
 
 type AppConfig = AppConfigPayload;
 type AiProvider = AppConfig['aiProvider'];
@@ -967,6 +970,7 @@ function OperationsApp() {
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
     { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
     { id: 'users' as View, label: 'User Management', icon: UsersIcon },
+    { id: 'health' as View, label: 'Health Check', icon: Activity },
     { id: 'password-reset' as View, label: 'Password Reset', icon: KeyRound },
   ];
   const visibleNavigation = navigation.filter((item) => (
@@ -1174,6 +1178,9 @@ function OperationsApp() {
         )}
         {!selectedPageLoading && isAdmin && view === 'users' && (
           <UserManagementScreen currentUser={currentUser} onNotify={showToast} />
+        )}
+        {!selectedPageLoading && isAdmin && view === 'health' && (
+          <HealthDashboard onNotify={showToast} />
         )}
         {!selectedPageLoading && view === 'password-reset' && (
           <PasswordResetScreen onNotify={showToast} />
@@ -1723,6 +1730,138 @@ function UserManagementScreen({
         />
       )}
     </div>
+  );
+}
+
+function HealthDashboard({
+  onNotify,
+}: {
+  onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
+}) {
+  const [health, setHealth] = useState<HealthCheckResult | null>(null);
+  const [checking, setChecking] = useState(true);
+  const groups: HealthCheckResult['checks'][number]['group'][] = [
+    'Application',
+    'Data',
+    'Storage',
+    'Queues',
+    'Services',
+    'AI',
+  ];
+
+  async function refresh() {
+    setChecking(true);
+    try {
+      setHealth(await api.getHealth());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Health check failed', 'error');
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  return (
+    <section className="health-dashboard">
+      <div className="panel health-overview">
+        <div className="panel-heading">
+          <div>
+            <h2>System health</h2>
+            <p>
+              {health
+                ? `Last checked ${new Date(health.checkedAt).toLocaleString()}`
+                : 'Checking application resources.'}
+            </p>
+          </div>
+          <button className="secondary-button compact" onClick={() => refresh()} disabled={checking}>
+            {checking ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            Check now
+          </button>
+        </div>
+        {health && (
+          <div className="health-summary">
+            <div className={health.status === 'ready' ? 'ready' : 'unavailable'}>
+              {health.status === 'ready' ? <CheckCircle2 size={22} /> : <CircleX size={22} />}
+              <span>Overall</span>
+              <strong>{health.status}</strong>
+            </div>
+            <div className="ready">
+              <CheckCircle2 size={22} />
+              <span>Ready</span>
+              <strong>{health.summary.ready}</strong>
+            </div>
+            <div className="unavailable">
+              <CircleX size={22} />
+              <span>Unavailable</span>
+              <strong>{health.summary.unavailable}</strong>
+            </div>
+            <div className="not-configured">
+              <CircleHelp size={22} />
+              <span>Not configured</span>
+              <strong>{health.summary.notConfigured}</strong>
+            </div>
+          </div>
+        )}
+        {health && health.summary.unavailable > 0 && (
+          <div className="health-degraded-list" role="alert">
+            <div className="health-degraded-heading">
+              <CircleX size={18} />
+              <strong>Degraded resources</strong>
+              <span>{health.summary.unavailable}</span>
+            </div>
+            <div>
+              {health.checks
+                .filter((check) => check.status === 'unavailable')
+                .map((check) => (
+                  <article key={check.id}>
+                    <strong>{check.name}</strong>
+                    <span>{check.detail}</span>
+                  </article>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {!health && checking && <EmptyState text="Checking system resources." />}
+
+      {health && groups.map((group) => {
+        const checks = health.checks.filter((check) => check.group === group);
+        if (!checks.length) return null;
+        return (
+          <section className="panel health-group" key={group}>
+            <div className="health-group-heading">
+              <h3>{group}</h3>
+              <span>{checks.filter((check) => check.status === 'ready').length} / {checks.length} ready</span>
+            </div>
+            <div className="health-resource-grid">
+              {checks.map((check) => (
+                <article className={`health-resource ${check.status}`} key={check.id}>
+                  <div className="health-resource-icon">
+                    {check.status === 'ready'
+                      ? <CheckCircle2 size={20} />
+                      : check.status === 'unavailable'
+                        ? <CircleX size={20} />
+                        : <CircleHelp size={20} />}
+                  </div>
+                  <div>
+                    <div className="health-resource-heading">
+                      <strong>{check.name}</strong>
+                      <span>{check.status.replace('_', ' ')}</span>
+                    </div>
+                    <p>{check.detail}</p>
+                    <small>{check.latencyMs ? `${check.latencyMs} ms response time` : 'No latency recorded'}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </section>
   );
 }
 

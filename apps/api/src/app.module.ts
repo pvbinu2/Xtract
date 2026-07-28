@@ -8,6 +8,7 @@ import { DemoRequestsModule } from './demo-requests/demo-requests.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { MongoDatabase } from '@xtract/common';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { MongoDatabase } from '@xtract/common';
     DocumentsModule,
     ConfigurationModule,
     DemoRequestsModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

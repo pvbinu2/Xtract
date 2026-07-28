@@ -1,0 +1,212 @@
+import { Injectable } from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { BlobServiceClient } from '@azure/storage-blob';
+import { QueueServiceClient } from '@azure/storage-queue';
+import { Connection } from 'mongoose';
+import { ConfigurationService } from '../configuration/configuration.service';
+
+export type HealthStatus = 'ready' | 'unavailable' | 'not_configured';
+
+export type HealthCheck = {
+  id: string;
+  name: string;
+  group: 'Application' | 'Data' | 'Storage' | 'Queues' | 'Services' | 'AI';
+  status: HealthStatus;
+  detail: string;
+  latencyMs: number;
+};
+
+@Injectable()
+export class HealthService {
+  constructor(
+    @InjectConnection() private readonly connection: Connection,
+    private readonly configurationService: ConfigurationService,
+  ) {}
+
+  async checkAll() {
+    const configuration = await this.configurationService.get();
+    const storageConnection = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
+    const qdrantUrl = (process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
+    const realtimeUrl = process.env.REALTIME_HEALTH_URL
+      || this.healthUrlFromEndpoint(process.env.REALTIME_BROADCAST_URL, '/health');
+    const processorUrl = process.env.PROCESSOR_HEALTH_URL || 'http://127.0.0.1:7071/admin/host/status';
+    const doclingEndpoint = configuration.markdownServiceUrl || process.env.DOCLING_MARKDOWN_SERVICE_URL;
+    const doclingUrl = process.env.DOCLING_HEALTH_URL
+      || this.healthUrlFromEndpoint(doclingEndpoint, '/admin/host/status');
+
+    const checks: Array<Promise<HealthCheck>> = [
+      Promise.resolve({
+        id: 'api',
+        name: 'Xtract API',
+        group: 'Application',
+        status: 'ready',
+        detail: 'API is responding.',
+        latencyMs: 0,
+      }),
+      this.timed('mongodb', 'MongoDB', 'Data', async () => {
+        await this.connection.db?.admin().ping();
+        return 'Database connection is ready.';
+      }),
+      this.httpCheck('qdrant', 'Qdrant vector database', 'Data', `${qdrantUrl}/healthz`),
+      this.httpCheck('processor', 'Document processor Functions', 'Services', processorUrl),
+      this.httpCheck('realtime', 'Self-hosted SignalR', 'Services', realtimeUrl),
+      this.httpCheck('docling', 'Docling markdown service', 'Services', doclingUrl),
+      this.aiCheck(configuration),
+      this.embeddingCheck(configuration),
+    ];
+
+    if (storageConnection) {
+      checks.push(
+        this.timed('blob-storage', 'Blob storage', 'Storage', async () => {
+          await BlobServiceClient.fromConnectionString(storageConnection).getProperties();
+          return 'Blob service is reachable.';
+        }),
+        this.timed('queue-storage', 'Queue storage', 'Storage', async () => {
+          await QueueServiceClient.fromConnectionString(storageConnection).getProperties();
+          return 'Queue service is reachable.';
+        }),
+      );
+      for (const containerName of ['processing', 'train', 'trigger']) {
+        checks.push(this.timed(`container-${containerName}`, `${containerName} container`, 'Storage', async () => {
+          const container = BlobServiceClient
+            .fromConnectionString(storageConnection)
+            .getContainerClient(containerName);
+          if (!(await container.exists())) throw new Error('Container does not exist.');
+          return 'Blob container is ready.';
+        }));
+      }
+      for (const queueName of [
+        'document-processing',
+        'document-classification',
+        'document-extraction',
+        'classifier-training',
+        'document-events',
+      ]) {
+        checks.push(this.timed(`queue-${queueName}`, queueName, 'Queues', async () => {
+          const queue = QueueServiceClient.fromConnectionString(storageConnection).getQueueClient(queueName);
+          if (!(await queue.exists())) throw new Error('Queue does not exist.');
+          const properties = await queue.getProperties();
+          return `${properties.approximateMessagesCount || 0} message(s) waiting.`;
+        }));
+      }
+    } else {
+      checks.push(
+        Promise.resolve(this.notConfigured('blob-storage', 'Blob storage', 'Storage')),
+        Promise.resolve(this.notConfigured('queue-storage', 'Queue storage', 'Storage')),
+      );
+    }
+
+    const results = await Promise.all(checks);
+    const ready = results.filter((check) => check.status === 'ready').length;
+    const unavailable = results.filter((check) => check.status === 'unavailable').length;
+    const notConfigured = results.filter((check) => check.status === 'not_configured').length;
+    return {
+      status: unavailable ? 'degraded' : 'ready',
+      checkedAt: new Date().toISOString(),
+      summary: { total: results.length, ready, unavailable, notConfigured },
+      checks: results,
+    };
+  }
+
+  private aiCheck(configuration: Awaited<ReturnType<ConfigurationService['get']>>) {
+    if (configuration.aiProvider === 'ollama') {
+      return this.httpCheck(
+        'ai-provider',
+        'Ollama AI provider',
+        'AI',
+        `${(configuration.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '')}/api/tags`,
+      );
+    }
+    return this.openAiCheck('ai-provider', 'OpenAI provider');
+  }
+
+  private embeddingCheck(configuration: Awaited<ReturnType<ConfigurationService['get']>>) {
+    if (configuration.embeddingProvider === 'ollama') {
+      return this.httpCheck(
+        'embedding-provider',
+        'Ollama embedding provider',
+        'AI',
+        `${(configuration.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '')}/api/tags`,
+      );
+    }
+    return this.openAiCheck('embedding-provider', 'OpenAI embedding provider');
+  }
+
+  private openAiCheck(id: string, name: string): Promise<HealthCheck> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return Promise.resolve(this.notConfigured(id, name, 'AI', 'OPENAI_API_KEY is not configured.'));
+    return this.httpCheck(id, name, 'AI', 'https://api.openai.com/v1/models', {
+      Authorization: `Bearer ${apiKey}`,
+    });
+  }
+
+  private httpCheck(
+    id: string,
+    name: string,
+    group: HealthCheck['group'],
+    url?: string,
+    headers?: Record<string, string>,
+  ): Promise<HealthCheck> {
+    if (!url || url.startsWith('/')) {
+      return Promise.resolve(this.notConfigured(id, name, group));
+    }
+    return this.timed(id, name, group, async () => {
+      const response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
+      return `Service responded with HTTP ${response.status}.`;
+    });
+  }
+
+  private async timed(
+    id: string,
+    name: string,
+    group: HealthCheck['group'],
+    action: () => Promise<string>,
+  ): Promise<HealthCheck> {
+    const startedAt = performance.now();
+    try {
+      const detail = await action();
+      return {
+        id,
+        name,
+        group,
+        status: 'ready',
+        detail,
+        latencyMs: Math.round(performance.now() - startedAt),
+      };
+    } catch (error) {
+      return {
+        id,
+        name,
+        group,
+        status: 'unavailable',
+        detail: error instanceof Error ? error.message : String(error),
+        latencyMs: Math.round(performance.now() - startedAt),
+      };
+    }
+  }
+
+  private notConfigured(
+    id: string,
+    name: string,
+    group: HealthCheck['group'],
+    detail = 'Resource is not configured.',
+  ): HealthCheck {
+    return { id, name, group, status: 'not_configured', detail, latencyMs: 0 };
+  }
+
+  private healthUrlFromEndpoint(endpoint: string | undefined, healthPath: string) {
+    if (!endpoint) return undefined;
+    try {
+      const url = new URL(endpoint);
+      url.pathname = healthPath;
+      url.search = '';
+      return url.toString();
+    } catch {
+      return undefined;
+    }
+  }
+}
