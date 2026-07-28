@@ -2,8 +2,9 @@
 set -e
 
 cd /app
-npm install
+npm install --include=optional
 npm install --workspace apps/web
+npm install --include=optional --workspace functions/processor
 FUNC_BIN="/app/functions/processor/node_modules/.bin/func"
 if [ ! -x "$FUNC_BIN" ]; then
   FUNC_BIN="/app/node_modules/.bin/func"
