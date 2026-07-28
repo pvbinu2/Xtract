@@ -25,6 +25,7 @@ export type DocumentType = {
   classifierTrainingStatus?: 'untrained' | 'training' | 'trained' | 'failed';
   classifierProfile?: string;
   classifierTrainedAt?: string;
+  classifierTrainedBy?: string;
   classifierTrainingError?: string;
   fields: ExtractionField[];
   extractionModel?: string;

@@ -2381,7 +2381,7 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
-  type ConfigurationSection = 'aiService' | 'documentProcessing' | 'scaling' | 'downstream';
+  type ConfigurationSection = 'documentProcessing' | 'scaling' | 'downstream';
   const [expandedSection, setExpandedSection] = useState<ConfigurationSection | null>(null);
 
   function toggleSection(section: ConfigurationSection) {
@@ -2398,107 +2398,33 @@ function ConfigurationScreen({
 
   return (
     <div className="panel configuration-panel">
-      <div className="configuration-form">
-        <div className="configuration-section">
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'aiService'}
-            onClick={() => toggleSection('aiService')}
-          >
-            <span>AI Service Configuration</span>
-            {expandedSection === 'aiService' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'aiService' && (
-            <div className="configuration-section-body configuration-card-grid ai-settings">
-              <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
-              <label>
-                AI provider
-                <select
-                  value={config.aiProvider}
-                  onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="ollama">Ollama</option>
-                </select>
-              </label>
-              {config.aiProvider === 'ollama' ? (
-                <>
-                  <label>
-                    Ollama base URL
-                    <input
-                      type="url"
-                      value={config.ollamaBaseUrl}
-                      placeholder={defaultOllamaBaseUrl}
-                      onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Ollama model
-                    <input
-                      value={config.ollamaModel}
-                      placeholder={defaultOllamaModel}
-                      onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
-                    />
-                  </label>
-                </>
-              ) : (
-                <OpenAIModelControls
-                  model={config.classificationModel || lowCostOpenAIModel}
-                  reasoningEffort={config.classificationReasoningEffort || 'low'}
-                  onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
-                  onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
-                />
-              )}
-              <label>
-                Embedding provider
-                <select
-                  value={config.embeddingProvider}
-                  onChange={(event) => onConfigChange({ ...config, embeddingProvider: event.target.value as EmbeddingProvider })}
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="ollama">Ollama</option>
-                </select>
-              </label>
-              {config.embeddingProvider === 'ollama' ? (
-                <label>
-                  Ollama embedding model
-                  <input
-                    value={config.ollamaEmbeddingModel}
-                    placeholder={defaultOllamaEmbeddingModel}
-                    onChange={(event) => onConfigChange({ ...config, ollamaEmbeddingModel: event.target.value })}
-                  />
-                </label>
-              ) : (
-                <label>
-                  OpenAI embedding model
-                  <select
-                    value={config.embeddingModel}
-                    onChange={(event) => onConfigChange({ ...config, embeddingModel: event.target.value })}
-                  >
-                    {config.embeddingModel && !openAIEmbeddingModelOptions.some((option) => option.value === config.embeddingModel) && (
-                      <option value={config.embeddingModel}>{config.embeddingModel}</option>
-                    )}
-                    {openAIEmbeddingModelOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-          )}
+      <div className="configuration-hero">
+        <div className="configuration-hero-icon"><Gauge size={24} /></div>
+        <div>
+          <span>System settings</span>
+          <h2>Configure your processing pipeline</h2>
+          <p>Manage document preparation, workload capacity, and downstream delivery from one place.</p>
         </div>
-
-        <div className="configuration-section">
+        <div className="configuration-hero-note">
+          <Save size={16} />
+          <span>Changes take effect after saving</span>
+        </div>
+      </div>
+      <div className="configuration-form">
+        <div className={`configuration-section scaling${expandedSection === 'scaling' ? ' expanded' : ''}`}>
           <button
             className="configuration-section-toggle"
             type="button"
             aria-expanded={expandedSection === 'scaling'}
             onClick={() => toggleSection('scaling')}
           >
-            <span>Scaling</span>
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><TrendingUp size={20} /></span>
+              <span>
+                <strong>Scaling & Concurrency</strong>
+                <small>Control parallel processing capacity for every pipeline stage</small>
+              </span>
+            </span>
             {expandedSection === 'scaling' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
           {expandedSection === 'scaling' && (
@@ -2594,73 +2520,88 @@ function ConfigurationScreen({
           )}
         </div>
 
-        <div className="configuration-section">
+        <div className={`configuration-section processing${expandedSection === 'documentProcessing' ? ' expanded' : ''}`}>
           <button
             className="configuration-section-toggle"
             type="button"
             aria-expanded={expandedSection === 'documentProcessing'}
             onClick={() => toggleSection('documentProcessing')}
           >
-            <span>Document Processing Configuration</span>
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><ScanText size={20} /></span>
+              <span>
+                <strong>Document Processing</strong>
+                <small>Choose how document content is prepared for AI processing</small>
+              </span>
+            </span>
             {expandedSection === 'documentProcessing' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
           {expandedSection === 'documentProcessing' && (
-            <div className="configuration-section-body configuration-card-grid processing-settings">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.useOcrForDocumentProcessing}
-                  onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
-                />
-                <span>
-                  Use extracted text for document processing
-                  <small>Extract text before classification, schema generation, and extraction.</small>
-                </span>
-              </label>
-              {config.useOcrForDocumentProcessing && (
-                <label>
-                  Text extraction engine
-                  <select
-                    value={config.documentTextMode}
-                    onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
-                  >
-                    <option value="ocr">Built in</option>
-                    <option value="markdown">Markdown (Docling service)</option>
-                  </select>
-                </label>
-              )}
-              {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
-                <label>
-                  Docling markdown service URL
+            <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+              <div className="document-processing-option-card">
+                <strong>Text preparation</strong>
+                <label className="checkbox-row">
                   <input
-                    type="url"
-                    placeholder="https://your-function-app.azurewebsites.net/api/extract-markdown"
-                    value={config.markdownServiceUrl}
-                    onChange={(event) => onConfigChange({ ...config, markdownServiceUrl: event.target.value })}
+                    type="checkbox"
+                    checked={config.useOcrForDocumentProcessing}
+                    onChange={(event) => onConfigChange({ ...config, useOcrForDocumentProcessing: event.target.checked })}
                   />
+                  <span>
+                    Use extracted text for document processing
+                    <small>Extract text before classification, schema generation, and extraction.</small>
+                  </span>
                 </label>
-              )}
-              {!config.useOcrForDocumentProcessing && (
-                <p className="warning-text">
-                  Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
-                </p>
-              )}
+                {config.useOcrForDocumentProcessing && (
+                  <label className="document-processing-field">
+                    Text extraction engine
+                    <select
+                      value={config.documentTextMode}
+                      onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
+                    >
+                      <option value="ocr">Built in</option>
+                      <option value="markdown">Markdown (Docling service)</option>
+                    </select>
+                  </label>
+                )}
+                {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
+                  <label className="document-processing-field">
+                    Docling markdown service URL
+                    <input
+                      type="url"
+                      placeholder="https://your-function-app.azurewebsites.net/api/extract-markdown"
+                      value={config.markdownServiceUrl}
+                      onChange={(event) => onConfigChange({ ...config, markdownServiceUrl: event.target.value })}
+                    />
+                  </label>
+                )}
+                {!config.useOcrForDocumentProcessing && (
+                  <p className="warning-text">
+                    Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
 
-        <div className="configuration-section">
+        <div className={`configuration-section downstream${expandedSection === 'downstream' ? ' expanded' : ''}`}>
           <button
             className="configuration-section-toggle"
             type="button"
             aria-expanded={expandedSection === 'downstream'}
             onClick={() => toggleSection('downstream')}
           >
-            <span>Downstream Configuration</span>
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Network size={20} /></span>
+              <span>
+                <strong>Downstream Delivery</strong>
+                <small>Configure where validated document data is sent</small>
+              </span>
+            </span>
             {expandedSection === 'downstream' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
           {expandedSection === 'downstream' && (
-            <div className="configuration-section-body configuration-card-grid downstream-settings">
+            <div className="configuration-section-body configuration-card-grid downstream-settings classification-style-settings">
               <label>
                 Downstream API URL
                 <input
@@ -2670,22 +2611,25 @@ function ConfigurationScreen({
                   onChange={(event) => onConfigChange({ ...config, downstreamUrl: event.target.value })}
                 />
               </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.deleteAfterDownstream}
-                  onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
-                />
-                <span>Delete document after sending to downstream</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.sendKeyValuePairs}
-                  onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
-                />
-                <span>Send key value pairs</span>
-              </label>
+              <div className="downstream-option-card">
+                <strong>Delivery options</strong>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={config.deleteAfterDownstream}
+                    onChange={(event) => onConfigChange({ ...config, deleteAfterDownstream: event.target.checked })}
+                  />
+                  <span>Delete document after sending to downstream</span>
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={config.sendKeyValuePairs}
+                    onChange={(event) => onConfigChange({ ...config, sendKeyValuePairs: event.target.checked })}
+                  />
+                  <span>Send key value pairs</span>
+                </label>
+              </div>
               <p className="help-text">
                 When saved, validation submits will forward clean JSON data to the downstream system using this URL.
               </p>
@@ -2742,6 +2686,10 @@ function ClassificationScreen({
       : trainableTypes.length && trainedCount === trainableTypes.length
         ? 'trained'
         : 'untrained';
+  const lastTrainedType = includedTypes
+    .filter((type) => type.classifierTrainedAt)
+    .sort((left, right) =>
+      new Date(right.classifierTrainedAt!).getTime() - new Date(left.classifierTrainedAt!).getTime())[0];
 
   async function trainIncludedTypes() {
     await api.trainClassifier();
@@ -2765,19 +2713,22 @@ function ClassificationScreen({
               <span>Status</span>
               <strong className={`classifier-pill ${overallStatus}`}>{overallStatus}</strong>
             </div>
+            <div className="classifier-training-audit">
+              <div>
+                <span>Last trained</span>
+                <strong>
+                  {lastTrainedType?.classifierTrainedAt
+                    ? new Date(lastTrainedType.classifierTrainedAt).toLocaleString()
+                    : 'Never'}
+                </strong>
+              </div>
+              <div>
+                <span>Last trained by</span>
+                <strong>{lastTrainedType?.classifierTrainedBy || '—'}</strong>
+              </div>
+            </div>
           </div>
           <div className="panel-heading-actions">
-            <button
-              className="secondary-button"
-              onClick={() =>
-                onRun(async () => {
-                  await onSaveConfig(config);
-                }, 'Classification model saved')
-              }
-            >
-              <Save size={16} />
-              Save Model
-            </button>
             <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
               <RefreshCw size={16} />
             </button>
@@ -2810,46 +2761,130 @@ function ClassificationScreen({
           </div>
         </div>
 
-        <div className="model-settings-band">
-          <div>
-            <strong>{aiModelLabel(config)}</strong>
-            <small>
-              {config.classificationMode === 'vector'
-                ? `Top vector result using ${embeddingModelLabel(config)}.`
-                : config.classificationMode === 'rag'
-                  ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
-                  : 'LLM chooses from all configured document types.'}
-            </small>
-          </div>
-          <div className="model-controls">
-            <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
-          </div>
-          {config.aiProvider === 'openai' ? (
-            <OpenAIModelControls
-              model={config.classificationModel || lowCostOpenAIModel}
-              reasoningEffort={config.classificationReasoningEffort || 'low'}
-              onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
-              onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
-            />
-          ) : (
-            <div className="model-controls">
-              <label>
-                Model
-                <input
-                  value={config.ollamaModel}
-                  onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
-                />
-              </label>
+        <div className="classification-settings">
+          <div className="classification-settings-heading">
+            <div>
+              <span>Classification configuration</span>
+              <strong>{aiModelLabel(config)}</strong>
+              <small>
+                {config.classificationMode === 'vector'
+                  ? `Top vector result using ${embeddingModelLabel(config)}.`
+                  : config.classificationMode === 'rag'
+                    ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
+                    : 'LLM chooses from all configured document types.'}
+              </small>
             </div>
-          )}
-          <button
-            className="primary-button compact"
-            type="button"
-            onClick={() => onRun(() => onSaveConfig(config).then(() => undefined), 'Classification configuration saved')}
-          >
-            <Save size={16} />
-            Save
-          </button>
+            <button
+              className="primary-button compact"
+              type="button"
+              onClick={() => onRun(() => onSaveConfig(config).then(() => undefined), 'Classification configuration saved')}
+            >
+              <Save size={16} />
+              Save settings
+            </button>
+          </div>
+          <div className="classification-settings-grid">
+            <section className="classification-setting-card strategy">
+              <div className="classification-setting-card-heading">
+                <BrainCircuit size={18} />
+                <div><strong>Classification strategy</strong><small>Choose how document types are selected.</small></div>
+              </div>
+              <div className="classification-setting-fields">
+                <ClassificationModeControls config={config} onConfigChange={onConfigChange} />
+              </div>
+            </section>
+
+            <section className="classification-setting-card model">
+              <div className="classification-setting-card-heading">
+                <Sparkles size={18} />
+                <div><strong>Classification model</strong><small>Configure the AI provider and model.</small></div>
+              </div>
+              <div className="classification-setting-fields">
+                <label>
+                  AI provider
+                  <select
+                    value={config.aiProvider}
+                    onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="ollama">Self Hosted (Ollama)</option>
+                  </select>
+                </label>
+                {config.aiProvider === 'openai' ? (
+                  <OpenAIModelControls
+                    model={config.classificationModel || lowCostOpenAIModel}
+                    reasoningEffort={config.classificationReasoningEffort || 'low'}
+                    onModelChange={(classificationModel) => onConfigChange({ ...config, classificationModel })}
+                    onReasoningEffortChange={(classificationReasoningEffort) => onConfigChange({ ...config, classificationReasoningEffort })}
+                  />
+                ) : (
+                  <>
+                    <label>
+                      Ollama base URL
+                      <input
+                        type="url"
+                        value={config.ollamaBaseUrl}
+                        placeholder={defaultOllamaBaseUrl}
+                        onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Ollama model
+                      <input
+                        value={config.ollamaModel}
+                        placeholder={defaultOllamaModel}
+                        onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            </section>
+
+            <section className="classification-setting-card embedding">
+              <div className="classification-setting-card-heading">
+                <Network size={18} />
+                <div><strong>Embedding settings</strong><small>Configure vectors used for search and RAG.</small></div>
+              </div>
+              <div className="classification-setting-fields">
+                <label>
+                  Embedding provider
+                  <select
+                    value={config.embeddingProvider}
+                    onChange={(event) => onConfigChange({ ...config, embeddingProvider: event.target.value as EmbeddingProvider })}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="ollama">Self Hosted (Ollama)</option>
+                  </select>
+                </label>
+                {config.embeddingProvider === 'ollama' ? (
+                  <label>
+                    Ollama embedding model
+                    <input
+                      value={config.ollamaEmbeddingModel}
+                      placeholder={defaultOllamaEmbeddingModel}
+                      onChange={(event) => onConfigChange({ ...config, ollamaEmbeddingModel: event.target.value })}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    OpenAI embedding model
+                    <select
+                      value={config.embeddingModel}
+                      onChange={(event) => onConfigChange({ ...config, embeddingModel: event.target.value })}
+                    >
+                      {config.embeddingModel && !openAIEmbeddingModelOptions.some((option) => option.value === config.embeddingModel) && (
+                        <option value={config.embeddingModel}>{config.embeddingModel}</option>
+                      )}
+                      {openAIEmbeddingModelOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
 
         <div className="classification-table">

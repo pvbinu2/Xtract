@@ -61,6 +61,9 @@ export class DocumentType {
   classifierTrainedAt?: Date;
 
   @Prop()
+  classifierTrainedBy?: string;
+
+  @Prop()
   classifierTrainingError?: string;
 
   @Prop({ type: [ExtractionFieldSchema], default: [] })

@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { DocumentTypesService } from './document-types.service';
 import { Roles } from '../auth/auth.decorators';
+import { AuthenticatedRequest } from '../auth/auth.guard';
 
 const storage = memoryStorage();
 
@@ -38,8 +39,8 @@ export class DocumentTypesController {
   }
 
   @Post('train-classifier')
-  trainClassifier() {
-    return this.service.trainClassifier();
+  trainClassifier(@Req() request: AuthenticatedRequest) {
+    return this.service.trainClassifier(request.user?.username || 'Unknown user');
   }
 
   @Post('reset-classifier-training')
