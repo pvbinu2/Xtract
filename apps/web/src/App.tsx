@@ -2486,13 +2486,6 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
-  type ConfigurationSection = 'documentProcessing' | 'scaling' | 'downstream';
-  const [expandedSection, setExpandedSection] = useState<ConfigurationSection | null>(null);
-
-  function toggleSection(section: ConfigurationSection) {
-    setExpandedSection((current) => current === section ? null : section);
-  }
-
   async function refreshConfig() {
     await onRefresh();
   }
@@ -2516,13 +2509,8 @@ function ConfigurationScreen({
         </div>
       </div>
       <div className="configuration-form">
-        <div className={`configuration-section scaling${expandedSection === 'scaling' ? ' expanded' : ''}`}>
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'scaling'}
-            onClick={() => toggleSection('scaling')}
-          >
+        <div className="configuration-section scaling expanded">
+          <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><TrendingUp size={20} /></span>
               <span>
@@ -2530,10 +2518,9 @@ function ConfigurationScreen({
                 <small>Control parallel processing capacity for every pipeline stage</small>
               </span>
             </span>
-            {expandedSection === 'scaling' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'scaling' && (
-            <div className="configuration-section-body scaling-controls">
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body scaling-controls">
               <label className="scaling-control preprocessing">
                 <span className="scaling-control-heading">
                   Preprocessing concurrency
@@ -2621,17 +2608,11 @@ function ConfigurationScreen({
               <p className="help-text">
                 Limits apply to new queue invocations after saving. Higher AI concurrency may increase model rate-limit errors.
               </p>
-            </div>
-          )}
+          </div>
         </div>
 
-        <div className={`configuration-section processing${expandedSection === 'documentProcessing' ? ' expanded' : ''}`}>
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'documentProcessing'}
-            onClick={() => toggleSection('documentProcessing')}
-          >
+        <div className="configuration-section processing expanded">
+          <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><ScanText size={20} /></span>
               <span>
@@ -2639,10 +2620,9 @@ function ConfigurationScreen({
                 <small>Choose how document content is prepared for AI processing</small>
               </span>
             </span>
-            {expandedSection === 'documentProcessing' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'documentProcessing' && (
-            <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
               <div className="document-processing-option-card">
                 <strong>Text preparation</strong>
                 <label className="checkbox-row">
@@ -2685,17 +2665,11 @@ function ConfigurationScreen({
                   </p>
                 )}
               </div>
-            </div>
-          )}
+          </div>
         </div>
 
-        <div className={`configuration-section downstream${expandedSection === 'downstream' ? ' expanded' : ''}`}>
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'downstream'}
-            onClick={() => toggleSection('downstream')}
-          >
+        <div className="configuration-section downstream expanded">
+          <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Network size={20} /></span>
               <span>
@@ -2703,10 +2677,9 @@ function ConfigurationScreen({
                 <small>Configure where validated document data is sent</small>
               </span>
             </span>
-            {expandedSection === 'downstream' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'downstream' && (
-            <div className="configuration-section-body configuration-card-grid downstream-settings classification-style-settings">
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid downstream-settings classification-style-settings">
               <label>
                 Downstream API URL
                 <input
@@ -2738,8 +2711,7 @@ function ConfigurationScreen({
               <p className="help-text">
                 When saved, validation submits will forward clean JSON data to the downstream system using this URL.
               </p>
-            </div>
-          )}
+          </div>
         </div>
         <div className="configuration-actions">
           <button className="secondary-button compact" type="button" onClick={refreshConfig}>
