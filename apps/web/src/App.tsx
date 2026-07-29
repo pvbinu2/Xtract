@@ -4562,6 +4562,9 @@ function ReprocessDialog({
   const [extractionModel, setExtractionModel] = useState(
     document.processingMetrics?.model || documentType?.extractionModel || lowCostOpenAIModel,
   );
+  const reprocessModelOptions = openAIModelOptions.some((option) => option.value === extractionModel)
+    ? openAIModelOptions
+    : [{ value: extractionModel, label: displayModel(extractionModel) }, ...openAIModelOptions];
   const [processingMode, setProcessingMode] = useState<ReprocessProcessingMode>(initialMode);
   const [submitting, setSubmitting] = useState(false);
 
@@ -4595,7 +4598,7 @@ function ReprocessDialog({
           <label>
             Extraction model
             <select value={extractionModel} onChange={(event) => setExtractionModel(event.target.value)}>
-              {openAIModelOptions.map((option) => (
+              {reprocessModelOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>

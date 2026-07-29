@@ -486,6 +486,8 @@ async function extractQueuedDocument(message, context) {
     localFilePath = await resolveDocumentFile(document);
     const preparedText = await resolvePreparedDocumentText(document);
     const preparedTextMode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
+    const usesPreparedText = useOcrForDocumentProcessing || providerName(aiOptions) === 'ollama';
+    const effectiveProcessingMode = usesPreparedText ? preparedTextMode : 'pdf';
     const localDocument = { ...document, ...payload.classificationUpdate, filePath: localFilePath };
     const effectiveDocumentType = {
       ...documentType,
@@ -495,7 +497,11 @@ async function extractQueuedDocument(message, context) {
       localDocument,
       effectiveDocumentType,
       useOcrForDocumentProcessing,
-      { ...textOptions, mode: preparedTextMode, preparedText },
+      {
+        ...textOptions,
+        mode: preparedTextMode,
+        preparedText: usesPreparedText ? preparedText : undefined,
+      },
       aiOptions,
     );
     const extractedData = await attachBoundingBoxes(
@@ -569,7 +575,7 @@ async function extractQueuedDocument(message, context) {
         extractedData,
         processingMetrics,
         classificationModel: localDocument.classificationModel,
-        processingMode: preparedTextMode,
+        processingMode: effectiveProcessingMode,
         error: null,
       },
       ['reprocessOptions'],

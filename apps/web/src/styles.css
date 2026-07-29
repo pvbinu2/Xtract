@@ -113,7 +113,7 @@ button {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 20px;
   min-height: 44px;
 }
 
@@ -383,7 +383,7 @@ nav {
 
 .status-strip {
   display: flex;
-  gap: 7px;
+  gap: 12px;
 }
 
 .topbar .status-strip {
