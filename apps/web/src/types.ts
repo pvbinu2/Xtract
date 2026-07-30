@@ -143,6 +143,7 @@ export type AuthUser = {
   role: UserRole;
   preferredCurrency?: DisplayCurrency;
   enabled?: boolean;
+  twoFactorEnabled?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };

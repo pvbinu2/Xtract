@@ -975,12 +975,26 @@ function OperationsApp() {
     }
   }
 
-  async function handleLogin(username: string, password: string) {
-    const session = await api.login({ username, password });
+  function acceptSession(session: { token: string; user: AuthUser }) {
     saveAuthToken(session.token);
     setCurrentUser(session.user);
     setDisplayCurrency(normalizeDisplayCurrency(session.user.preferredCurrency));
     setView('documents');
+  }
+
+  async function handleLogin(username: string, password: string) {
+    const result = await api.login({ username, password });
+    if ('requiresTwoFactor' in result || 'requiresTwoFactorSetup' in result) return result;
+    acceptSession(result);
+    return undefined;
+  }
+
+  async function handleTwoFactorLogin(twoFactorToken: string, code: string) {
+    acceptSession(await api.verifyTwoFactorLogin({ twoFactorToken, code }));
+  }
+
+  async function handleRequiredTwoFactorSetup(twoFactorSetupToken: string, secret: string, code: string) {
+    acceptSession(await api.completeRequiredTwoFactorSetup({ twoFactorSetupToken, secret, code }));
   }
 
   async function updateDisplayCurrency(currency: DisplayCurrency) {
@@ -1055,7 +1069,13 @@ function OperationsApp() {
   }
 
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        onVerifyTwoFactor={handleTwoFactorLogin}
+        onCompleteTwoFactorSetup={handleRequiredTwoFactorSetup}
+      />
+    );
   }
 
   return (
@@ -1228,7 +1248,11 @@ function OperationsApp() {
           <HealthDashboard onNotify={showToast} />
         )}
         {!selectedPageLoading && view === 'password-reset' && (
-          <PasswordResetScreen onNotify={showToast} />
+          <PasswordResetScreen
+            currentUser={currentUser}
+            onUserChange={setCurrentUser}
+            onNotify={showToast}
+          />
         )}
         {!selectedPageLoading && view === 'validation' && (
           <ValidationScreen
@@ -1538,10 +1562,32 @@ function MarketingSite() {
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
+function LoginScreen({
+  onLogin,
+  onVerifyTwoFactor,
+  onCompleteTwoFactorSetup,
+}: {
+  onLogin: (
+    username: string,
+    password: string,
+  ) => Promise<
+    | { requiresTwoFactor: true; twoFactorToken: string }
+    | { requiresTwoFactorSetup: true; twoFactorSetupToken: string }
+    | undefined
+  >;
+  onVerifyTwoFactor: (twoFactorToken: string, code: string) => Promise<void>;
+  onCompleteTwoFactorSetup: (twoFactorSetupToken: string, secret: string, code: string) => Promise<void>;
+}) {
   const rememberedUsername = localStorage.getItem('xtract-remembered-username') || '';
   const [username, setUsername] = useState(rememberedUsername);
   const [password, setPassword] = useState('');
+  const [authenticationCode, setAuthenticationCode] = useState('');
+  const [twoFactorToken, setTwoFactorToken] = useState('');
+  const [requiredSetup, setRequiredSetup] = useState<{
+    token: string;
+    secret: string;
+    qrCodeDataUrl: string;
+  } | null>(null);
   const [rememberMe, setRememberMe] = useState(Boolean(rememberedUsername));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -1551,7 +1597,28 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
     setSubmitting(true);
     setError('');
     try {
-      await onLogin(username, password);
+      if (requiredSetup) {
+        await onCompleteTwoFactorSetup(requiredSetup.token, requiredSetup.secret, authenticationCode);
+      } else if (twoFactorToken) {
+        await onVerifyTwoFactor(twoFactorToken, authenticationCode);
+      } else {
+        const result = await onLogin(username, password);
+        if (result && 'requiresTwoFactor' in result) {
+          setTwoFactorToken(result.twoFactorToken);
+          setPassword('');
+          return;
+        }
+        if (result && 'requiresTwoFactorSetup' in result) {
+          const setup = await api.beginRequiredTwoFactorSetup(result.twoFactorSetupToken);
+          setRequiredSetup({
+            token: result.twoFactorSetupToken,
+            secret: setup.secret,
+            qrCodeDataUrl: setup.qrCodeDataUrl,
+          });
+          setPassword('');
+          return;
+        }
+      }
       if (rememberMe) {
         localStorage.setItem('xtract-remembered-username', username.trim());
       } else {
@@ -1570,39 +1637,112 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
         <img src="/icon-192.png" alt="" />
         <div>
           <h1>Sign in to Xtract</h1>
-          <p>Use your assigned username and password.</p>
+          <p>
+            {requiredSetup
+              ? 'Two-factor authentication is required. Register an authenticator app to continue.'
+              : twoFactorToken
+                ? 'Enter the code from your authenticator app.'
+                : 'Use your assigned username and password.'}
+          </p>
         </div>
-        <label>
-          Username
-          <input value={username} autoFocus onChange={(event) => setUsername(event.target.value)} />
-        </label>
-        <label>
-          Password
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </label>
-        <label className="checkbox-row auth-remember">
-          <input
-            type="checkbox"
-            checked={rememberMe}
-            onChange={(event) => setRememberMe(event.target.checked)}
-          />
-          <span>Remember me</span>
-        </label>
+        {requiredSetup ? (
+          <div className="required-two-factor-setup">
+            <p>Scan this QR code with your authenticator app.</p>
+            <img src={requiredSetup.qrCodeDataUrl} alt="Authenticator setup QR code" />
+            <details>
+              <summary>Can’t scan the QR code?</summary>
+              <code>{requiredSetup.secret}</code>
+            </details>
+            <label>
+              Authentication code
+              <input
+                value={authenticationCode}
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                pattern="[0-9]{6}"
+                onChange={(event) => setAuthenticationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+            </label>
+          </div>
+        ) : twoFactorToken ? (
+          <label>
+            Authentication code
+            <input
+              value={authenticationCode}
+              autoFocus
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              pattern="[0-9]{6}"
+              onChange={(event) => setAuthenticationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+            />
+          </label>
+        ) : (
+          <>
+            <label>
+              Username
+              <input value={username} autoFocus onChange={(event) => setUsername(event.target.value)} />
+            </label>
+            <label>
+              Password
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            </label>
+            <label className="checkbox-row auth-remember">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+              />
+              <span>Remember me</span>
+            </label>
+          </>
+        )}
         {error && <div className="auth-error">{error}</div>}
-        <button className="primary-button" type="submit" disabled={submitting || !username || !password}>
+        <button
+          className="primary-button"
+          type="submit"
+          disabled={submitting || (twoFactorToken || requiredSetup ? authenticationCode.length !== 6 : !username || !password)}
+        >
           {submitting ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
-          Login
+          {requiredSetup ? 'Register and continue' : twoFactorToken ? 'Verify code' : 'Login'}
         </button>
+        {(twoFactorToken || requiredSetup) && (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              setTwoFactorToken('');
+              setRequiredSetup(null);
+              setAuthenticationCode('');
+              setError('');
+            }}
+          >
+            Back to login
+          </button>
+        )}
       </form>
     </main>
   );
 }
 
-function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+function PasswordResetScreen({
+  currentUser,
+  onUserChange,
+  onNotify,
+}: {
+  currentUser: AuthUser;
+  onUserChange: (user: AuthUser) => void;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  const [twoFactorSetup, setTwoFactorSetup] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorSaving, setTwoFactorSaving] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -1621,6 +1761,34 @@ function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, ty
       onNotify(error instanceof Error ? error.message : 'Failed to change password.', 'error');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function startTwoFactorSetup() {
+    setTwoFactorSaving(true);
+    try {
+      setTwoFactorSetup(await api.beginTwoFactorSetup());
+      setTwoFactorCode('');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to start two-factor setup.', 'error');
+    } finally {
+      setTwoFactorSaving(false);
+    }
+  }
+
+  async function enableTwoFactor() {
+    if (!twoFactorSetup) return;
+    setTwoFactorSaving(true);
+    try {
+      await api.enableTwoFactor({ secret: twoFactorSetup.secret, code: twoFactorCode });
+      onUserChange({ ...currentUser, twoFactorEnabled: true });
+      setTwoFactorSetup(null);
+      setTwoFactorCode('');
+      onNotify('Two-factor authentication enabled.', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to enable two-factor authentication.', 'error');
+    } finally {
+      setTwoFactorSaving(false);
     }
   }
 
@@ -1663,6 +1831,54 @@ function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, ty
           </button>
         </div>
       </form>
+      <div className="two-factor-settings">
+        <div className="two-factor-heading">
+          <div>
+            <h3>Authenticator app</h3>
+            <p>Require a six-digit code when signing in.</p>
+          </div>
+          <span className={currentUser.twoFactorEnabled ? 'two-factor-status enabled' : 'two-factor-status'}>
+            {currentUser.twoFactorEnabled ? <CheckCircle2 size={16} /> : <CircleHelp size={16} />}
+            {currentUser.twoFactorEnabled ? 'Enabled' : 'Not enabled'}
+          </span>
+        </div>
+        {!currentUser.twoFactorEnabled && !twoFactorSetup && (
+          <button className="secondary-button" type="button" disabled={twoFactorSaving} onClick={startTwoFactorSetup}>
+            {twoFactorSaving ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
+            Set up authenticator
+          </button>
+        )}
+        {!currentUser.twoFactorEnabled && twoFactorSetup && (
+          <div className="two-factor-enrollment">
+            <p>Scan this QR code with Google Authenticator, Microsoft Authenticator, Authy, or another TOTP app.</p>
+            <img src={twoFactorSetup.qrCodeDataUrl} alt="Authenticator setup QR code" />
+            <details>
+              <summary>Can’t scan the QR code?</summary>
+              <code>{twoFactorSetup.secret}</code>
+            </details>
+            <label>
+              Enter the six-digit code to confirm
+              <input
+                value={twoFactorCode}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+            </label>
+            <div className="configuration-actions">
+              <button className="primary-button" type="button" disabled={twoFactorSaving || twoFactorCode.length !== 6} onClick={enableTwoFactor}>
+                {twoFactorSaving ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+                Enable 2FA
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setTwoFactorSetup(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {currentUser.twoFactorEnabled && (
+          <p className="help-text">Two-factor authentication is required for every Xtract account.</p>
+        )}
+      </div>
     </section>
   );
 }
@@ -2896,13 +3112,6 @@ function ClassificationScreen({
 
   return (
     <div className="classification-layout">
-      <section className="panel classification-summary">
-        <StatusMetric label="Included Types" value={includedTypes.length} />
-        <StatusMetric label="Trainable" value={trainableTypes.length} />
-        <StatusMetric label="Trained" value={trainedCount} />
-        <StatusMetric label="Sample Files" value={includedFileCount} />
-      </section>
-
       <section className="panel classification-training-panel">
         <div className="panel-heading">
           <div>
@@ -3100,7 +3309,20 @@ function ClassificationScreen({
               <small>Types currently included in classifier training.</small>
             </div>
           </div>
-          <span className="classification-types-count">{includedTypes.length} included</span>
+          <div className="classification-type-counts" aria-label="Document type summary">
+            <span className="classification-types-count included">
+              <strong>{includedTypes.length}</strong> Included
+            </span>
+            <span className="classification-types-count trainable">
+              <strong>{trainableTypes.length}</strong> Trainable
+            </span>
+            <span className="classification-types-count trained">
+              <strong>{trainedCount}</strong> Trained
+            </span>
+            <span className="classification-types-count samples">
+              <strong>{includedFileCount}</strong> Sample files
+            </span>
+          </div>
         </div>
         <div className="classification-table">
           {includedTypes.map((type) => {
@@ -3996,7 +4218,14 @@ function UploadScreen({
   const [documentTypeId, setDocumentTypeId] = useState(availableTypes[0]?._id ?? '');
   const [autoClassify, setAutoClassify] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const trainedTypeCount = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0).length;
+  const totalFileSize = files.reduce((total, file) => total + file.size, 0);
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   useEffect(() => {
     setCategory((current) => current || categories[0] || '');
@@ -4009,10 +4238,11 @@ function UploadScreen({
 
   return (
     <section className="panel upload-panel">
-      <div className="panel-heading">
+      <div className="panel-heading upload-heading">
         <div>
+          <span className="upload-kicker"><Sparkles size={14} /> Intelligent intake</span>
           <h2>Upload Documents</h2>
-          <p>Send new files into the extraction workflow.</p>
+          <p>Drop files here and let Xtract classify, read, and structure them.</p>
         </div>
         <button className="icon-button" title="Refresh upload page" onClick={onRefresh}>
           <RefreshCw size={16} />
@@ -4030,16 +4260,18 @@ function UploadScreen({
           }, autoClassify ? 'Documents classified and processed' : 'Documents uploaded and processed');
         }}
       >
-        <label className="span-2 checkbox-row">
+        <label className="span-2 checkbox-row upload-classification-toggle">
           <input
             type="checkbox"
             checked={autoClassify}
             onChange={(event) => setAutoClassify(event.target.checked)}
           />
+          <span className="upload-toggle-icon"><BrainCircuit size={20} /></span>
           <span>
-            Auto classify with trained samples
-            <small>{trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} available</small>
+            <strong>Auto-classify documents</strong>
+            <small>Match against {trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} automatically</small>
           </span>
+          <span className="upload-recommended">Recommended</span>
         </label>
         {!autoClassify && (
           <>
@@ -4063,13 +4295,32 @@ function UploadScreen({
             </label>
           </>
         )}
-        <label className="file-drop span-2">
-          <Upload size={28} />
-          <span>
+        <label
+          className={`file-drop span-2${draggingFiles ? ' dragging' : ''}${files.length ? ' has-files' : ''}`}
+          onDragEnter={() => setDraggingFiles(true)}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDraggingFiles(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingFiles(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDraggingFiles(false);
+            setFiles(Array.from(event.dataTransfer.files).filter((file) =>
+              file.type === 'application/pdf' || file.type.startsWith('image/'),
+            ));
+          }}
+        >
+          <span className="file-drop-icon"><Upload size={30} /></span>
+          <strong>
             {files.length > 0
               ? `${files.length} file${files.length === 1 ? '' : 's'} selected`
-              : 'Choose PDFs or images for extraction'}
-          </span>
+              : 'Drop your documents here'}
+          </strong>
+          <span>{files.length ? `${formatFileSize(totalFileSize)} ready to upload` : 'or click to browse your computer'}</span>
+          <small>PDF, PNG, JPG, TIFF · Multiple files supported</small>
           <input
             type="file"
             accept="application/pdf,image/*,.tif,.tiff"
@@ -4077,13 +4328,42 @@ function UploadScreen({
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
         </label>
-        <button
-          className="primary-button"
-          disabled={(!autoClassify && !documentTypeId) || (autoClassify && trainedTypeCount === 0) || files.length === 0}
-        >
-          <Upload size={16} />
-          {autoClassify ? 'Classify & Process' : `Upload Document${files.length === 1 ? '' : 's'}`}
-        </button>
+        {files.length > 0 && (
+          <div className="upload-file-list span-2">
+            {files.map((file, index) => (
+              <div className="upload-file-item" key={`${file.name}-${file.size}-${index}`}>
+                <span className="upload-file-type">
+                  {file.type === 'application/pdf' ? <FileText size={18} /> : <FileImage size={18} />}
+                </span>
+                <span>
+                  <strong>{file.name}</strong>
+                  <small>{formatFileSize(file.size)}</small>
+                </span>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title={`Remove ${file.name}`}
+                  onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="upload-submit-row span-2">
+          <span>
+            <ShieldCheck size={16} />
+            Files are processed securely
+          </span>
+          <button
+            className="primary-button upload-submit"
+            disabled={(!autoClassify && !documentTypeId) || (autoClassify && trainedTypeCount === 0) || files.length === 0}
+          >
+            <Upload size={16} />
+            {autoClassify ? 'Classify & Process' : `Upload Document${files.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
       </form>
     </section>
   );
