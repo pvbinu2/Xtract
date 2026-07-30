@@ -29,6 +29,7 @@ export type DocumentType = {
   classifierTrainingError?: string;
   fields: ExtractionField[];
   extractionModel?: string;
+  extractionAiProvider?: 'openai' | 'custom' | 'ollama';
   extractionReasoningEffort?: ReasoningEffort;
   extractionVerification?: boolean;
   finalized: boolean;

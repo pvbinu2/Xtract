@@ -64,6 +64,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - JWT_SECRET=${JWT_SECRET:-xtract-local-dev-secret-change-me-32}
+      - CONFIG_ENCRYPTION_KEY=${CONFIG_ENCRYPTION_KEY:-xtract-local-config-encryption-key-change-me}
       - REALTIME_BROADCAST_SECRET=${REALTIME_BROADCAST_SECRET:-xtract-local-realtime-secret}
       - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:5173,http://127.0.0.1:5173}
 

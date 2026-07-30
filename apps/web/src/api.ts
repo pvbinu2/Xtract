@@ -7,7 +7,14 @@ export type AppConfigPayload = {
   useOcrForDocumentProcessing: boolean;
   documentTextMode: 'ocr' | 'markdown';
   markdownServiceUrl: string;
-  aiProvider: 'openai' | 'ollama';
+  aiProvider: 'openai' | 'custom' | 'ollama';
+  llmEndpoint: string;
+  apiKey: string;
+  apiKeyConfigured?: boolean;
+  openAiApiKey: string;
+  openAiApiKeyConfigured?: boolean;
+  customApiKey: string;
+  customApiKeyConfigured?: boolean;
   ollamaBaseUrl: string;
   ollamaModel: string;
   embeddingProvider: 'openai' | 'ollama';
@@ -168,7 +175,12 @@ export const api = {
     }),
   updateExtractionModel: (
     id: string,
-    payload: { extractionModel: string; extractionReasoningEffort: ReasoningEffort; extractionVerification?: boolean },
+    payload: {
+      extractionModel: string;
+      extractionAiProvider?: 'openai' | 'custom' | 'ollama';
+      extractionReasoningEffort: ReasoningEffort;
+      extractionVerification?: boolean;
+    },
   ) =>
     request<DocumentType>(`/document-types/${id}/extraction-model`, {
       method: 'POST',

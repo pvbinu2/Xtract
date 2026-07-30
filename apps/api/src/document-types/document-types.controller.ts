@@ -61,6 +61,7 @@ export class DocumentTypesController {
     @Param('id') id: string,
     @Body() body: {
       extractionModel?: string;
+      extractionAiProvider?: 'openai' | 'custom' | 'ollama';
       extractionReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       extractionVerification?: boolean;
     },

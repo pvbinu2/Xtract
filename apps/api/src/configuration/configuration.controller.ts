@@ -10,7 +10,7 @@ export class ConfigurationController {
 
   @Get()
   async getConfiguration(): Promise<Configuration> {
-    return this.configurationService.get();
+    return this.configurationService.getPublic();
   }
 
   @Post()
@@ -23,7 +23,11 @@ export class ConfigurationController {
       useOcrForDocumentProcessing?: boolean;
       documentTextMode?: 'ocr' | 'markdown';
       markdownServiceUrl?: string;
-      aiProvider?: 'openai' | 'ollama';
+      aiProvider?: 'openai' | 'custom' | 'ollama';
+      llmEndpoint?: string;
+      apiKey?: string;
+      openAiApiKey?: string;
+      customApiKey?: string;
       ollamaBaseUrl?: string;
       ollamaModel?: string;
       embeddingProvider?: 'openai' | 'ollama';

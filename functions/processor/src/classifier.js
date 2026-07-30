@@ -9,16 +9,16 @@ const { TRAIN_CONTAINER, downloadToTemp, isConfigured: isBlobStorageConfigured, 
 const vectorDatabase = new QdrantVectorDatabase();
 const { extractDocumentText } = require('./documentText');
 
-let openai;
-
-function getOpenAI() {
-  if (!process.env.OPENAI_API_KEY) return undefined;
-  if (!openai) openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  return openai;
+function getOpenAI(options = {}) {
+  if (!options.apiKey) return undefined;
+  return new OpenAI({
+    apiKey: options.apiKey,
+    ...(options.aiProvider === 'custom' && options.llmEndpoint ? { baseURL: options.llmEndpoint } : {}),
+  });
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || 'gpt-5-nano';
+  return 'gpt-5-nano';
 }
 
 function providerName(options = {}) {
@@ -26,11 +26,11 @@ function providerName(options = {}) {
 }
 
 function ollamaModelName(options = {}) {
-  return options.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2';
+  return options.ollamaModel || 'llama3.2';
 }
 
 function ollamaBaseUrl(options = {}) {
-  return (options.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  return (options.ollamaBaseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
 }
 
 function supportsReasoningEffort(model) {
@@ -75,7 +75,7 @@ async function createJsonResponse(content, options = {}, label = 'AI request') {
     };
   }
 
-  const client = getOpenAI();
+  const client = getOpenAI(options);
   if (!client) return undefined;
   const requestConfig = openAIRequestConfig(options);
   const response = await withOpenAIRetry(() => client.responses.create({
@@ -96,8 +96,8 @@ function embeddingProviderName(options = {}) {
 
 function embeddingModelName(options = {}) {
   return embeddingProviderName(options) === 'ollama'
-    ? options.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b'
-    : options.embeddingModel || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+    ? options.ollamaEmbeddingModel || 'qwen3-embedding:4b'
+    : options.embeddingModel || 'text-embedding-3-small';
 }
 
 const modelPricingUsdPerMillion = {
@@ -347,8 +347,8 @@ async function embedText(text, options = {}) {
     };
   }
 
-  const client = getOpenAI();
-  if (!client) throw new Error('OPENAI_API_KEY is required to create classifier embeddings.');
+  const client = getOpenAI(options);
+  if (!client) throw new Error('An API key is required to create classifier embeddings.');
   const response = await withOpenAIRetry(() => client.embeddings.create({
     model,
     input: text || 'empty document',
@@ -454,7 +454,7 @@ async function trainClassifierProfile(documentType, sampleFileName, options = {}
     throw new Error(`Training sample file not found for ${documentType.name}`);
   }
 
-  const embeddingsEnabled = embeddingProviderName(options) === 'ollama' || Boolean(process.env.OPENAI_API_KEY);
+  const embeddingsEnabled = embeddingProviderName(options) === 'ollama' || Boolean(options.apiKey);
   if (embeddingsEnabled) {
     await deleteDocumentTypeVectors(documentType._id);
     await upsertDocumentTypeVectors(documentType, samples, options);
@@ -498,7 +498,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
   let vectorHits = [];
   let embeddingMetrics = emptyMetrics(embeddingModelName(options));
   const needsVectorSearch = classificationMode === 'vector' || classificationMode === 'rag';
-  if (needsVectorSearch && (embeddingProviderName(options) === 'ollama' || process.env.OPENAI_API_KEY)) {
+  if (needsVectorSearch && (embeddingProviderName(options) === 'ollama' || options.apiKey)) {
     try {
       const vectorSearch = await searchDocumentTypeVectors(
         document,
@@ -563,7 +563,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
   if (!llmCandidates.length) {
     throw new Error('RAG classification returned no trained document types. Train the classifier and verify the embedding provider configuration.');
   }
-  if (providerName(options) === 'openai' && !getOpenAI()) {
+  if (providerName(options) !== 'ollama' && !getOpenAI(options)) {
     return {
       ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
       classificationCandidates,

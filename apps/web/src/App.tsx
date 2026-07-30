@@ -542,6 +542,13 @@ function OperationsApp() {
     documentTextMode: 'ocr',
     markdownServiceUrl: '',
     aiProvider: 'openai',
+    llmEndpoint: '',
+    apiKey: '',
+    apiKeyConfigured: false,
+    openAiApiKey: '',
+    openAiApiKeyConfigured: false,
+    customApiKey: '',
+    customApiKeyConfigured: false,
     ollamaBaseUrl: defaultOllamaBaseUrl,
     ollamaModel: defaultOllamaModel,
     embeddingProvider: 'openai',
@@ -569,7 +576,16 @@ function OperationsApp() {
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
         markdownServiceUrl: saved.markdownServiceUrl || '',
-        aiProvider: saved.aiProvider === 'ollama' ? 'ollama' : 'openai',
+        aiProvider: saved.aiProvider === 'custom' || saved.aiProvider === 'ollama'
+          ? saved.aiProvider
+          : 'openai',
+        llmEndpoint: saved.llmEndpoint || '',
+        apiKey: '',
+        apiKeyConfigured: Boolean(saved.apiKeyConfigured),
+        openAiApiKey: '',
+        openAiApiKeyConfigured: Boolean(saved.openAiApiKeyConfigured),
+        customApiKey: '',
+        customApiKeyConfigured: Boolean(saved.customApiKeyConfigured),
         ollamaBaseUrl: saved.ollamaBaseUrl || defaultOllamaBaseUrl,
         ollamaModel: saved.ollamaModel || defaultOllamaModel,
         embeddingProvider: saved.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
@@ -596,7 +612,14 @@ function OperationsApp() {
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
             markdownServiceUrl: parsed.markdownServiceUrl || '',
-            aiProvider: parsed.aiProvider === 'ollama' ? 'ollama' : 'openai',
+            aiProvider: ['openai', 'custom', 'ollama'].includes(parsed.aiProvider) ? parsed.aiProvider : 'openai',
+            llmEndpoint: parsed.llmEndpoint || '',
+            apiKey: '',
+            apiKeyConfigured: Boolean(parsed.apiKeyConfigured),
+            openAiApiKey: '',
+            openAiApiKeyConfigured: Boolean(parsed.openAiApiKeyConfigured),
+            customApiKey: '',
+            customApiKeyConfigured: Boolean(parsed.customApiKeyConfigured),
             ollamaBaseUrl: parsed.ollamaBaseUrl || defaultOllamaBaseUrl,
             ollamaModel: parsed.ollamaModel || defaultOllamaModel,
             embeddingProvider: parsed.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
@@ -2486,6 +2509,7 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
+  const [aiServiceTab, setAiServiceTab] = useState<AiProvider>('openai');
   async function refreshConfig() {
     await onRefresh();
   }
@@ -2509,6 +2533,104 @@ function ConfigurationScreen({
         </div>
       </div>
       <div className="configuration-form">
+        <div className="configuration-section ai expanded">
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Sparkles size={20} /></span>
+              <span>
+                <strong>AI Services</strong>
+                <small>Configure the LLM provider, endpoint, model, and encrypted credentials</small>
+              </span>
+            </span>
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid classification-style-settings">
+            <div className="ai-service-tabs" role="tablist" aria-label="AI services">
+              {([
+                ['openai', 'OpenAI'],
+                ['ollama', 'Ollama'],
+                ['custom', 'Custom'],
+              ] as const).map(([provider, label]) => (
+                <button
+                  key={provider}
+                  type="button"
+                  role="tab"
+                  aria-selected={aiServiceTab === provider}
+                  className={aiServiceTab === provider ? 'active' : ''}
+                  onClick={() => setAiServiceTab(provider)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {aiServiceTab === 'openai' && (
+              <label>
+                <span className="configuration-field-label">
+                  OpenAI API key
+                  {config.openAiApiKeyConfigured && (
+                    <CheckCircle2
+                      className="configuration-configured-icon"
+                      size={17}
+                      aria-label="API key configured"
+                    />
+                  )}
+                </span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={config.openAiApiKeyConfigured ? 'Key configured — enter a new key to replace it' : 'Enter OpenAI API key'}
+                  value={config.openAiApiKey}
+                  onChange={(event) => onConfigChange({ ...config, openAiApiKey: event.target.value })}
+                />
+              </label>
+            )}
+            {aiServiceTab === 'custom' && (
+              <>
+              <label>
+                LLM endpoint
+                <input
+                  type="url"
+                  placeholder="https://llm.example.com/v1"
+                  value={config.llmEndpoint}
+                  onChange={(event) => onConfigChange({ ...config, llmEndpoint: event.target.value })}
+                />
+              </label>
+              <label>
+                <span className="configuration-field-label">
+                  Custom API key
+                  {config.customApiKeyConfigured && (
+                    <CheckCircle2
+                      className="configuration-configured-icon"
+                      size={17}
+                      aria-label="API key configured"
+                    />
+                  )}
+                </span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={config.customApiKeyConfigured ? 'Key configured — enter a new key to replace it' : 'Enter custom API key'}
+                  value={config.customApiKey}
+                  onChange={(event) => onConfigChange({ ...config, customApiKey: event.target.value })}
+                />
+              </label>
+              </>
+            )}
+            {aiServiceTab === 'ollama' && (
+              <label>
+                Ollama endpoint
+                <input
+                  type="url"
+                  value={config.ollamaBaseUrl}
+                  onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
+                />
+              </label>
+            )}
+            <p className="help-text">
+              API keys are encrypted before storage and are never returned to the browser.
+            </p>
+          </div>
+        </div>
         <div className="configuration-section scaling expanded">
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
@@ -2887,10 +3009,11 @@ function ClassificationScreen({
                     onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
                   >
                     <option value="openai">OpenAI</option>
+                    <option value="custom">Custom (OpenAI compatible)</option>
                     <option value="ollama">Self Hosted (Ollama)</option>
                   </select>
                 </label>
-                {config.aiProvider === 'openai' ? (
+                {config.aiProvider !== 'ollama' ? (
                   <OpenAIModelControls
                     model={config.classificationModel || lowCostOpenAIModel}
                     reasoningEffort={config.classificationReasoningEffort || 'low'}
@@ -3152,7 +3275,30 @@ function DocumentTypeManagement({
                 </div>
               </div>
               <div className="model-settings-band">
-              {config.aiProvider === 'openai' ? (
+              <label>
+                AI service
+                <select
+                  value={activeType.extractionAiProvider || 'openai'}
+                  onChange={(event) =>
+                    onRun(async () => {
+                      const extractionAiProvider = event.target.value as NonNullable<DocumentType['extractionAiProvider']>;
+                      const updated = await api.updateExtractionModel(activeType._id, {
+                        extractionAiProvider,
+                        extractionModel: activeType.extractionModel || (extractionAiProvider === 'ollama' ? config.ollamaModel : lowCostOpenAIModel),
+                        extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                        extractionVerification: Boolean(activeType.extractionVerification),
+                      });
+                      onDocumentTypeSaved(updated);
+                      await onRefresh();
+                    }, 'Extraction AI service saved')
+                  }
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="custom">Custom</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </label>
+              {(activeType.extractionAiProvider || 'openai') !== 'ollama' ? (
                 <OpenAIModelControls
                   model={activeType.extractionModel || lowCostOpenAIModel}
                   reasoningEffort={activeType.extractionReasoningEffort || 'low'}
@@ -3160,6 +3306,7 @@ function DocumentTypeManagement({
                     onRun(async () => {
                       const updated = await api.updateExtractionModel(activeType._id, {
                         extractionModel,
+                        extractionAiProvider: activeType.extractionAiProvider || 'openai',
                         extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
                         extractionVerification: Boolean(activeType.extractionVerification),
                       });
@@ -3171,6 +3318,7 @@ function DocumentTypeManagement({
                     onRun(async () => {
                       const updated = await api.updateExtractionModel(activeType._id, {
                         extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                        extractionAiProvider: activeType.extractionAiProvider || 'openai',
                         extractionReasoningEffort,
                         extractionVerification: Boolean(activeType.extractionVerification),
                       });
@@ -3184,8 +3332,20 @@ function DocumentTypeManagement({
                   <label>
                     Model
                     <input
-                      value={config.ollamaModel}
-                      onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                      value={activeType.extractionModel || config.ollamaModel}
+                      onChange={(event) => onDocumentTypeSaved({ ...activeType, extractionModel: event.target.value })}
+                      onBlur={(event) =>
+                        onRun(async () => {
+                          const updated = await api.updateExtractionModel(activeType._id, {
+                            extractionModel: event.target.value,
+                            extractionAiProvider: 'ollama',
+                            extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                            extractionVerification: Boolean(activeType.extractionVerification),
+                          });
+                          onDocumentTypeSaved(updated);
+                          await onRefresh();
+                        }, 'Extraction model saved')
+                      }
                     />
                   </label>
                 </div>
@@ -3214,6 +3374,7 @@ function DocumentTypeManagement({
                   return onRun(async () => {
                     const updated = await api.updateExtractionModel(activeType._id, {
                       extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                      extractionAiProvider: activeType.extractionAiProvider || 'openai',
                       extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
                       extractionVerification,
                     });

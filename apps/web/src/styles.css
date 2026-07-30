@@ -3014,6 +3014,17 @@ textarea {
   display: contents;
 }
 
+.configuration-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.configuration-configured-icon {
+  flex: 0 0 auto;
+  color: #16a34a;
+}
+
 .configuration-card-grid > label,
 .configuration-card-grid > .model-controls > label {
   display: grid;
@@ -3359,6 +3370,34 @@ textarea {
 
 .configuration-section .configuration-card-grid {
   --settings-accent: var(--section-accent);
+}
+
+.ai-service-tabs {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.ai-service-tabs button {
+  flex: 1;
+  min-height: 38px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ai-service-tabs button.active {
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.08);
 }
 
 .classification-style-settings {

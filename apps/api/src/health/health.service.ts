@@ -114,10 +114,15 @@ export class HealthService {
         'ai-provider',
         'Ollama AI provider',
         'AI',
-        `${(configuration.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '')}/api/tags`,
+        `${(configuration.ollamaBaseUrl || '').replace(/\/$/, '')}/api/tags`,
       );
     }
-    return this.openAiCheck('ai-provider', 'OpenAI provider');
+    return this.openAiCheck(
+      'ai-provider',
+      configuration.aiProvider === 'custom' ? 'Custom AI provider' : 'OpenAI provider',
+      (configuration as any).apiKey,
+      configuration.aiProvider === 'custom' ? (configuration as any).llmEndpoint : undefined,
+    );
   }
 
   private embeddingCheck(configuration: Awaited<ReturnType<ConfigurationService['get']>>) {
@@ -126,16 +131,20 @@ export class HealthService {
         'embedding-provider',
         'Ollama embedding provider',
         'AI',
-        `${(configuration.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '')}/api/tags`,
+        `${(configuration.ollamaBaseUrl || '').replace(/\/$/, '')}/api/tags`,
       );
     }
-    return this.openAiCheck('embedding-provider', 'OpenAI embedding provider');
+    return this.openAiCheck(
+      'embedding-provider',
+      'OpenAI-compatible embedding provider',
+      (configuration as any).apiKey,
+      configuration.aiProvider === 'custom' ? (configuration as any).llmEndpoint : undefined,
+    );
   }
 
-  private openAiCheck(id: string, name: string): Promise<HealthCheck> {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return Promise.resolve(this.notConfigured(id, name, 'AI', 'OPENAI_API_KEY is not configured.'));
-    return this.httpCheck(id, name, 'AI', 'https://api.openai.com/v1/models', {
+  private openAiCheck(id: string, name: string, apiKey?: string, endpoint?: string): Promise<HealthCheck> {
+    if (!apiKey) return Promise.resolve(this.notConfigured(id, name, 'AI', 'An API key is not configured.'));
+    return this.httpCheck(id, name, 'AI', `${(endpoint || 'https://api.openai.com/v1').replace(/\/$/, '')}/models`, {
       Authorization: `Bearer ${apiKey}`,
     });
   }

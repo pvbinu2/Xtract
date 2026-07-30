@@ -72,6 +72,9 @@ export class DocumentType {
   @Prop({ default: 'gpt-5-nano' })
   extractionModel!: string;
 
+  @Prop({ default: 'openai' })
+  extractionAiProvider!: 'openai' | 'custom' | 'ollama';
+
   @Prop({ default: 'low' })
   extractionReasoningEffort!: ReasoningEffort;
 

@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { MongoDatabase, ObjectId } = require('@xtract/common');
+const { decryptSecret, MongoDatabase, ObjectId } = require('@xtract/common');
 const { downloadBuffer, downloadToTemp, removeTempFile } = require('./blobStorage');
 
 const database = new MongoDatabase();
@@ -64,18 +64,34 @@ function processingOptionsFor(document, configuration = {}) {
         ? 'markdown'
         : 'ocr';
 
+  const openAiApiKey = decryptSecret(
+    configuration?.encryptedOpenAiApiKey
+      || (configuration?.aiProvider === 'openai' ? configuration?.encryptedApiKey : ''),
+  );
+  const customApiKey = decryptSecret(
+    configuration?.encryptedCustomApiKey
+      || (configuration?.aiProvider === 'custom' ? configuration?.encryptedApiKey : ''),
+  );
+  const aiProvider = ['openai', 'custom', 'ollama'].includes(configuration?.aiProvider)
+    ? configuration.aiProvider
+    : 'openai';
+
   return {
     reprocessOptions,
     forceClassification: reprocessOptions.forceClassification === true,
     useOcrForDocumentProcessing,
     documentTextMode,
     aiOptions: {
-      aiProvider: configuration?.aiProvider === 'ollama' ? 'ollama' : 'openai',
-      ollamaBaseUrl: configuration?.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
-      ollamaModel: configuration?.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2',
+      aiProvider,
+      apiKey: aiProvider === 'custom' ? customApiKey : openAiApiKey,
+      openAiApiKey,
+      customApiKey,
+      llmEndpoint: configuration?.llmEndpoint || '',
+      ollamaBaseUrl: configuration?.ollamaBaseUrl || 'http://127.0.0.1:11434',
+      ollamaModel: configuration?.ollamaModel || 'llama3.2',
       embeddingProvider: configuration?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
-      embeddingModel: configuration?.embeddingModel || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
-      ollamaEmbeddingModel: configuration?.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
+      embeddingModel: configuration?.embeddingModel || 'text-embedding-3-small',
+      ollamaEmbeddingModel: configuration?.ollamaEmbeddingModel || 'qwen3-embedding:4b',
     },
     textOptions: {
       mode: documentTextMode,

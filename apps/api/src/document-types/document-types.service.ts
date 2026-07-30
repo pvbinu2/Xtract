@@ -105,6 +105,7 @@ export class DocumentTypesService {
       prompt: payload.prompt ?? '',
       fields: [],
       extractionModel: 'gpt-5-nano',
+      extractionAiProvider: 'openai',
       extractionReasoningEffort: 'low',
       extractionVerification: false,
       includeInClassification: false,
@@ -213,14 +214,23 @@ export class DocumentTypesService {
 
   async updateExtractionModel(
     id: string,
-    payload: { extractionModel?: string; extractionReasoningEffort?: ReasoningEffort; extractionVerification?: boolean },
+    payload: {
+      extractionModel?: string;
+      extractionAiProvider?: 'openai' | 'custom' | 'ollama';
+      extractionReasoningEffort?: ReasoningEffort;
+      extractionVerification?: boolean;
+    },
   ) {
     const updates: {
       extractionModel: string;
+      extractionAiProvider: 'openai' | 'custom' | 'ollama';
       extractionReasoningEffort: ReasoningEffort;
       extractionVerification?: boolean;
     } = {
       extractionModel: payload.extractionModel || 'gpt-5-nano',
+      extractionAiProvider: ['openai', 'custom', 'ollama'].includes(payload.extractionAiProvider || '')
+        ? payload.extractionAiProvider!
+        : 'openai',
       extractionReasoningEffort: payload.extractionReasoningEffort || 'low',
     };
     if (typeof payload.extractionVerification === 'boolean') {
@@ -250,7 +260,11 @@ export class DocumentTypesService {
 
     const latestSample = docType.sampleFiles.at(-1);
     const configuration = await this.configurationService.get();
-    if (latestSample && (configuration.aiProvider === 'ollama' || process.env.OPENAI_API_KEY)) {
+    const extractionProvider = docType.extractionAiProvider || 'openai';
+    const extractionApiKey = extractionProvider === 'custom'
+      ? (configuration as any).customApiKey
+      : (configuration as any).openAiApiKey;
+    if (latestSample && (extractionProvider === 'ollama' || extractionApiKey)) {
       const samplePath = await this.resolveSamplePath(latestSample);
       try {
         const openAiFields = await inferTemplateWithOpenAI(
@@ -258,13 +272,15 @@ export class DocumentTypesService {
           prompt,
           Boolean(configuration.useOcrForDocumentProcessing),
           {
-            aiProvider: configuration.aiProvider,
+            aiProvider: extractionProvider,
             model: docType.extractionModel,
             reasoningEffort: docType.extractionReasoningEffort,
             documentTextMode: configuration.documentTextMode,
             markdownServiceUrl: configuration.markdownServiceUrl,
             ollamaBaseUrl: configuration.ollamaBaseUrl,
-            ollamaModel: configuration.ollamaModel,
+            ollamaModel: extractionProvider === 'ollama' ? docType.extractionModel : configuration.ollamaModel,
+            apiKey: extractionApiKey,
+            llmEndpoint: (configuration as any).llmEndpoint,
           },
         );
         if (openAiFields?.length) {

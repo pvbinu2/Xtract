@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { MongoDatabase, ObjectId } = require('@xtract/common');
+const { decryptSecret, MongoDatabase, ObjectId } = require('@xtract/common');
 const { resetClassifierVectors, trainClassifierProfile } = require('../classifier');
 
 const database = new MongoDatabase();
@@ -21,8 +21,21 @@ async function trainClassifier(message, context) {
   const db = await database.database();
   const documentTypes = db.collection('documenttypes');
   const configuration = await db.collection('configuration').findOne({});
+  const openAiApiKey = decryptSecret(
+    configuration?.encryptedOpenAiApiKey
+      || (configuration?.aiProvider === 'openai' ? configuration?.encryptedApiKey : ''),
+  );
+  const customApiKey = decryptSecret(
+    configuration?.encryptedCustomApiKey
+      || (configuration?.aiProvider === 'custom' ? configuration?.encryptedApiKey : ''),
+  );
+  const selectedProvider = ['openai', 'custom', 'ollama'].includes(configuration?.aiProvider)
+    ? configuration.aiProvider
+    : 'openai';
   const aiOptions = {
-    aiProvider: configuration?.aiProvider === 'ollama' ? 'ollama' : 'openai',
+    aiProvider: selectedProvider,
+    apiKey: selectedProvider === 'custom' ? customApiKey : openAiApiKey,
+    llmEndpoint: configuration?.llmEndpoint || '',
     ollamaBaseUrl: configuration?.ollamaBaseUrl,
     ollamaModel: configuration?.ollamaModel,
     embeddingProvider: configuration?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
