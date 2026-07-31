@@ -27,6 +27,7 @@ import {
   RotateCcw,
   RefreshCw,
   Save,
+  Search,
   Sun,
   X,
   CircleX,
@@ -67,6 +68,8 @@ type OperationsMetrics = {
 };
 type DocumentStatusFilter = IncomingDocument['status'] | 'in-progress' | '';
 type ReprocessProcessingMode = 'pdf' | 'ocr' | 'markdown';
+type UserStatusFilter = 'all' | 'active' | 'inactive';
+type UserRoleFilter = 'all' | UserRole;
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 const lowCostOpenAIModel = 'gpt-5-nano';
@@ -1895,9 +1898,15 @@ function UserManagementScreen({
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('validator');
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [resetTarget, setResetTarget] = useState<AuthUser | null>(null);
   const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordConfirmation, setResetPasswordConfirmation] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null);
+  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>('all');
+  const [roleFilter, setRoleFilter] = useState<UserRoleFilter>('all');
+  const [userSearch, setUserSearch] = useState('');
 
   async function loadUsers() {
     setLoadingUsers(true);
@@ -1920,16 +1929,28 @@ function UserManagementScreen({
 
   async function createUser(event: FormEvent) {
     event.preventDefault();
+    setCreatingUser(true);
     try {
       await api.createUser({ username: newUsername, password: newPassword, role: newRole });
       setNewUsername('');
       setNewPassword('');
       setNewRole('validator');
+      setShowCreateUser(false);
       onNotify('User created.', 'success');
       await loadUsers();
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to create user.', 'error');
+    } finally {
+      setCreatingUser(false);
     }
+  }
+
+  function closeCreateUser() {
+    if (creatingUser) return;
+    setShowCreateUser(false);
+    setNewUsername('');
+    setNewPassword('');
+    setNewRole('validator');
   }
 
   async function updateUser(user: AuthUser, payload: { role?: UserRole; enabled?: boolean }) {
@@ -1946,12 +1967,14 @@ function UserManagementScreen({
 
   async function confirmResetPassword() {
     if (!resetTarget) return;
+    if (!resetPassword || resetPassword !== resetPasswordConfirmation) return;
     const id = userId(resetTarget);
     if (!id) return;
     try {
       await api.resetUserPassword(id, resetPassword);
       setResetTarget(null);
       setResetPassword('');
+      setResetPasswordConfirmation('');
       onNotify('Password reset.', 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to reset password.', 'error');
@@ -1973,7 +1996,17 @@ function UserManagementScreen({
   }
 
   const enabledUsers = users.filter((user) => user.enabled).length;
+  const inactiveUsers = users.length - enabledUsers;
   const adminUsers = users.filter((user) => user.role === 'admin').length;
+  const validatorUsers = users.length - adminUsers;
+  const normalizedSearch = userSearch.trim().toLowerCase();
+  const filteredUsers = users.filter((user) => {
+    const matchesStatus = statusFilter === 'all'
+      || (statusFilter === 'active' && user.enabled)
+      || (statusFilter === 'inactive' && !user.enabled);
+    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
+    return matchesStatus && matchesRole && (!normalizedSearch || user.username.toLowerCase().includes(normalizedSearch));
+  });
 
   return (
     <div className="user-management">
@@ -1987,46 +2020,15 @@ function UserManagementScreen({
               <p>Add users, assign roles, and control access.</p>
             </div>
           </div>
-          <button className="icon-button" title="Refresh users" onClick={loadUsers}>
-            {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          </button>
-        </div>
-        <div className="user-management-summary">
-          <div><UsersIcon size={17} /><span>Total users<strong>{users.length}</strong></span></div>
-          <div><CheckCircle2 size={17} /><span>Enabled<strong>{enabledUsers}</strong></span></div>
-          <div><ShieldCheck size={17} /><span>Administrators<strong>{adminUsers}</strong></span></div>
-        </div>
-      </section>
-
-      <section className="panel user-create-card">
-        <div className="user-section-heading">
-          <div>
-            <strong>Create User</strong>
-            <small>Set up a new account with its initial role and password.</small>
+          <div className="user-management-actions">
+            <button className="icon-button user-add-button" type="button" title="Add user" aria-label="Add user" onClick={() => setShowCreateUser(true)}>
+              <Plus size={18} />
+            </button>
+            <button className="icon-button" title="Refresh users" onClick={loadUsers}>
+              {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            </button>
           </div>
-          <span><Plus size={17} /></span>
         </div>
-        <form className="user-create-form" onSubmit={createUser}>
-          <label>
-            Username
-            <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
-          </label>
-          <label>
-            Initial password
-            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-          </label>
-          <label>
-            Role
-            <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
-              <option value="validator">Validator</option>
-              <option value="admin">Admin</option>
-            </select>
-          </label>
-          <button className="primary-button" type="submit" disabled={!newUsername || !newPassword}>
-            <Plus size={16} />
-            Add user
-          </button>
-        </form>
       </section>
       <section className="panel user-directory-card">
         <div className="user-directory-heading">
@@ -2034,7 +2036,61 @@ function UserManagementScreen({
             <strong>User Directory</strong>
             <small>Manage account roles, status, passwords, and access.</small>
           </div>
-          <span>{users.length} account{users.length === 1 ? '' : 's'}</span>
+          <span>{filteredUsers.length} of {users.length} account{users.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="user-directory-toolbar">
+          <div className="user-directory-filter-groups">
+            <div className="user-filter-group">
+              <small>Status</small>
+              <div className="user-filter-tabs" role="group" aria-label="Filter users by status">
+                {([
+                  ['all', 'All', users.length],
+                  ['active', 'Active', enabledUsers],
+                  ['inactive', 'Inactive', inactiveUsers],
+                ] as const).map(([value, label, count]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={statusFilter === value ? 'active' : ''}
+                    aria-pressed={statusFilter === value}
+                    onClick={() => setStatusFilter(value)}
+                  >
+                    {label}<span>{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="user-filter-group">
+              <small>Role</small>
+              <div className="user-filter-tabs" role="group" aria-label="Filter users by role">
+                {([
+                  ['all', 'All roles', users.length],
+                  ['admin', 'Admin', adminUsers],
+                  ['validator', 'Validator', validatorUsers],
+                ] as const).map(([value, label, count]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={roleFilter === value ? 'active' : ''}
+                    aria-pressed={roleFilter === value}
+                    onClick={() => setRoleFilter(value)}
+                  >
+                    {label}<span>{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <label className="user-search">
+            <Search size={15} />
+            <input
+              type="search"
+              value={userSearch}
+              placeholder="Search users"
+              aria-label="Search users"
+              onChange={(event) => setUserSearch(event.target.value)}
+            />
+          </label>
         </div>
         <div className="business-review-table user-directory-table">
           <table>
@@ -2043,12 +2099,13 @@ function UserManagementScreen({
                 <th>Username</th>
                 <th>Role</th>
                 <th>Status</th>
+                <th>2FA</th>
                 <th>Created</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => {
+              {filteredUsers.map((user) => {
                 const id = userId(user);
                 const isSelf = id === currentUser.id;
                 return (
@@ -2069,13 +2126,20 @@ function UserManagementScreen({
                         <option value="admin">Admin</option>
                       </select>
                     </td>
-                    <td><span className={user.enabled ? 'user-status enabled' : 'user-status disabled'}>{user.enabled ? 'Enabled' : 'Disabled'}</span></td>
+                    <td><span className={user.enabled ? 'user-status enabled' : 'user-status disabled'}>{user.enabled ? 'Active' : 'Inactive'}</span></td>
+                    <td>
+                      <span className={user.twoFactorEnabled ? 'user-2fa enabled' : 'user-2fa disabled'}>
+                        {user.twoFactorEnabled ? <ShieldCheck size={13} /> : <CircleHelp size={13} />}
+                        {user.twoFactorEnabled ? 'Configured' : 'Not configured'}
+                      </span>
+                    </td>
                     <td>{user.createdAt ? new Date(user.createdAt).toLocaleString() : 'N/A'}</td>
                     <td>
                       <div className="table-actions">
                         <button className="secondary-button compact" type="button" onClick={() => {
                           setResetTarget(user);
                           setResetPassword('');
+                          setResetPasswordConfirmation('');
                         }}>
                           Reset password
                         </button>
@@ -2085,7 +2149,7 @@ function UserManagementScreen({
                           disabled={isSelf}
                           onClick={() => updateUser(user, { enabled: !user.enabled })}
                         >
-                          {user.enabled ? 'Disable' : 'Enable'}
+                          {user.enabled ? 'Deactivate' : 'Activate'}
                         </button>
                         <button
                           className="secondary-button compact danger-outline"
@@ -2102,21 +2166,84 @@ function UserManagementScreen({
               })}
             </tbody>
           </table>
-          {!users.length && <div className="empty-table">{loadingUsers ? 'Loading users.' : 'No users found.'}</div>}
+          {!filteredUsers.length && (
+            <div className="empty-table">
+              {loadingUsers ? 'Loading users.' : users.length ? 'No users match these filters.' : 'No users found.'}
+            </div>
+          )}
         </div>
       </section>
+      {showCreateUser && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+          <form className="confirm-modal user-create-modal" onSubmit={createUser}>
+            <div className="modal-heading">
+              <div>
+                <h2 id="create-user-title">Add new user</h2>
+                <p>Create an account and choose its initial access role.</p>
+              </div>
+              <button className="icon-button" type="button" title="Close" onClick={closeCreateUser} disabled={creatingUser}>
+                <X size={17} />
+              </button>
+            </div>
+            <div className="user-create-form">
+              <label>
+                Username
+                <input autoFocus autoComplete="username" value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
+              </label>
+              <label>
+                Initial password
+                <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              </label>
+              <label>
+                Role
+                <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
+                  <option value="validator">Validator</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button className="secondary-button" type="button" onClick={closeCreateUser} disabled={creatingUser}>Cancel</button>
+              <button className="primary-button" type="submit" disabled={creatingUser || !newUsername.trim() || !newPassword}>
+                {creatingUser ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+                {creatingUser ? 'Adding user…' : 'Add user'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {resetTarget && (
         <ConfirmDialog
           title="Reset Password"
           body={
-            <label>
-              New password for {resetTarget.username}
-              <input type="password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
-            </label>
+            <div className="reset-password-fields">
+              <label>
+                New password for {resetTarget.username}
+                <input type="password" autoComplete="new-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
+              </label>
+              <label>
+                Confirm new password
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  className={resetPasswordConfirmation && resetPassword !== resetPasswordConfirmation ? 'input-error' : ''}
+                  value={resetPasswordConfirmation}
+                  onChange={(event) => setResetPasswordConfirmation(event.target.value)}
+                />
+              </label>
+              {resetPasswordConfirmation && resetPassword !== resetPasswordConfirmation && (
+                <span className="field-error">Passwords do not match.</span>
+              )}
+            </div>
           }
           confirmLabel="Reset"
           confirmIcon={<KeyRound size={16} />}
-          onCancel={() => setResetTarget(null)}
+          confirmDisabled={!resetPassword || resetPassword !== resetPasswordConfirmation}
+          onCancel={() => {
+            setResetTarget(null);
+            setResetPassword('');
+            setResetPasswordConfirmation('');
+          }}
           onConfirm={confirmResetPassword}
         />
       )}
@@ -4758,6 +4885,7 @@ function ConfirmDialog({
   body,
   confirmLabel,
   confirmIcon,
+  confirmDisabled = false,
   isDanger = true,
   onCancel,
   onConfirm,
@@ -4766,6 +4894,7 @@ function ConfirmDialog({
   body: string | JSX.Element;
   confirmLabel: string;
   confirmIcon?: JSX.Element;
+  confirmDisabled?: boolean;
   isDanger?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -4776,7 +4905,7 @@ function ConfirmDialog({
         <div className="modal-heading">
           <div>
             <h2>{title}</h2>
-            <p>{body}</p>
+            {typeof body === 'string' ? <p>{body}</p> : <div className="confirm-dialog-body">{body}</div>}
           </div>
           <button className="icon-button" title="Close" onClick={onCancel}>
             <X size={17} />
@@ -4786,7 +4915,7 @@ function ConfirmDialog({
           <button className="secondary-button" onClick={onCancel}>
             Cancel
           </button>
-          <button className={`primary-button${isDanger ? ' danger-action' : ''}`} onClick={onConfirm}>
+          <button className={`primary-button${isDanger ? ' danger-action' : ''}`} disabled={confirmDisabled} onClick={onConfirm}>
             {confirmIcon || <Trash2 size={16} />}
             {confirmLabel}
           </button>
@@ -5326,7 +5455,11 @@ function ValidationScreen({
           <div className="panel-heading">
             <div>
               <h2>{document.originalName}</h2>
-              <p>{document.category} / {document.documentTypeName}</p>
+              <span className="document-type-capsule validation-document-type-capsule">
+                <span>{document.category}</span>
+                <i>/</i>
+                <strong>{document.documentTypeName}</strong>
+              </span>
               <div className="classification-score-line">
                 <span>Classification score</span>
                 <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
