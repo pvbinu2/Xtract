@@ -17,6 +17,8 @@ export class ConfigurationController {
   async saveConfiguration(
     @Body()
     body: {
+      cachingEnabled?: boolean;
+      configurationCacheTtlSeconds?: number;
       downstreamUrl: string;
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;

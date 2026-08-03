@@ -7,6 +7,17 @@ export const TRIGGER_CONTAINER: string;
 export function encryptSecret(value: string): string;
 export function decryptSecret(value?: string): string;
 
+export class ConfigurationCache<T = Record<string, unknown>> {
+  constructor(options: {
+    loader: () => Promise<T>;
+    ttlMs?: number;
+    logger?: Pick<Console, 'warn'>;
+  });
+  get(): Promise<T>;
+  replace(value: T): T;
+  invalidate(): void;
+}
+
 export class MongoDatabase {
   constructor(options?: { uri?: string; databaseName?: string });
   static resolveUri(): string;

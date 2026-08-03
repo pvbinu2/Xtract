@@ -35,6 +35,7 @@ import {
   Trash2,
   Upload,
   Download,
+  Database,
   FileText,
   FileImage,
   FileSpreadsheet,
@@ -538,6 +539,8 @@ function OperationsApp() {
     filesReady: 0,
   });
   const [config, setConfig] = useState<AppConfig>({
+    cachingEnabled: true,
+    configurationCacheTtlSeconds: 30,
     downstreamUrl: '',
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
@@ -573,6 +576,8 @@ function OperationsApp() {
     try {
       const saved = await api.getConfiguration();
       setConfig({
+        cachingEnabled: saved.cachingEnabled !== false,
+        configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(saved.configurationCacheTtlSeconds) || 30)),
         downstreamUrl: saved.downstreamUrl || '',
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
@@ -609,6 +614,8 @@ function OperationsApp() {
         try {
           const parsed = JSON.parse(storedConfig);
           setConfig({
+            cachingEnabled: parsed.cachingEnabled !== false,
+            configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(parsed.configurationCacheTtlSeconds) || 30)),
             downstreamUrl: parsed.downstreamUrl || '',
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
@@ -3073,6 +3080,60 @@ function ConfigurationScreen({
               <p className="help-text">
                 Limits apply to new queue invocations after saving. Higher AI concurrency may increase model rate-limit errors.
               </p>
+          </div>
+        </div>
+
+        <div className="configuration-section caching expanded">
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Database size={20} /></span>
+              <span>
+                <strong>Caching</strong>
+                <small>Control per-process configuration caching and MongoDB refresh frequency</small>
+              </span>
+            </span>
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body caching-settings">
+            <div className={`caching-card${config.cachingEnabled ? ' enabled' : ''}`}>
+              <label className="caching-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={config.cachingEnabled}
+                  onChange={(event) => onConfigChange({ ...config, cachingEnabled: event.target.checked })}
+                />
+                <span>
+                  <strong>In-memory configuration caching</strong>
+                  <small>
+                    {config.cachingEnabled
+                      ? 'Configuration is cached independently in every API and processor instance.'
+                      : 'Every configuration lookup reads directly from MongoDB.'}
+                  </small>
+                </span>
+                <b>{config.cachingEnabled ? 'On' : 'Off'}</b>
+              </label>
+              <label className="caching-ttl-row">
+                <span>
+                  <strong>Cache TTL</strong>
+                  <small>Each instance reloads configuration from MongoDB after this interval.</small>
+                </span>
+                <span className="caching-ttl-input">
+                  <input
+                    type="number"
+                    min={1}
+                    max={86400}
+                    step={1}
+                    disabled={!config.cachingEnabled}
+                    value={config.configurationCacheTtlSeconds}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(event.target.value) || 1)),
+                    })}
+                  />
+                  <span>seconds</span>
+                </span>
+              </label>
+            </div>
           </div>
         </div>
 

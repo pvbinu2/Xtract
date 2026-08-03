@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { decryptSecret, MongoDatabase, ObjectId } = require('@xtract/common');
 const { resetClassifierVectors, trainClassifierProfile } = require('../classifier');
+const { getConfiguration } = require('../configurationCache');
 
 const database = new MongoDatabase();
 
@@ -20,7 +21,7 @@ async function trainClassifier(message, context) {
 
   const db = await database.database();
   const documentTypes = db.collection('documenttypes');
-  const configuration = await db.collection('configuration').findOne({});
+  const configuration = await getConfiguration();
   const openAiApiKey = decryptSecret(
     configuration?.encryptedOpenAiApiKey
       || (configuration?.aiProvider === 'openai' ? configuration?.encryptedApiKey : ''),

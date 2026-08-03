@@ -1,6 +1,4 @@
-const { MongoDatabase } = require('@xtract/common');
-
-const database = new MongoDatabase();
+const { getConfiguration } = require('./configurationCache');
 
 function positiveInteger(value, fallback, maximum = 16) {
   const parsed = Number(value);
@@ -51,8 +49,7 @@ function createConcurrencyGate(defaultLimit = 1) {
 }
 
 async function configuredLimit(field, environmentName, fallback) {
-  const client = await database.connect();
-  const configuration = await client.db().collection('configuration').findOne({});
+  const configuration = await getConfiguration();
   return positiveInteger(
     configuration?.[field],
     positiveInteger(process.env[environmentName], fallback),
@@ -75,8 +72,7 @@ function withClassificationConcurrency(handler) {
   return async function classificationConcurrencyHandler(...args) {
     let configuration = {};
     try {
-      const client = await database.connect();
-      configuration = await client.db().collection('configuration').findOne({}) || {};
+      configuration = await getConfiguration();
     } catch {
       // Use environment/default limits when configuration cannot be read.
     }

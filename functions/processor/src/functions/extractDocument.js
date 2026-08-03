@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { withExtractionConcurrency } = require('../aiConcurrency');
 const { publishDocumentChanged } = require('../documentEvents');
+const { getConfiguration } = require('../configurationCache');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -449,7 +450,7 @@ async function extractQueuedDocument(message, context) {
   }
   await beginDocumentStage(documents, document._id, 'extracted');
 
-  const configuration = await db.collection('configuration').findOne({});
+  const configuration = await getConfiguration();
   const {
     aiOptions,
     reprocessOptions,

@@ -1,17 +1,32 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { decryptSecret, encryptSecret } from '@xtract/common';
+import { ConfigurationCache, decryptSecret, encryptSecret } from '@xtract/common';
 import { Configuration, ConfigurationDocument } from '../schemas/configuration.schema';
 
 @Injectable()
 export class ConfigurationService {
+  private readonly cache: ConfigurationCache<any>;
+
   constructor(
     @InjectModel(Configuration.name) private readonly configModel: Model<ConfigurationDocument>,
-  ) {}
+  ) {
+    this.cache = new ConfigurationCache({ loader: () => this.loadRaw() });
+  }
+
+  private loadRaw() {
+    return this.configModel
+      .findOne()
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .lean()
+      .exec()
+      .then((config) => config || {});
+  }
 
   private normalize(config: any = {}) {
     const defaults = {
+      cachingEnabled: true,
+      configurationCacheTtlSeconds: 30,
       downstreamUrl: '',
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
@@ -37,6 +52,8 @@ export class ConfigurationService {
     return {
       ...defaults,
       ...config,
+      cachingEnabled: config?.cachingEnabled !== false,
+      configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(config?.configurationCacheTtlSeconds) || 30)),
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
       markdownServiceUrl: config?.markdownServiceUrl || '',
       aiProvider: ['openai', 'custom', 'ollama'].includes(config?.aiProvider) ? config.aiProvider : 'openai',
@@ -60,11 +77,7 @@ export class ConfigurationService {
   }
 
   async get(): Promise<Configuration> {
-    const config: any = await this.configModel
-      .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
-      .lean()
-      .exec();
+    const config: any = await this.cache.get();
     const normalized: any = this.normalize(config);
     const legacyKey = config?.encryptedApiKey ? decryptSecret(config.encryptedApiKey) : '';
     const openAiApiKey = config?.encryptedOpenAiApiKey
@@ -101,6 +114,8 @@ export class ConfigurationService {
   }
 
   async save(config: {
+    cachingEnabled?: boolean;
+    configurationCacheTtlSeconds?: number;
     downstreamUrl: string;
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
@@ -126,6 +141,8 @@ export class ConfigurationService {
     llmClassificationConcurrency?: number;
     extractionConcurrency?: number;
   }): Promise<Configuration> {
+    const cachingEnabled = config.cachingEnabled !== false;
+    const configurationCacheTtlSeconds = Math.min(86400, Math.max(1, Number(config.configurationCacheTtlSeconds) || 30));
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
     const aiProvider = ['openai', 'custom', 'ollama'].includes(config.aiProvider || '')
       ? config.aiProvider
@@ -158,11 +175,13 @@ export class ConfigurationService {
       customApiKey: _plainTextCustomApiKey,
       ...safeConfig
     } = config;
-    await this.configModel
+    const updated: any = await this.configModel
       .findOneAndUpdate(
         {},
         {
           ...safeConfig,
+          cachingEnabled,
+          configurationCacheTtlSeconds,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           documentTextMode,
@@ -191,7 +210,10 @@ export class ConfigurationService {
           setDefaultsOnInsert: true,
         },
       )
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .lean()
       .exec();
+    this.cache.replace(updated || {});
     return this.getPublic();
   }
 }

@@ -16,6 +16,7 @@ const {
 } = require('../documentProcessingCommon');
 const { extractDocumentContent } = require('../documentText');
 const { publishDocumentChanged } = require('../documentEvents');
+const { getConfiguration } = require('../configurationCache');
 const { imageBufferToPdf, isImageDocument } = require('../imageToPdf');
 const {
   PROCESSING_CONTAINER,
@@ -134,7 +135,7 @@ async function prepareDocumentText(message, context) {
       }
     }
 
-    const configuration = await db.collection('configuration').findOne({});
+    const configuration = await getConfiguration();
     const { documentTextMode, textOptions } = processingOptionsFor(document, configuration);
     localFilePath = await resolveDocumentFile(document);
     const content = await extractDocumentContent(localFilePath, undefined, {

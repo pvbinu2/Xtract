@@ -7,6 +7,12 @@ export type ClassificationMode = 'vector' | 'llm' | 'rag';
 
 @Schema({ collection: 'configuration' })
 export class Configuration {
+  @Prop({ default: true })
+  cachingEnabled!: boolean;
+
+  @Prop({ default: 30, min: 1, max: 86400 })
+  configurationCacheTtlSeconds!: number;
+
   @Prop({ required: true })
   downstreamUrl!: string;
 

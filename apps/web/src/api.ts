@@ -1,6 +1,8 @@
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
 
 export type AppConfigPayload = {
+  cachingEnabled: boolean;
+  configurationCacheTtlSeconds: number;
   downstreamUrl: string;
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
