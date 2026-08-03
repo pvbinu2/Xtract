@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { decryptSecret, encryptSecret } from '@xtract/common';
 import { Configuration, ConfigurationDocument } from '../schemas/configuration.schema';
 
 @Injectable()
@@ -9,8 +10,7 @@ export class ConfigurationService {
     @InjectModel(Configuration.name) private readonly configModel: Model<ConfigurationDocument>,
   ) {}
 
-  async get(): Promise<Configuration> {
-    const config = await this.configModel.findOne().lean().exec();
+  private normalize(config: any = {}) {
     const defaults = {
       downstreamUrl: '',
       deleteAfterDownstream: false,
@@ -19,11 +19,12 @@ export class ConfigurationService {
       documentTextMode: 'ocr',
       markdownServiceUrl: process.env.DOCLING_MARKDOWN_SERVICE_URL || '',
       aiProvider: 'openai',
-      ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
-      ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2',
+      llmEndpoint: '',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaModel: 'llama3.2',
       embeddingProvider: 'openai',
-      embeddingModel: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
-      ollamaEmbeddingModel: process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
+      embeddingModel: 'text-embedding-3-small',
+      ollamaEmbeddingModel: 'qwen3-embedding:4b',
       classificationModel: 'gpt-5-nano',
       classificationReasoningEffort: 'low',
       classificationMode: 'vector',
@@ -38,7 +39,8 @@ export class ConfigurationService {
       ...config,
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
       markdownServiceUrl: config?.markdownServiceUrl || '',
-      aiProvider: config?.aiProvider === 'ollama' ? 'ollama' : 'openai',
+      aiProvider: ['openai', 'custom', 'ollama'].includes(config?.aiProvider) ? config.aiProvider : 'openai',
+      llmEndpoint: config?.llmEndpoint || '',
       ollamaBaseUrl: config?.ollamaBaseUrl || defaults.ollamaBaseUrl,
       ollamaModel: config?.ollamaModel || defaults.ollamaModel,
       embeddingProvider: config?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
@@ -54,6 +56,47 @@ export class ConfigurationService {
       vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(config?.vectorClassificationConcurrency) || defaults.vectorClassificationConcurrency)),
       llmClassificationConcurrency: Math.min(16, Math.max(1, Number(config?.llmClassificationConcurrency) || defaults.llmClassificationConcurrency)),
       extractionConcurrency: Math.min(16, Math.max(1, Number(config?.extractionConcurrency) || defaults.extractionConcurrency)),
+    };
+  }
+
+  async get(): Promise<Configuration> {
+    const config: any = await this.configModel
+      .findOne()
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .lean()
+      .exec();
+    const normalized: any = this.normalize(config);
+    const legacyKey = config?.encryptedApiKey ? decryptSecret(config.encryptedApiKey) : '';
+    const openAiApiKey = config?.encryptedOpenAiApiKey
+      ? decryptSecret(config.encryptedOpenAiApiKey)
+      : config?.aiProvider === 'openai' ? legacyKey : '';
+    const customApiKey = config?.encryptedCustomApiKey
+      ? decryptSecret(config.encryptedCustomApiKey)
+      : config?.aiProvider === 'custom' ? legacyKey : '';
+    return {
+      ...normalized,
+      openAiApiKey,
+      customApiKey,
+      apiKey: normalized.aiProvider === 'custom' ? customApiKey : openAiApiKey,
+      openAiApiKeyConfigured: Boolean(openAiApiKey),
+      customApiKeyConfigured: Boolean(customApiKey),
+      encryptedApiKey: undefined,
+      encryptedOpenAiApiKey: undefined,
+      encryptedCustomApiKey: undefined,
+    } as Configuration;
+  }
+
+  async getPublic(): Promise<Configuration> {
+    const runtime: any = await this.get();
+    const { apiKey, openAiApiKey, customApiKey, ...publicConfig } = runtime;
+    return {
+      ...publicConfig,
+      apiKey: '',
+      openAiApiKey: '',
+      customApiKey: '',
+      apiKeyConfigured: runtime.aiProvider === 'custom'
+        ? Boolean(runtime.customApiKeyConfigured)
+        : Boolean(runtime.openAiApiKeyConfigured),
     } as Configuration;
   }
 
@@ -64,7 +107,11 @@ export class ConfigurationService {
     useOcrForDocumentProcessing?: boolean;
     documentTextMode?: 'ocr' | 'markdown';
     markdownServiceUrl?: string;
-    aiProvider?: 'openai' | 'ollama';
+    aiProvider?: 'openai' | 'custom' | 'ollama';
+    llmEndpoint?: string;
+    apiKey?: string;
+    openAiApiKey?: string;
+    customApiKey?: string;
     ollamaBaseUrl?: string;
     ollamaModel?: string;
     embeddingProvider?: 'openai' | 'ollama';
@@ -80,7 +127,9 @@ export class ConfigurationService {
     extractionConcurrency?: number;
   }): Promise<Configuration> {
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
-    const aiProvider = config.aiProvider === 'ollama' ? 'ollama' : 'openai';
+    const aiProvider = ['openai', 'custom', 'ollama'].includes(config.aiProvider || '')
+      ? config.aiProvider
+      : 'openai';
     const embeddingProvider = config.embeddingProvider === 'ollama' ? 'ollama' : 'openai';
     const classificationMode = ['vector', 'llm', 'rag'].includes(config.classificationMode || '')
       ? config.classificationMode
@@ -90,21 +139,43 @@ export class ConfigurationService {
     const vectorClassificationConcurrency = Math.min(16, Math.max(1, Number(config.vectorClassificationConcurrency) || 4));
     const llmClassificationConcurrency = Math.min(16, Math.max(1, Number(config.llmClassificationConcurrency) || 1));
     const extractionConcurrency = Math.min(16, Math.max(1, Number(config.extractionConcurrency) || 1));
-    const updated = await this.configModel
+    const existing: any = await this.configModel
+      .findOne()
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .lean()
+      .exec();
+    const encryptedOpenAiApiKey = config.openAiApiKey?.trim()
+      ? encryptSecret(config.openAiApiKey.trim())
+      : existing?.encryptedOpenAiApiKey
+        || (existing?.aiProvider === 'openai' ? existing?.encryptedApiKey : '');
+    const encryptedCustomApiKey = config.customApiKey?.trim()
+      ? encryptSecret(config.customApiKey.trim())
+      : existing?.encryptedCustomApiKey
+        || (existing?.aiProvider === 'custom' ? existing?.encryptedApiKey : '');
+    const {
+      apiKey: _plainTextApiKey,
+      openAiApiKey: _plainTextOpenAiApiKey,
+      customApiKey: _plainTextCustomApiKey,
+      ...safeConfig
+    } = config;
+    await this.configModel
       .findOneAndUpdate(
         {},
         {
-          ...config,
+          ...safeConfig,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           documentTextMode,
           markdownServiceUrl: config.markdownServiceUrl || '',
           aiProvider,
-          ollamaBaseUrl: config.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
-          ollamaModel: config.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2',
+          llmEndpoint: config.llmEndpoint?.trim() || '',
+          encryptedOpenAiApiKey,
+          encryptedCustomApiKey,
+          ollamaBaseUrl: config.ollamaBaseUrl || 'http://127.0.0.1:11434',
+          ollamaModel: config.ollamaModel || 'llama3.2',
           embeddingProvider,
-          embeddingModel: config.embeddingModel || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
-          ollamaEmbeddingModel: config.ollamaEmbeddingModel || process.env.OLLAMA_EMBEDDING_MODEL || 'qwen3-embedding:4b',
+          embeddingModel: config.embeddingModel || 'text-embedding-3-small',
+          ollamaEmbeddingModel: config.ollamaEmbeddingModel || 'qwen3-embedding:4b',
           classificationModel: config.classificationModel || 'gpt-5-nano',
           classificationReasoningEffort: config.classificationReasoningEffort || 'low',
           classificationMode,
@@ -120,8 +191,7 @@ export class ConfigurationService {
           setDefaultsOnInsert: true,
         },
       )
-      .lean()
       .exec();
-    return updated;
+    return this.getPublic();
   }
 }

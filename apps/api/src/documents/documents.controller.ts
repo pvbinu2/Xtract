@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Res, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { DocumentsService } from './documents.service';
 import { Roles } from '../auth/auth.decorators';
+import type { AuthenticatedRequest } from '../auth/auth.guard';
 
 const storage = memoryStorage();
 
@@ -113,14 +114,15 @@ export class DocumentsController {
   validate(
     @Param('id') id: string,
     @Body() body: { extractedData: any[] },
+    @Req() request: AuthenticatedRequest,
   ) {
-    return this.service.validate(id, body.extractedData);
+    return this.service.validate(id, body.extractedData, request.user!);
   }
 
   @Post(':id/reject')
   @Roles('admin', 'validator')
-  reject(@Param('id') id: string) {
-    return this.service.reject(id);
+  reject(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.service.reject(id, request.user!);
   }
 
   @Post(':id/reprocess')

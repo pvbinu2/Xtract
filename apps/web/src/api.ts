@@ -7,7 +7,14 @@ export type AppConfigPayload = {
   useOcrForDocumentProcessing: boolean;
   documentTextMode: 'ocr' | 'markdown';
   markdownServiceUrl: string;
-  aiProvider: 'openai' | 'ollama';
+  aiProvider: 'openai' | 'custom' | 'ollama';
+  llmEndpoint: string;
+  apiKey: string;
+  apiKeyConfigured?: boolean;
+  openAiApiKey: string;
+  openAiApiKeyConfigured?: boolean;
+  customApiKey: string;
+  customApiKeyConfigured?: boolean;
   ollamaBaseUrl: string;
   ollamaModel: string;
   embeddingProvider: 'openai' | 'ollama';
@@ -64,6 +71,12 @@ export function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+export type LoginSession = { token: string; user: AuthUser };
+export type LoginResult =
+  | LoginSession
+  | { requiresTwoFactor: true; twoFactorToken: string }
+  | { requiresTwoFactorSetup: true; twoFactorSetupToken: string };
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
   const token = authToken();
@@ -90,7 +103,25 @@ async function requestFile(path: string) {
 
 export const api = {
   login: (payload: { username: string; password: string }) =>
-    request<{ token: string; user: AuthUser }>('/auth/login', {
+    request<LoginResult>('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  verifyTwoFactorLogin: (payload: { twoFactorToken: string; code: string }) =>
+    request<LoginSession>('/auth/two-factor/verify-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  beginRequiredTwoFactorSetup: (twoFactorSetupToken: string) =>
+    request<{ secret: string; qrCodeDataUrl: string }>('/auth/two-factor/required-setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ twoFactorSetupToken }),
+    }),
+  completeRequiredTwoFactorSetup: (payload: { twoFactorSetupToken: string; secret: string; code: string }) =>
+    request<LoginSession>('/auth/two-factor/required-setup/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -99,6 +130,14 @@ export const api = {
   getHealth: () => request<HealthCheckResult>('/health'),
   changePassword: (payload: { currentPassword: string; newPassword: string }) =>
     request<{ changed: boolean }>('/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  beginTwoFactorSetup: () =>
+    request<{ secret: string; qrCodeDataUrl: string }>('/auth/two-factor/setup', { method: 'POST' }),
+  enableTwoFactor: (payload: { secret: string; code: string }) =>
+    request<{ enabled: true }>('/auth/two-factor/enable', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -168,7 +207,12 @@ export const api = {
     }),
   updateExtractionModel: (
     id: string,
-    payload: { extractionModel: string; extractionReasoningEffort: ReasoningEffort; extractionVerification?: boolean },
+    payload: {
+      extractionModel: string;
+      extractionAiProvider?: 'openai' | 'custom' | 'ollama';
+      extractionReasoningEffort: ReasoningEffort;
+      extractionVerification?: boolean;
+    },
   ) =>
     request<DocumentType>(`/document-types/${id}/extraction-model`, {
       method: 'POST',

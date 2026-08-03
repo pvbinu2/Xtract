@@ -29,6 +29,7 @@ export type DocumentType = {
   classifierTrainingError?: string;
   fields: ExtractionField[];
   extractionModel?: string;
+  extractionAiProvider?: 'openai' | 'custom' | 'ollama';
   extractionReasoningEffort?: ReasoningEffort;
   extractionVerification?: boolean;
   finalized: boolean;
@@ -90,6 +91,18 @@ export type IncomingDocument = {
     | 'processing';
   revision?: number;
   extractedData: ExtractedValue[];
+  validatedBy?: {
+    userId: string;
+    username: string;
+    role: UserRole;
+  };
+  validatedAt?: string;
+  rejectedBy?: {
+    userId: string;
+    username: string;
+    role: UserRole;
+  };
+  rejectedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -142,6 +155,7 @@ export type AuthUser = {
   role: UserRole;
   preferredCurrency?: DisplayCurrency;
   enabled?: boolean;
+  twoFactorEnabled?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };

@@ -159,7 +159,9 @@ This is useful for misclassified documents, schema changes, and manual correctio
 - Node.js 22+
 - npm
 - Docker Desktop or another Docker Compose-compatible runtime
-- OpenAI API key for real AI extraction and classification
+- An OpenAI or OpenAI-compatible API key for real AI extraction and classification
+
+Set `CONFIG_ENCRYPTION_KEY` to a stable, deployment-specific secret before saving AI credentials. Xtract uses it for AES-256-GCM encryption of API keys stored in MongoDB; changing it later prevents existing credentials from being decrypted.
 
 ### Install Dependencies
 
@@ -204,7 +206,6 @@ cp apps/api/.env.example apps/api/.env
 Set the required values:
 
 ```bash
-OPENAI_API_KEY=sk-your-key
 OPENAI_MODEL=gpt-4o-mini
 AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=...;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;
 QDRANT_URL=http://127.0.0.1:6333
@@ -286,7 +287,7 @@ http://docling-markdown:7072/api/extract-markdown
 
 ### Runtime Notes
 
-- With `OPENAI_API_KEY` present, uploads use Azure Blob Storage, template generation and extraction use OpenAI, and classifier training stores embeddings in Qdrant.
+- With an AI API key saved under **Configuration → AI Services**, template generation and extraction use the selected provider, and classifier training stores embeddings in Qdrant.
 - When using Ollama from Docker Compose, set the app configuration's Ollama base URL to `http://host.docker.internal:11434`. The `xtract-apps` service also defaults `OLLAMA_MODEL=llama3.2` and `OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b`.
 - If no OpenAI key is configured, the app falls back to deterministic mock values for local UI testing.
 - Classification mode is configured in the application: **Vector** selects Qdrant's top result, **LLM** sends all eligible document types to the model, and **RAG** sends only the configured top-K vector-retrieved types to the model.

@@ -13,8 +13,11 @@ export type AuthenticatedRequest = Request & {
     username: string;
     role: UserRole;
     preferredCurrency: PreferredCurrency;
+    twoFactorEnabled: boolean;
   };
 };
+
+export type AuthenticatedUser = NonNullable<AuthenticatedRequest['user']>;
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -34,9 +37,14 @@ export class AuthGuard implements CanActivate {
     const token = this.tokenFromRequest(request);
     if (!token) throw new UnauthorizedException('Login is required.');
 
-    let payload: { sub?: string; username?: string; role?: UserRole };
+    let payload: { sub?: string; username?: string; role?: UserRole; twoFactorVerified?: boolean };
     try {
-      payload = verify(token, this.jwtSecret()) as { sub?: string; username?: string; role?: UserRole };
+      payload = verify(token, this.jwtSecret()) as {
+        sub?: string;
+        username?: string;
+        role?: UserRole;
+        twoFactorVerified?: boolean;
+      };
     } catch {
       throw new UnauthorizedException('Session expired. Please log in again.');
     }
@@ -44,9 +52,12 @@ export class AuthGuard implements CanActivate {
     if (!payload.sub || !Types.ObjectId.isValid(payload.sub)) {
       throw new UnauthorizedException('Invalid session.');
     }
+    if (!payload.twoFactorVerified) {
+      throw new UnauthorizedException('Two-factor authentication is required. Please log in again.');
+    }
 
     const user = await this.userModel.findById(payload.sub).lean().exec();
-    if (!user || !user.enabled) {
+    if (!user || !user.enabled || !user.twoFactorEnabled) {
       throw new UnauthorizedException('User is disabled or unavailable.');
     }
 
@@ -55,6 +66,7 @@ export class AuthGuard implements CanActivate {
       username: user.username,
       role: user.role,
       preferredCurrency: user.preferredCurrency || 'USD',
+      twoFactorEnabled: Boolean(user.twoFactorEnabled),
     };
 
     const roles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [

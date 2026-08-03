@@ -27,6 +27,7 @@ import {
   RotateCcw,
   RefreshCw,
   Save,
+  Search,
   Sun,
   X,
   CircleX,
@@ -67,6 +68,8 @@ type OperationsMetrics = {
 };
 type DocumentStatusFilter = IncomingDocument['status'] | 'in-progress' | '';
 type ReprocessProcessingMode = 'pdf' | 'ocr' | 'markdown';
+type UserStatusFilter = 'all' | 'active' | 'inactive';
+type UserRoleFilter = 'all' | UserRole;
 
 const fieldTypes: FieldType[] = ['string', 'number', 'date', 'currency', 'boolean', 'table'];
 const lowCostOpenAIModel = 'gpt-5-nano';
@@ -542,6 +545,13 @@ function OperationsApp() {
     documentTextMode: 'ocr',
     markdownServiceUrl: '',
     aiProvider: 'openai',
+    llmEndpoint: '',
+    apiKey: '',
+    apiKeyConfigured: false,
+    openAiApiKey: '',
+    openAiApiKeyConfigured: false,
+    customApiKey: '',
+    customApiKeyConfigured: false,
     ollamaBaseUrl: defaultOllamaBaseUrl,
     ollamaModel: defaultOllamaModel,
     embeddingProvider: 'openai',
@@ -569,7 +579,16 @@ function OperationsApp() {
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
         markdownServiceUrl: saved.markdownServiceUrl || '',
-        aiProvider: saved.aiProvider === 'ollama' ? 'ollama' : 'openai',
+        aiProvider: saved.aiProvider === 'custom' || saved.aiProvider === 'ollama'
+          ? saved.aiProvider
+          : 'openai',
+        llmEndpoint: saved.llmEndpoint || '',
+        apiKey: '',
+        apiKeyConfigured: Boolean(saved.apiKeyConfigured),
+        openAiApiKey: '',
+        openAiApiKeyConfigured: Boolean(saved.openAiApiKeyConfigured),
+        customApiKey: '',
+        customApiKeyConfigured: Boolean(saved.customApiKeyConfigured),
         ollamaBaseUrl: saved.ollamaBaseUrl || defaultOllamaBaseUrl,
         ollamaModel: saved.ollamaModel || defaultOllamaModel,
         embeddingProvider: saved.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
@@ -596,7 +615,14 @@ function OperationsApp() {
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
             markdownServiceUrl: parsed.markdownServiceUrl || '',
-            aiProvider: parsed.aiProvider === 'ollama' ? 'ollama' : 'openai',
+            aiProvider: ['openai', 'custom', 'ollama'].includes(parsed.aiProvider) ? parsed.aiProvider : 'openai',
+            llmEndpoint: parsed.llmEndpoint || '',
+            apiKey: '',
+            apiKeyConfigured: Boolean(parsed.apiKeyConfigured),
+            openAiApiKey: '',
+            openAiApiKeyConfigured: Boolean(parsed.openAiApiKeyConfigured),
+            customApiKey: '',
+            customApiKeyConfigured: Boolean(parsed.customApiKeyConfigured),
             ollamaBaseUrl: parsed.ollamaBaseUrl || defaultOllamaBaseUrl,
             ollamaModel: parsed.ollamaModel || defaultOllamaModel,
             embeddingProvider: parsed.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
@@ -952,12 +978,26 @@ function OperationsApp() {
     }
   }
 
-  async function handleLogin(username: string, password: string) {
-    const session = await api.login({ username, password });
+  function acceptSession(session: { token: string; user: AuthUser }) {
     saveAuthToken(session.token);
     setCurrentUser(session.user);
     setDisplayCurrency(normalizeDisplayCurrency(session.user.preferredCurrency));
     setView('documents');
+  }
+
+  async function handleLogin(username: string, password: string) {
+    const result = await api.login({ username, password });
+    if ('requiresTwoFactor' in result || 'requiresTwoFactorSetup' in result) return result;
+    acceptSession(result);
+    return undefined;
+  }
+
+  async function handleTwoFactorLogin(twoFactorToken: string, code: string) {
+    acceptSession(await api.verifyTwoFactorLogin({ twoFactorToken, code }));
+  }
+
+  async function handleRequiredTwoFactorSetup(twoFactorSetupToken: string, secret: string, code: string) {
+    acceptSession(await api.completeRequiredTwoFactorSetup({ twoFactorSetupToken, secret, code }));
   }
 
   async function updateDisplayCurrency(currency: DisplayCurrency) {
@@ -1032,7 +1072,13 @@ function OperationsApp() {
   }
 
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        onVerifyTwoFactor={handleTwoFactorLogin}
+        onCompleteTwoFactorSetup={handleRequiredTwoFactorSetup}
+      />
+    );
   }
 
   return (
@@ -1205,7 +1251,11 @@ function OperationsApp() {
           <HealthDashboard onNotify={showToast} />
         )}
         {!selectedPageLoading && view === 'password-reset' && (
-          <PasswordResetScreen onNotify={showToast} />
+          <PasswordResetScreen
+            currentUser={currentUser}
+            onUserChange={setCurrentUser}
+            onNotify={showToast}
+          />
         )}
         {!selectedPageLoading && view === 'validation' && (
           <ValidationScreen
@@ -1515,10 +1565,32 @@ function MarketingSite() {
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
+function LoginScreen({
+  onLogin,
+  onVerifyTwoFactor,
+  onCompleteTwoFactorSetup,
+}: {
+  onLogin: (
+    username: string,
+    password: string,
+  ) => Promise<
+    | { requiresTwoFactor: true; twoFactorToken: string }
+    | { requiresTwoFactorSetup: true; twoFactorSetupToken: string }
+    | undefined
+  >;
+  onVerifyTwoFactor: (twoFactorToken: string, code: string) => Promise<void>;
+  onCompleteTwoFactorSetup: (twoFactorSetupToken: string, secret: string, code: string) => Promise<void>;
+}) {
   const rememberedUsername = localStorage.getItem('xtract-remembered-username') || '';
   const [username, setUsername] = useState(rememberedUsername);
   const [password, setPassword] = useState('');
+  const [authenticationCode, setAuthenticationCode] = useState('');
+  const [twoFactorToken, setTwoFactorToken] = useState('');
+  const [requiredSetup, setRequiredSetup] = useState<{
+    token: string;
+    secret: string;
+    qrCodeDataUrl: string;
+  } | null>(null);
   const [rememberMe, setRememberMe] = useState(Boolean(rememberedUsername));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -1528,7 +1600,28 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
     setSubmitting(true);
     setError('');
     try {
-      await onLogin(username, password);
+      if (requiredSetup) {
+        await onCompleteTwoFactorSetup(requiredSetup.token, requiredSetup.secret, authenticationCode);
+      } else if (twoFactorToken) {
+        await onVerifyTwoFactor(twoFactorToken, authenticationCode);
+      } else {
+        const result = await onLogin(username, password);
+        if (result && 'requiresTwoFactor' in result) {
+          setTwoFactorToken(result.twoFactorToken);
+          setPassword('');
+          return;
+        }
+        if (result && 'requiresTwoFactorSetup' in result) {
+          const setup = await api.beginRequiredTwoFactorSetup(result.twoFactorSetupToken);
+          setRequiredSetup({
+            token: result.twoFactorSetupToken,
+            secret: setup.secret,
+            qrCodeDataUrl: setup.qrCodeDataUrl,
+          });
+          setPassword('');
+          return;
+        }
+      }
       if (rememberMe) {
         localStorage.setItem('xtract-remembered-username', username.trim());
       } else {
@@ -1547,39 +1640,112 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
         <img src="/icon-192.png" alt="" />
         <div>
           <h1>Sign in to Xtract</h1>
-          <p>Use your assigned username and password.</p>
+          <p>
+            {requiredSetup
+              ? 'Two-factor authentication is required. Register an authenticator app to continue.'
+              : twoFactorToken
+                ? 'Enter the code from your authenticator app.'
+                : 'Use your assigned username and password.'}
+          </p>
         </div>
-        <label>
-          Username
-          <input value={username} autoFocus onChange={(event) => setUsername(event.target.value)} />
-        </label>
-        <label>
-          Password
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </label>
-        <label className="checkbox-row auth-remember">
-          <input
-            type="checkbox"
-            checked={rememberMe}
-            onChange={(event) => setRememberMe(event.target.checked)}
-          />
-          <span>Remember me</span>
-        </label>
+        {requiredSetup ? (
+          <div className="required-two-factor-setup">
+            <p>Scan this QR code with your authenticator app.</p>
+            <img src={requiredSetup.qrCodeDataUrl} alt="Authenticator setup QR code" />
+            <details>
+              <summary>Can’t scan the QR code?</summary>
+              <code>{requiredSetup.secret}</code>
+            </details>
+            <label>
+              Authentication code
+              <input
+                value={authenticationCode}
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                pattern="[0-9]{6}"
+                onChange={(event) => setAuthenticationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+            </label>
+          </div>
+        ) : twoFactorToken ? (
+          <label>
+            Authentication code
+            <input
+              value={authenticationCode}
+              autoFocus
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              pattern="[0-9]{6}"
+              onChange={(event) => setAuthenticationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+            />
+          </label>
+        ) : (
+          <>
+            <label>
+              Username
+              <input value={username} autoFocus onChange={(event) => setUsername(event.target.value)} />
+            </label>
+            <label>
+              Password
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            </label>
+            <label className="checkbox-row auth-remember">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+              />
+              <span>Remember me</span>
+            </label>
+          </>
+        )}
         {error && <div className="auth-error">{error}</div>}
-        <button className="primary-button" type="submit" disabled={submitting || !username || !password}>
+        <button
+          className="primary-button"
+          type="submit"
+          disabled={submitting || (twoFactorToken || requiredSetup ? authenticationCode.length !== 6 : !username || !password)}
+        >
           {submitting ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
-          Login
+          {requiredSetup ? 'Register and continue' : twoFactorToken ? 'Verify code' : 'Login'}
         </button>
+        {(twoFactorToken || requiredSetup) && (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              setTwoFactorToken('');
+              setRequiredSetup(null);
+              setAuthenticationCode('');
+              setError('');
+            }}
+          >
+            Back to login
+          </button>
+        )}
       </form>
     </main>
   );
 }
 
-function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+function PasswordResetScreen({
+  currentUser,
+  onUserChange,
+  onNotify,
+}: {
+  currentUser: AuthUser;
+  onUserChange: (user: AuthUser) => void;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  const [twoFactorSetup, setTwoFactorSetup] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorSaving, setTwoFactorSaving] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -1598,6 +1764,34 @@ function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, ty
       onNotify(error instanceof Error ? error.message : 'Failed to change password.', 'error');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function startTwoFactorSetup() {
+    setTwoFactorSaving(true);
+    try {
+      setTwoFactorSetup(await api.beginTwoFactorSetup());
+      setTwoFactorCode('');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to start two-factor setup.', 'error');
+    } finally {
+      setTwoFactorSaving(false);
+    }
+  }
+
+  async function enableTwoFactor() {
+    if (!twoFactorSetup) return;
+    setTwoFactorSaving(true);
+    try {
+      await api.enableTwoFactor({ secret: twoFactorSetup.secret, code: twoFactorCode });
+      onUserChange({ ...currentUser, twoFactorEnabled: true });
+      setTwoFactorSetup(null);
+      setTwoFactorCode('');
+      onNotify('Two-factor authentication enabled.', 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to enable two-factor authentication.', 'error');
+    } finally {
+      setTwoFactorSaving(false);
     }
   }
 
@@ -1640,6 +1834,54 @@ function PasswordResetScreen({ onNotify }: { onNotify: (notification: string, ty
           </button>
         </div>
       </form>
+      <div className="two-factor-settings">
+        <div className="two-factor-heading">
+          <div>
+            <h3>Authenticator app</h3>
+            <p>Require a six-digit code when signing in.</p>
+          </div>
+          <span className={currentUser.twoFactorEnabled ? 'two-factor-status enabled' : 'two-factor-status'}>
+            {currentUser.twoFactorEnabled ? <CheckCircle2 size={16} /> : <CircleHelp size={16} />}
+            {currentUser.twoFactorEnabled ? 'Enabled' : 'Not enabled'}
+          </span>
+        </div>
+        {!currentUser.twoFactorEnabled && !twoFactorSetup && (
+          <button className="secondary-button" type="button" disabled={twoFactorSaving} onClick={startTwoFactorSetup}>
+            {twoFactorSaving ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
+            Set up authenticator
+          </button>
+        )}
+        {!currentUser.twoFactorEnabled && twoFactorSetup && (
+          <div className="two-factor-enrollment">
+            <p>Scan this QR code with Google Authenticator, Microsoft Authenticator, Authy, or another TOTP app.</p>
+            <img src={twoFactorSetup.qrCodeDataUrl} alt="Authenticator setup QR code" />
+            <details>
+              <summary>Can’t scan the QR code?</summary>
+              <code>{twoFactorSetup.secret}</code>
+            </details>
+            <label>
+              Enter the six-digit code to confirm
+              <input
+                value={twoFactorCode}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+            </label>
+            <div className="configuration-actions">
+              <button className="primary-button" type="button" disabled={twoFactorSaving || twoFactorCode.length !== 6} onClick={enableTwoFactor}>
+                {twoFactorSaving ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+                Enable 2FA
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setTwoFactorSetup(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {currentUser.twoFactorEnabled && (
+          <p className="help-text">Two-factor authentication is required for every Xtract account.</p>
+        )}
+      </div>
     </section>
   );
 }
@@ -1656,9 +1898,15 @@ function UserManagementScreen({
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('validator');
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [resetTarget, setResetTarget] = useState<AuthUser | null>(null);
   const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordConfirmation, setResetPasswordConfirmation] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null);
+  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>('all');
+  const [roleFilter, setRoleFilter] = useState<UserRoleFilter>('all');
+  const [userSearch, setUserSearch] = useState('');
 
   async function loadUsers() {
     setLoadingUsers(true);
@@ -1681,16 +1929,28 @@ function UserManagementScreen({
 
   async function createUser(event: FormEvent) {
     event.preventDefault();
+    setCreatingUser(true);
     try {
       await api.createUser({ username: newUsername, password: newPassword, role: newRole });
       setNewUsername('');
       setNewPassword('');
       setNewRole('validator');
+      setShowCreateUser(false);
       onNotify('User created.', 'success');
       await loadUsers();
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to create user.', 'error');
+    } finally {
+      setCreatingUser(false);
     }
+  }
+
+  function closeCreateUser() {
+    if (creatingUser) return;
+    setShowCreateUser(false);
+    setNewUsername('');
+    setNewPassword('');
+    setNewRole('validator');
   }
 
   async function updateUser(user: AuthUser, payload: { role?: UserRole; enabled?: boolean }) {
@@ -1707,12 +1967,14 @@ function UserManagementScreen({
 
   async function confirmResetPassword() {
     if (!resetTarget) return;
+    if (!resetPassword || resetPassword !== resetPasswordConfirmation) return;
     const id = userId(resetTarget);
     if (!id) return;
     try {
       await api.resetUserPassword(id, resetPassword);
       setResetTarget(null);
       setResetPassword('');
+      setResetPasswordConfirmation('');
       onNotify('Password reset.', 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to reset password.', 'error');
@@ -1734,7 +1996,17 @@ function UserManagementScreen({
   }
 
   const enabledUsers = users.filter((user) => user.enabled).length;
+  const inactiveUsers = users.length - enabledUsers;
   const adminUsers = users.filter((user) => user.role === 'admin').length;
+  const validatorUsers = users.length - adminUsers;
+  const normalizedSearch = userSearch.trim().toLowerCase();
+  const filteredUsers = users.filter((user) => {
+    const matchesStatus = statusFilter === 'all'
+      || (statusFilter === 'active' && user.enabled)
+      || (statusFilter === 'inactive' && !user.enabled);
+    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
+    return matchesStatus && matchesRole && (!normalizedSearch || user.username.toLowerCase().includes(normalizedSearch));
+  });
 
   return (
     <div className="user-management">
@@ -1748,46 +2020,15 @@ function UserManagementScreen({
               <p>Add users, assign roles, and control access.</p>
             </div>
           </div>
-          <button className="icon-button" title="Refresh users" onClick={loadUsers}>
-            {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          </button>
-        </div>
-        <div className="user-management-summary">
-          <div><UsersIcon size={17} /><span>Total users<strong>{users.length}</strong></span></div>
-          <div><CheckCircle2 size={17} /><span>Enabled<strong>{enabledUsers}</strong></span></div>
-          <div><ShieldCheck size={17} /><span>Administrators<strong>{adminUsers}</strong></span></div>
-        </div>
-      </section>
-
-      <section className="panel user-create-card">
-        <div className="user-section-heading">
-          <div>
-            <strong>Create User</strong>
-            <small>Set up a new account with its initial role and password.</small>
+          <div className="user-management-actions">
+            <button className="icon-button user-add-button" type="button" title="Add user" aria-label="Add user" onClick={() => setShowCreateUser(true)}>
+              <Plus size={18} />
+            </button>
+            <button className="icon-button" title="Refresh users" onClick={loadUsers}>
+              {loadingUsers ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            </button>
           </div>
-          <span><Plus size={17} /></span>
         </div>
-        <form className="user-create-form" onSubmit={createUser}>
-          <label>
-            Username
-            <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
-          </label>
-          <label>
-            Initial password
-            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-          </label>
-          <label>
-            Role
-            <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
-              <option value="validator">Validator</option>
-              <option value="admin">Admin</option>
-            </select>
-          </label>
-          <button className="primary-button" type="submit" disabled={!newUsername || !newPassword}>
-            <Plus size={16} />
-            Add user
-          </button>
-        </form>
       </section>
       <section className="panel user-directory-card">
         <div className="user-directory-heading">
@@ -1795,7 +2036,61 @@ function UserManagementScreen({
             <strong>User Directory</strong>
             <small>Manage account roles, status, passwords, and access.</small>
           </div>
-          <span>{users.length} account{users.length === 1 ? '' : 's'}</span>
+          <span>{filteredUsers.length} of {users.length} account{users.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="user-directory-toolbar">
+          <div className="user-directory-filter-groups">
+            <div className="user-filter-group">
+              <small>Status</small>
+              <div className="user-filter-tabs" role="group" aria-label="Filter users by status">
+                {([
+                  ['all', 'All', users.length],
+                  ['active', 'Active', enabledUsers],
+                  ['inactive', 'Inactive', inactiveUsers],
+                ] as const).map(([value, label, count]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={statusFilter === value ? 'active' : ''}
+                    aria-pressed={statusFilter === value}
+                    onClick={() => setStatusFilter(value)}
+                  >
+                    {label}<span>{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="user-filter-group">
+              <small>Role</small>
+              <div className="user-filter-tabs" role="group" aria-label="Filter users by role">
+                {([
+                  ['all', 'All roles', users.length],
+                  ['admin', 'Admin', adminUsers],
+                  ['validator', 'Validator', validatorUsers],
+                ] as const).map(([value, label, count]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={roleFilter === value ? 'active' : ''}
+                    aria-pressed={roleFilter === value}
+                    onClick={() => setRoleFilter(value)}
+                  >
+                    {label}<span>{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <label className="user-search">
+            <Search size={15} />
+            <input
+              type="search"
+              value={userSearch}
+              placeholder="Search users"
+              aria-label="Search users"
+              onChange={(event) => setUserSearch(event.target.value)}
+            />
+          </label>
         </div>
         <div className="business-review-table user-directory-table">
           <table>
@@ -1804,12 +2099,13 @@ function UserManagementScreen({
                 <th>Username</th>
                 <th>Role</th>
                 <th>Status</th>
+                <th>2FA</th>
                 <th>Created</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => {
+              {filteredUsers.map((user) => {
                 const id = userId(user);
                 const isSelf = id === currentUser.id;
                 return (
@@ -1830,13 +2126,20 @@ function UserManagementScreen({
                         <option value="admin">Admin</option>
                       </select>
                     </td>
-                    <td><span className={user.enabled ? 'user-status enabled' : 'user-status disabled'}>{user.enabled ? 'Enabled' : 'Disabled'}</span></td>
+                    <td><span className={user.enabled ? 'user-status enabled' : 'user-status disabled'}>{user.enabled ? 'Active' : 'Inactive'}</span></td>
+                    <td>
+                      <span className={user.twoFactorEnabled ? 'user-2fa enabled' : 'user-2fa disabled'}>
+                        {user.twoFactorEnabled ? <ShieldCheck size={13} /> : <CircleHelp size={13} />}
+                        {user.twoFactorEnabled ? 'Configured' : 'Not configured'}
+                      </span>
+                    </td>
                     <td>{user.createdAt ? new Date(user.createdAt).toLocaleString() : 'N/A'}</td>
                     <td>
                       <div className="table-actions">
                         <button className="secondary-button compact" type="button" onClick={() => {
                           setResetTarget(user);
                           setResetPassword('');
+                          setResetPasswordConfirmation('');
                         }}>
                           Reset password
                         </button>
@@ -1846,7 +2149,7 @@ function UserManagementScreen({
                           disabled={isSelf}
                           onClick={() => updateUser(user, { enabled: !user.enabled })}
                         >
-                          {user.enabled ? 'Disable' : 'Enable'}
+                          {user.enabled ? 'Deactivate' : 'Activate'}
                         </button>
                         <button
                           className="secondary-button compact danger-outline"
@@ -1863,21 +2166,84 @@ function UserManagementScreen({
               })}
             </tbody>
           </table>
-          {!users.length && <div className="empty-table">{loadingUsers ? 'Loading users.' : 'No users found.'}</div>}
+          {!filteredUsers.length && (
+            <div className="empty-table">
+              {loadingUsers ? 'Loading users.' : users.length ? 'No users match these filters.' : 'No users found.'}
+            </div>
+          )}
         </div>
       </section>
+      {showCreateUser && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+          <form className="confirm-modal user-create-modal" onSubmit={createUser}>
+            <div className="modal-heading">
+              <div>
+                <h2 id="create-user-title">Add new user</h2>
+                <p>Create an account and choose its initial access role.</p>
+              </div>
+              <button className="icon-button" type="button" title="Close" onClick={closeCreateUser} disabled={creatingUser}>
+                <X size={17} />
+              </button>
+            </div>
+            <div className="user-create-form">
+              <label>
+                Username
+                <input autoFocus autoComplete="username" value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
+              </label>
+              <label>
+                Initial password
+                <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              </label>
+              <label>
+                Role
+                <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
+                  <option value="validator">Validator</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button className="secondary-button" type="button" onClick={closeCreateUser} disabled={creatingUser}>Cancel</button>
+              <button className="primary-button" type="submit" disabled={creatingUser || !newUsername.trim() || !newPassword}>
+                {creatingUser ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+                {creatingUser ? 'Adding user…' : 'Add user'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {resetTarget && (
         <ConfirmDialog
           title="Reset Password"
           body={
-            <label>
-              New password for {resetTarget.username}
-              <input type="password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
-            </label>
+            <div className="reset-password-fields">
+              <label>
+                New password for {resetTarget.username}
+                <input type="password" autoComplete="new-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
+              </label>
+              <label>
+                Confirm new password
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  className={resetPasswordConfirmation && resetPassword !== resetPasswordConfirmation ? 'input-error' : ''}
+                  value={resetPasswordConfirmation}
+                  onChange={(event) => setResetPasswordConfirmation(event.target.value)}
+                />
+              </label>
+              {resetPasswordConfirmation && resetPassword !== resetPasswordConfirmation && (
+                <span className="field-error">Passwords do not match.</span>
+              )}
+            </div>
           }
           confirmLabel="Reset"
           confirmIcon={<KeyRound size={16} />}
-          onCancel={() => setResetTarget(null)}
+          confirmDisabled={!resetPassword || resetPassword !== resetPasswordConfirmation}
+          onCancel={() => {
+            setResetTarget(null);
+            setResetPassword('');
+            setResetPasswordConfirmation('');
+          }}
           onConfirm={confirmResetPassword}
         />
       )}
@@ -2486,13 +2852,7 @@ function ConfigurationScreen({
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
-  type ConfigurationSection = 'documentProcessing' | 'scaling' | 'downstream';
-  const [expandedSection, setExpandedSection] = useState<ConfigurationSection | null>(null);
-
-  function toggleSection(section: ConfigurationSection) {
-    setExpandedSection((current) => current === section ? null : section);
-  }
-
+  const [aiServiceTab, setAiServiceTab] = useState<AiProvider>('openai');
   async function refreshConfig() {
     await onRefresh();
   }
@@ -2516,13 +2876,106 @@ function ConfigurationScreen({
         </div>
       </div>
       <div className="configuration-form">
-        <div className={`configuration-section scaling${expandedSection === 'scaling' ? ' expanded' : ''}`}>
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'scaling'}
-            onClick={() => toggleSection('scaling')}
-          >
+        <div className="configuration-section ai expanded">
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Sparkles size={20} /></span>
+              <span>
+                <strong>AI Services</strong>
+                <small>Configure the LLM provider, endpoint, model, and encrypted credentials</small>
+              </span>
+            </span>
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid classification-style-settings">
+            <div className="ai-service-tabs" role="tablist" aria-label="AI services">
+              {([
+                ['openai', 'OpenAI'],
+                ['ollama', 'Ollama'],
+                ['custom', 'Custom'],
+              ] as const).map(([provider, label]) => (
+                <button
+                  key={provider}
+                  type="button"
+                  role="tab"
+                  aria-selected={aiServiceTab === provider}
+                  className={aiServiceTab === provider ? 'active' : ''}
+                  onClick={() => setAiServiceTab(provider)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {aiServiceTab === 'openai' && (
+              <label>
+                <span className="configuration-field-label">
+                  OpenAI API key
+                  {config.openAiApiKeyConfigured && (
+                    <CheckCircle2
+                      className="configuration-configured-icon"
+                      size={17}
+                      aria-label="API key configured"
+                    />
+                  )}
+                </span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={config.openAiApiKeyConfigured ? 'Key configured — enter a new key to replace it' : 'Enter OpenAI API key'}
+                  value={config.openAiApiKey}
+                  onChange={(event) => onConfigChange({ ...config, openAiApiKey: event.target.value })}
+                />
+              </label>
+            )}
+            {aiServiceTab === 'custom' && (
+              <>
+              <label>
+                LLM endpoint
+                <input
+                  type="url"
+                  placeholder="https://llm.example.com/v1"
+                  value={config.llmEndpoint}
+                  onChange={(event) => onConfigChange({ ...config, llmEndpoint: event.target.value })}
+                />
+              </label>
+              <label>
+                <span className="configuration-field-label">
+                  Custom API key
+                  {config.customApiKeyConfigured && (
+                    <CheckCircle2
+                      className="configuration-configured-icon"
+                      size={17}
+                      aria-label="API key configured"
+                    />
+                  )}
+                </span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={config.customApiKeyConfigured ? 'Key configured — enter a new key to replace it' : 'Enter custom API key'}
+                  value={config.customApiKey}
+                  onChange={(event) => onConfigChange({ ...config, customApiKey: event.target.value })}
+                />
+              </label>
+              </>
+            )}
+            {aiServiceTab === 'ollama' && (
+              <label>
+                Ollama endpoint
+                <input
+                  type="url"
+                  value={config.ollamaBaseUrl}
+                  onChange={(event) => onConfigChange({ ...config, ollamaBaseUrl: event.target.value })}
+                />
+              </label>
+            )}
+            <p className="help-text">
+              API keys are encrypted before storage and are never returned to the browser.
+            </p>
+          </div>
+        </div>
+        <div className="configuration-section scaling expanded">
+          <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><TrendingUp size={20} /></span>
               <span>
@@ -2530,10 +2983,9 @@ function ConfigurationScreen({
                 <small>Control parallel processing capacity for every pipeline stage</small>
               </span>
             </span>
-            {expandedSection === 'scaling' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'scaling' && (
-            <div className="configuration-section-body scaling-controls">
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body scaling-controls">
               <label className="scaling-control preprocessing">
                 <span className="scaling-control-heading">
                   Preprocessing concurrency
@@ -2621,17 +3073,11 @@ function ConfigurationScreen({
               <p className="help-text">
                 Limits apply to new queue invocations after saving. Higher AI concurrency may increase model rate-limit errors.
               </p>
-            </div>
-          )}
+          </div>
         </div>
 
-        <div className={`configuration-section processing${expandedSection === 'documentProcessing' ? ' expanded' : ''}`}>
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'documentProcessing'}
-            onClick={() => toggleSection('documentProcessing')}
-          >
+        <div className="configuration-section processing expanded">
+          <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><ScanText size={20} /></span>
               <span>
@@ -2639,10 +3085,9 @@ function ConfigurationScreen({
                 <small>Choose how document content is prepared for AI processing</small>
               </span>
             </span>
-            {expandedSection === 'documentProcessing' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'documentProcessing' && (
-            <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
               <div className="document-processing-option-card">
                 <strong>Text preparation</strong>
                 <label className="checkbox-row">
@@ -2685,17 +3130,11 @@ function ConfigurationScreen({
                   </p>
                 )}
               </div>
-            </div>
-          )}
+          </div>
         </div>
 
-        <div className={`configuration-section downstream${expandedSection === 'downstream' ? ' expanded' : ''}`}>
-          <button
-            className="configuration-section-toggle"
-            type="button"
-            aria-expanded={expandedSection === 'downstream'}
-            onClick={() => toggleSection('downstream')}
-          >
+        <div className="configuration-section downstream expanded">
+          <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Network size={20} /></span>
               <span>
@@ -2703,10 +3142,9 @@ function ConfigurationScreen({
                 <small>Configure where validated document data is sent</small>
               </span>
             </span>
-            {expandedSection === 'downstream' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {expandedSection === 'downstream' && (
-            <div className="configuration-section-body configuration-card-grid downstream-settings classification-style-settings">
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid downstream-settings classification-style-settings">
               <label>
                 Downstream API URL
                 <input
@@ -2738,8 +3176,7 @@ function ConfigurationScreen({
               <p className="help-text">
                 When saved, validation submits will forward clean JSON data to the downstream system using this URL.
               </p>
-            </div>
-          )}
+          </div>
         </div>
         <div className="configuration-actions">
           <button className="secondary-button compact" type="button" onClick={refreshConfig}>
@@ -2802,13 +3239,6 @@ function ClassificationScreen({
 
   return (
     <div className="classification-layout">
-      <section className="panel classification-summary">
-        <StatusMetric label="Included Types" value={includedTypes.length} />
-        <StatusMetric label="Trainable" value={trainableTypes.length} />
-        <StatusMetric label="Trained" value={trainedCount} />
-        <StatusMetric label="Sample Files" value={includedFileCount} />
-      </section>
-
       <section className="panel classification-training-panel">
         <div className="panel-heading">
           <div>
@@ -2915,10 +3345,11 @@ function ClassificationScreen({
                     onChange={(event) => onConfigChange({ ...config, aiProvider: event.target.value as AiProvider })}
                   >
                     <option value="openai">OpenAI</option>
+                    <option value="custom">Custom (OpenAI compatible)</option>
                     <option value="ollama">Self Hosted (Ollama)</option>
                   </select>
                 </label>
-                {config.aiProvider === 'openai' ? (
+                {config.aiProvider !== 'ollama' ? (
                   <OpenAIModelControls
                     model={config.classificationModel || lowCostOpenAIModel}
                     reasoningEffort={config.classificationReasoningEffort || 'low'}
@@ -3005,7 +3436,20 @@ function ClassificationScreen({
               <small>Types currently included in classifier training.</small>
             </div>
           </div>
-          <span className="classification-types-count">{includedTypes.length} included</span>
+          <div className="classification-type-counts" aria-label="Document type summary">
+            <span className="classification-types-count included">
+              <strong>{includedTypes.length}</strong> Included
+            </span>
+            <span className="classification-types-count trainable">
+              <strong>{trainableTypes.length}</strong> Trainable
+            </span>
+            <span className="classification-types-count trained">
+              <strong>{trainedCount}</strong> Trained
+            </span>
+            <span className="classification-types-count samples">
+              <strong>{includedFileCount}</strong> Sample files
+            </span>
+          </div>
         </div>
         <div className="classification-table">
           {includedTypes.map((type) => {
@@ -3180,7 +3624,30 @@ function DocumentTypeManagement({
                 </div>
               </div>
               <div className="model-settings-band">
-              {config.aiProvider === 'openai' ? (
+              <label>
+                AI service
+                <select
+                  value={activeType.extractionAiProvider || 'openai'}
+                  onChange={(event) =>
+                    onRun(async () => {
+                      const extractionAiProvider = event.target.value as NonNullable<DocumentType['extractionAiProvider']>;
+                      const updated = await api.updateExtractionModel(activeType._id, {
+                        extractionAiProvider,
+                        extractionModel: activeType.extractionModel || (extractionAiProvider === 'ollama' ? config.ollamaModel : lowCostOpenAIModel),
+                        extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                        extractionVerification: Boolean(activeType.extractionVerification),
+                      });
+                      onDocumentTypeSaved(updated);
+                      await onRefresh();
+                    }, 'Extraction AI service saved')
+                  }
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="custom">Custom</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </label>
+              {(activeType.extractionAiProvider || 'openai') !== 'ollama' ? (
                 <OpenAIModelControls
                   model={activeType.extractionModel || lowCostOpenAIModel}
                   reasoningEffort={activeType.extractionReasoningEffort || 'low'}
@@ -3188,6 +3655,7 @@ function DocumentTypeManagement({
                     onRun(async () => {
                       const updated = await api.updateExtractionModel(activeType._id, {
                         extractionModel,
+                        extractionAiProvider: activeType.extractionAiProvider || 'openai',
                         extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
                         extractionVerification: Boolean(activeType.extractionVerification),
                       });
@@ -3199,6 +3667,7 @@ function DocumentTypeManagement({
                     onRun(async () => {
                       const updated = await api.updateExtractionModel(activeType._id, {
                         extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                        extractionAiProvider: activeType.extractionAiProvider || 'openai',
                         extractionReasoningEffort,
                         extractionVerification: Boolean(activeType.extractionVerification),
                       });
@@ -3212,8 +3681,20 @@ function DocumentTypeManagement({
                   <label>
                     Model
                     <input
-                      value={config.ollamaModel}
-                      onChange={(event) => onConfigChange({ ...config, ollamaModel: event.target.value })}
+                      value={activeType.extractionModel || config.ollamaModel}
+                      onChange={(event) => onDocumentTypeSaved({ ...activeType, extractionModel: event.target.value })}
+                      onBlur={(event) =>
+                        onRun(async () => {
+                          const updated = await api.updateExtractionModel(activeType._id, {
+                            extractionModel: event.target.value,
+                            extractionAiProvider: 'ollama',
+                            extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
+                            extractionVerification: Boolean(activeType.extractionVerification),
+                          });
+                          onDocumentTypeSaved(updated);
+                          await onRefresh();
+                        }, 'Extraction model saved')
+                      }
                     />
                   </label>
                 </div>
@@ -3242,6 +3723,7 @@ function DocumentTypeManagement({
                   return onRun(async () => {
                     const updated = await api.updateExtractionModel(activeType._id, {
                       extractionModel: activeType.extractionModel || lowCostOpenAIModel,
+                      extractionAiProvider: activeType.extractionAiProvider || 'openai',
                       extractionReasoningEffort: activeType.extractionReasoningEffort || 'low',
                       extractionVerification,
                     });
@@ -3863,7 +4345,14 @@ function UploadScreen({
   const [documentTypeId, setDocumentTypeId] = useState(availableTypes[0]?._id ?? '');
   const [autoClassify, setAutoClassify] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const trainedTypeCount = documentTypes.filter((type) => type.finalized && type.sampleFiles.length > 0).length;
+  const totalFileSize = files.reduce((total, file) => total + file.size, 0);
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   useEffect(() => {
     setCategory((current) => current || categories[0] || '');
@@ -3876,10 +4365,11 @@ function UploadScreen({
 
   return (
     <section className="panel upload-panel">
-      <div className="panel-heading">
+      <div className="panel-heading upload-heading">
         <div>
+          <span className="upload-kicker"><Sparkles size={14} /> Intelligent intake</span>
           <h2>Upload Documents</h2>
-          <p>Send new files into the extraction workflow.</p>
+          <p>Drop files here and let Xtract classify, read, and structure them.</p>
         </div>
         <button className="icon-button" title="Refresh upload page" onClick={onRefresh}>
           <RefreshCw size={16} />
@@ -3897,16 +4387,18 @@ function UploadScreen({
           }, autoClassify ? 'Documents classified and processed' : 'Documents uploaded and processed');
         }}
       >
-        <label className="span-2 checkbox-row">
+        <label className="span-2 checkbox-row upload-classification-toggle">
           <input
             type="checkbox"
             checked={autoClassify}
             onChange={(event) => setAutoClassify(event.target.checked)}
           />
+          <span className="upload-toggle-icon"><BrainCircuit size={20} /></span>
           <span>
-            Auto classify with trained samples
-            <small>{trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} available</small>
+            <strong>Auto-classify documents</strong>
+            <small>Match against {trainedTypeCount} trained document type{trainedTypeCount === 1 ? '' : 's'} automatically</small>
           </span>
+          <span className="upload-recommended">Recommended</span>
         </label>
         {!autoClassify && (
           <>
@@ -3930,13 +4422,32 @@ function UploadScreen({
             </label>
           </>
         )}
-        <label className="file-drop span-2">
-          <Upload size={28} />
-          <span>
+        <label
+          className={`file-drop span-2${draggingFiles ? ' dragging' : ''}${files.length ? ' has-files' : ''}`}
+          onDragEnter={() => setDraggingFiles(true)}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDraggingFiles(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingFiles(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDraggingFiles(false);
+            setFiles(Array.from(event.dataTransfer.files).filter((file) =>
+              file.type === 'application/pdf' || file.type.startsWith('image/'),
+            ));
+          }}
+        >
+          <span className="file-drop-icon"><Upload size={30} /></span>
+          <strong>
             {files.length > 0
               ? `${files.length} file${files.length === 1 ? '' : 's'} selected`
-              : 'Choose PDFs or images for extraction'}
-          </span>
+              : 'Drop your documents here'}
+          </strong>
+          <span>{files.length ? `${formatFileSize(totalFileSize)} ready to upload` : 'or click to browse your computer'}</span>
+          <small>PDF, PNG, JPG, TIFF · Multiple files supported</small>
           <input
             type="file"
             accept="application/pdf,image/*,.tif,.tiff"
@@ -3944,13 +4455,42 @@ function UploadScreen({
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
         </label>
-        <button
-          className="primary-button"
-          disabled={(!autoClassify && !documentTypeId) || (autoClassify && trainedTypeCount === 0) || files.length === 0}
-        >
-          <Upload size={16} />
-          {autoClassify ? 'Classify & Process' : `Upload Document${files.length === 1 ? '' : 's'}`}
-        </button>
+        {files.length > 0 && (
+          <div className="upload-file-list span-2">
+            {files.map((file, index) => (
+              <div className="upload-file-item" key={`${file.name}-${file.size}-${index}`}>
+                <span className="upload-file-type">
+                  {file.type === 'application/pdf' ? <FileText size={18} /> : <FileImage size={18} />}
+                </span>
+                <span>
+                  <strong>{file.name}</strong>
+                  <small>{formatFileSize(file.size)}</small>
+                </span>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title={`Remove ${file.name}`}
+                  onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="upload-submit-row span-2">
+          <span>
+            <ShieldCheck size={16} />
+            Files are processed securely
+          </span>
+          <button
+            className="primary-button upload-submit"
+            disabled={(!autoClassify && !documentTypeId) || (autoClassify && trainedTypeCount === 0) || files.length === 0}
+          >
+            <Upload size={16} />
+            {autoClassify ? 'Classify & Process' : `Upload Document${files.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -4157,6 +4697,16 @@ function DocumentList({
                 <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
                 <span>
                   <strong>{doc.originalName}</strong>
+                  {doc.validatedBy && (
+                    <small className="document-validator">
+                      <ShieldCheck size={12} /> Validated by {doc.validatedBy.username}
+                    </small>
+                  )}
+                  {doc.rejectedBy && (
+                    <small className="document-reviewer rejected">
+                      <CircleX size={12} /> Rejected by {doc.rejectedBy.username}
+                    </small>
+                  )}
                 </span>
               </span>
               <span className="document-type-capsule">
@@ -4198,8 +4748,9 @@ function DocumentList({
             {canManage && (
               <div className="row-actions">
                 <button
-                  className="icon-button"
-                  title="Reclassify document"
+                  className="icon-button locked-action"
+                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
+                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReclassifyTarget(doc);
@@ -4209,16 +4760,19 @@ function DocumentList({
                   }}
                 >
                   <BrainCircuit size={16} />
+                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
-                  className="icon-button"
-                  title="Reprocess document"
+                  className="icon-button locked-action"
+                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
+                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReprocessTarget(doc);
                   }}
                 >
                   <RotateCcw size={16} />
+                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
                   className="icon-button danger"
@@ -4345,6 +4899,7 @@ function ConfirmDialog({
   body,
   confirmLabel,
   confirmIcon,
+  confirmDisabled = false,
   isDanger = true,
   onCancel,
   onConfirm,
@@ -4353,6 +4908,7 @@ function ConfirmDialog({
   body: string | JSX.Element;
   confirmLabel: string;
   confirmIcon?: JSX.Element;
+  confirmDisabled?: boolean;
   isDanger?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -4363,7 +4919,7 @@ function ConfirmDialog({
         <div className="modal-heading">
           <div>
             <h2>{title}</h2>
-            <p>{body}</p>
+            {typeof body === 'string' ? <p>{body}</p> : <div className="confirm-dialog-body">{body}</div>}
           </div>
           <button className="icon-button" title="Close" onClick={onCancel}>
             <X size={17} />
@@ -4373,7 +4929,7 @@ function ConfirmDialog({
           <button className="secondary-button" onClick={onCancel}>
             Cancel
           </button>
-          <button className={`primary-button${isDanger ? ' danger-action' : ''}`} onClick={onConfirm}>
+          <button className={`primary-button${isDanger ? ' danger-action' : ''}`} disabled={confirmDisabled} onClick={onConfirm}>
             {confirmIcon || <Trash2 size={16} />}
             {confirmLabel}
           </button>
@@ -4488,10 +5044,11 @@ function DocumentFlowDialog({
             const showQueueWait = index < baseStatuses.length - 1
               && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
             const isCurrent = status === document.status;
-            const completed = Boolean(timing?.endTime);
+            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed';
+            const completed = Boolean(timing?.endTime) || (isCurrent && isTerminalStatus);
             return (
               <Fragment key={status}>
-                <div className={`document-flow-stage${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+                <div className={`document-flow-stage ${status}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
                   <div className="document-flow-marker">
                     {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
                     {index < statuses.length - 1 && <span />}
@@ -4499,7 +5056,7 @@ function DocumentFlowDialog({
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
                       <strong>{status}</strong>
-                      <span>{isCurrent && !timing?.endTime ? 'In progress' : timing ? completed ? 'Completed' : 'Started' : 'Not started'}</span>
+                      <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
                     </div>
                     <dl>
                       <div>
@@ -4562,6 +5119,9 @@ function ReprocessDialog({
   const [extractionModel, setExtractionModel] = useState(
     document.processingMetrics?.model || documentType?.extractionModel || lowCostOpenAIModel,
   );
+  const reprocessModelOptions = openAIModelOptions.some((option) => option.value === extractionModel)
+    ? openAIModelOptions
+    : [{ value: extractionModel, label: displayModel(extractionModel) }, ...openAIModelOptions];
   const [processingMode, setProcessingMode] = useState<ReprocessProcessingMode>(initialMode);
   const [submitting, setSubmitting] = useState(false);
 
@@ -4595,7 +5155,7 @@ function ReprocessDialog({
           <label>
             Extraction model
             <select value={extractionModel} onChange={(event) => setExtractionModel(event.target.value)}>
-              {openAIModelOptions.map((option) => (
+              {reprocessModelOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -4860,6 +5420,10 @@ function ValidationScreen({
       extractionModel: document.processingMetrics?.model,
       processingMode: document.processingMode,
       status: document.status,
+      validatedBy: document.validatedBy,
+      validatedAt: document.validatedAt,
+      rejectedBy: document.rejectedBy,
+      rejectedAt: document.rejectedAt,
       extractedData: normalizedValues,
       exportedAt: new Date().toISOString(),
     });
@@ -4910,7 +5474,11 @@ function ValidationScreen({
           <div className="panel-heading">
             <div>
               <h2>{document.originalName}</h2>
-              <p>{document.category} / {document.documentTypeName}</p>
+              <span className="document-type-capsule validation-document-type-capsule">
+                <span>{document.category}</span>
+                <i>/</i>
+                <strong>{document.documentTypeName}</strong>
+              </span>
               <div className="classification-score-line">
                 <span>Classification score</span>
                 <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
@@ -4925,6 +5493,20 @@ function ValidationScreen({
                 <span>Classification: {displayModel(document.classificationModel)}</span>
                 <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
               </div>
+              {document.validatedBy && (
+                <div className="validation-audit-line">
+                  <ShieldCheck size={14} />
+                  <span>Validated by <strong>{document.validatedBy.username}</strong></span>
+                  {document.validatedAt && <time>{new Date(document.validatedAt).toLocaleString()}</time>}
+                </div>
+              )}
+              {document.rejectedBy && (
+                <div className="validation-audit-line rejected">
+                  <CircleX size={14} />
+                  <span>Rejected by <strong>{document.rejectedBy.username}</strong></span>
+                  {document.rejectedAt && <time>{new Date(document.rejectedAt).toLocaleString()}</time>}
+                </div>
+              )}
             </div>
             <div className="panel-heading-actions">
               <div className="validation-header-badges">
@@ -5073,8 +5655,7 @@ function ValidationScreen({
             </div>
           )}
         </div>
-        {!isLocked && (
-          <div className="extraction-pane-footer">
+        <div className="extraction-pane-footer">
             <div className="validation-actions">
               <button
                 className="icon-button"
@@ -5107,36 +5688,43 @@ function ValidationScreen({
               {canAdminActions && (
                 <>
                   <button
-                    className="icon-button"
+                    className="icon-button locked-action"
                     type="button"
-                    title="Reclassify document"
+                    title={isLocked ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
                     aria-label="Reclassify document"
+                    disabled={isLocked}
                     onClick={() => setShowReclassifyDialog(true)}
                   >
                     <BrainCircuit size={16} />
+                    {isLocked && <CircleX className="not-allowed-mark" size={12} />}
                   </button>
                   <button
-                    className="icon-button"
+                    className="icon-button locked-action"
                     type="button"
-                    title="Reprocess document"
+                    title={isLocked ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
                     aria-label="Reprocess document"
+                    disabled={isLocked}
                     onClick={() => setShowReprocessDialog(true)}
                   >
                     <RotateCcw size={16} />
+                    {isLocked && <CircleX className="not-allowed-mark" size={12} />}
                   </button>
                 </>
               )}
-              <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
-                <X size={16} />
-                Reject
-              </button>
-              <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
-                <CheckCircle2 size={16} />
-                Validate
-              </button>
+              {!isLocked && (
+                <>
+                  <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
+                    <X size={16} />
+                    Reject
+                  </button>
+                  <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
+                    <CheckCircle2 size={16} />
+                    Validate
+                  </button>
+                </>
+              )}
             </div>
           </div>
-        )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (
         <TableEditDialog

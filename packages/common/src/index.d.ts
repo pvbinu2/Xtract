@@ -4,6 +4,8 @@ export { ObjectId } from 'mongodb';
 export const TRAIN_CONTAINER: string;
 export const PROCESSING_CONTAINER: string;
 export const TRIGGER_CONTAINER: string;
+export function encryptSecret(value: string): string;
+export function decryptSecret(value?: string): string;
 
 export class MongoDatabase {
   constructor(options?: { uri?: string; databaseName?: string });

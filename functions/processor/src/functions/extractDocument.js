@@ -24,16 +24,16 @@ const {
   transitionDocumentStatus,
 } = require('../documentProcessingCommon');
 
-let openai;
-
-function getOpenAI() {
-  if (!process.env.OPENAI_API_KEY) return undefined;
-  if (!openai) openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  return openai;
+function getOpenAI(options = {}) {
+  if (!options.apiKey) return undefined;
+  return new OpenAI({
+    apiKey: options.apiKey,
+    ...(options.aiProvider === 'custom' && options.llmEndpoint ? { baseURL: options.llmEndpoint } : {}),
+  });
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || 'gpt-5-nano';
+  return 'gpt-5-nano';
 }
 
 function providerName(options = {}) {
@@ -41,11 +41,11 @@ function providerName(options = {}) {
 }
 
 function ollamaModelName(options = {}) {
-  return options.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2';
+  return options.ollamaModel || 'llama3.2';
 }
 
 function ollamaBaseUrl(options = {}) {
-  return (options.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  return (options.ollamaBaseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
 }
 
 function supportsReasoningEffort(model) {
@@ -90,7 +90,7 @@ async function createJsonResponse(content, options = {}, label = 'AI request') {
     };
   }
 
-  const client = getOpenAI();
+  const client = getOpenAI(options);
   if (!client) return undefined;
   const requestConfig = openAIRequestConfig(options);
   const response = await withOpenAIRetry(() => client.responses.create({
@@ -328,7 +328,7 @@ async function correctExtractionWithOpenAI({
 }
 
 async function extractValuesWithOpenAI(document, documentType, useOcr = false, textOptions = {}, aiOptions = {}) {
-  if (providerName(aiOptions) === 'openai' && !getOpenAI()) return undefined;
+  if (providerName(aiOptions) !== 'ollama' && !getOpenAI(aiOptions)) return undefined;
 
   const selectedFields = (documentType.fields || []).filter((field) => field.selected);
   const textMode = textOptions.mode === 'markdown' ? 'markdown' : 'ocr';
@@ -486,17 +486,32 @@ async function extractQueuedDocument(message, context) {
     localFilePath = await resolveDocumentFile(document);
     const preparedText = await resolvePreparedDocumentText(document);
     const preparedTextMode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
-    const localDocument = { ...document, ...payload.classificationUpdate, filePath: localFilePath };
     const effectiveDocumentType = {
       ...documentType,
       extractionModel: reprocessOptions.extractionModel || documentType.extractionModel,
     };
+    const extractionProvider = ['openai', 'custom', 'ollama'].includes(documentType.extractionAiProvider)
+      ? documentType.extractionAiProvider
+      : 'openai';
+    const extractionAiOptions = {
+      ...aiOptions,
+      aiProvider: extractionProvider,
+      apiKey: extractionProvider === 'custom' ? aiOptions.customApiKey : aiOptions.openAiApiKey,
+      ...(extractionProvider === 'ollama' ? { ollamaModel: effectiveDocumentType.extractionModel } : {}),
+    };
+    const usesPreparedText = useOcrForDocumentProcessing || providerName(extractionAiOptions) === 'ollama';
+    const effectiveProcessingMode = usesPreparedText ? preparedTextMode : 'pdf';
+    const localDocument = { ...document, ...payload.classificationUpdate, filePath: localFilePath };
     const extraction = await extractValuesWithOpenAI(
       localDocument,
       effectiveDocumentType,
       useOcrForDocumentProcessing,
-      { ...textOptions, mode: preparedTextMode, preparedText },
-      aiOptions,
+      {
+        ...textOptions,
+        mode: preparedTextMode,
+        preparedText: usesPreparedText ? preparedText : undefined,
+      },
+      extractionAiOptions,
     );
     const extractedData = await attachBoundingBoxes(
       localFilePath,
@@ -569,7 +584,7 @@ async function extractQueuedDocument(message, context) {
         extractedData,
         processingMetrics,
         classificationModel: localDocument.classificationModel,
-        processingMode: preparedTextMode,
+        processingMode: effectiveProcessingMode,
         error: null,
       },
       ['reprocessOptions'],

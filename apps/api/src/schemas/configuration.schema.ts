@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export type ConfigurationDocument = Configuration & Document;
-export type AiProvider = 'openai' | 'ollama';
+export type AiProvider = 'openai' | 'custom' | 'ollama';
 export type ClassificationMode = 'vector' | 'llm' | 'rag';
 
 @Schema({ collection: 'configuration' })
@@ -27,6 +27,18 @@ export class Configuration {
 
   @Prop({ default: 'openai' })
   aiProvider!: AiProvider;
+
+  @Prop({ default: '' })
+  llmEndpoint!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedApiKey!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedOpenAiApiKey!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedCustomApiKey!: string;
 
   @Prop({ default: 'http://127.0.0.1:11434' })
   ollamaBaseUrl!: string;

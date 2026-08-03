@@ -21,6 +21,12 @@ export class User {
 
   @Prop({ required: true, enum: ['USD', 'INR', 'GBP', 'EUR'], default: 'USD' })
   preferredCurrency!: PreferredCurrency;
+
+  @Prop({ default: false })
+  twoFactorEnabled!: boolean;
+
+  @Prop({ select: false })
+  encryptedTwoFactorSecret?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

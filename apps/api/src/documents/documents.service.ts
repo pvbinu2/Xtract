@@ -21,6 +21,7 @@ import {
 } from '../schemas/business-review.schema';
 import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
+import type { AuthenticatedUser } from '../auth/auth.guard';
 
 @Injectable()
 export class DocumentsService {
@@ -187,6 +188,11 @@ export class DocumentsService {
   async reprocess(id: string, options: ReprocessOptions = {}) {
     const document = await this.documentModel.findById(id);
     if (!document) throw new NotFoundException('Document not found');
+    if (document.status === 'validated' || document.status === 'rejected') {
+      throw new BadRequestException(
+        `${document.status === 'validated' ? 'Validated' : 'Rejected'} documents cannot be reclassified or reprocessed.`,
+      );
+    }
 
     // If a new document type is provided, update it
     const newDocumentTypeId = options.documentTypeId;
@@ -203,6 +209,10 @@ export class DocumentsService {
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
     document.extractedData = [];
+    document.validatedBy = undefined;
+    document.validatedAt = undefined;
+    document.rejectedBy = undefined;
+    document.rejectedAt = undefined;
     document.error = undefined;
     if (forceClassification) {
       document.classificationScore = undefined;
@@ -214,7 +224,7 @@ export class DocumentsService {
       forceClassification,
     };
     await document.save();
-    await this.publishDocumentChanged(document, ['status', 'extractedData']);
+    await this.publishDocumentChanged(document, ['status', 'extractedData', 'validatedBy', 'validatedAt', 'rejectedBy', 'rejectedAt']);
 
     await this.enqueueProcessing(document.id);
 
@@ -495,6 +505,10 @@ export class DocumentsService {
       classificationScore: document.classificationScore,
       classificationMethod: document.classificationMethod,
       status: document.status,
+      validatedBy: document.validatedBy,
+      validatedAt: document.validatedAt?.toISOString(),
+      rejectedBy: document.rejectedBy,
+      rejectedAt: document.rejectedAt?.toISOString(),
       processedAt: new Date().toISOString(),
       extractedData: sendKeyValuePairs
         ? this.buildKeyValueExtractedData(extractedData)
@@ -533,13 +547,20 @@ export class DocumentsService {
   async validate(
     id: string,
     extractedData: ExtractedValue[],
+    user: AuthenticatedUser,
   ) {
     const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
     updated.extractedData = extractedData;
-    this.transitionStatus(updated, 'validated');
+    updated.validatedBy = {
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+    };
+    updated.validatedAt = new Date();
+    this.transitionStatus(updated, 'validated', false, true);
     await updated.save();
-    await this.publishDocumentChanged(updated, ['status', 'extractedData']);
+    await this.publishDocumentChanged(updated, ['status', 'extractedData', 'validatedBy', 'validatedAt']);
 
     const configuration = await this.configurationService.get();
     const downstreamConfig = await this.getDownstreamConfig();
@@ -560,12 +581,18 @@ export class DocumentsService {
     return updated;
   }
 
-  async reject(id: string) {
+  async reject(id: string, user: AuthenticatedUser) {
     const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
-    this.transitionStatus(updated, 'rejected');
+    updated.rejectedBy = {
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+    };
+    updated.rejectedAt = new Date();
+    this.transitionStatus(updated, 'rejected', false, true);
     await updated.save();
-    await this.publishDocumentChanged(updated, ['status']);
+    await this.publishDocumentChanged(updated, ['status', 'rejectedBy', 'rejectedAt']);
 
     const configuration = await this.configurationService.get();
     const downstreamConfig = await this.getDownstreamConfig();

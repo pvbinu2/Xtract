@@ -18,7 +18,7 @@ type ProcessingMetrics = {
   processedAt: Date;
 };
 type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
-type AiProvider = 'openai' | 'ollama';
+type AiProvider = 'openai' | 'custom' | 'ollama';
 type OpenAIRequestOptions = {
   aiProvider?: AiProvider;
   model?: string;
@@ -27,6 +27,8 @@ type OpenAIRequestOptions = {
   markdownServiceUrl?: string;
   ollamaBaseUrl?: string;
   ollamaModel?: string;
+  apiKey?: string;
+  llmEndpoint?: string;
 };
 type OpenAIRequestConfig = {
   model: string;
@@ -38,16 +40,16 @@ type AiJsonResponse = {
   model: string;
 };
 
-let client: OpenAI | undefined;
-
-function getClient() {
-  if (!process.env.OPENAI_API_KEY) return undefined;
-  if (!client) client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  return client;
+function getClient(options?: OpenAIRequestOptions) {
+  if (!options?.apiKey) return undefined;
+  return new OpenAI({
+    apiKey: options.apiKey,
+    ...(options.aiProvider === 'custom' && options.llmEndpoint ? { baseURL: options.llmEndpoint } : {}),
+  });
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || 'gpt-5-nano';
+  return 'gpt-5-nano';
 }
 
 function providerName(options?: OpenAIRequestOptions): AiProvider {
@@ -55,11 +57,11 @@ function providerName(options?: OpenAIRequestOptions): AiProvider {
 }
 
 function ollamaModelName(options?: OpenAIRequestOptions) {
-  return options?.ollamaModel || process.env.OLLAMA_MODEL || 'llama3.2';
+  return options?.ollamaModel || 'llama3.2';
 }
 
 function ollamaBaseUrl(options?: OpenAIRequestOptions) {
-  return (options?.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  return (options?.ollamaBaseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
 }
 
 function supportsReasoningEffort(model: string) {
@@ -77,7 +79,7 @@ function openAIRequestConfig(options?: OpenAIRequestOptions): OpenAIRequestConfi
 }
 
 function isConfigured(options?: OpenAIRequestOptions) {
-  return providerName(options) === 'ollama' || Boolean(process.env.OPENAI_API_KEY);
+  return providerName(options) === 'ollama' || Boolean(options?.apiKey);
 }
 
 const modelPricingUsdPerMillion: Record<string, { input: number; output: number }> = {
@@ -229,8 +231,8 @@ async function createJsonResponse(
     };
   }
 
-  const openai = getClient();
-  if (!openai) throw new Error('OPENAI_API_KEY is required when OpenAI is selected as the AI provider.');
+  const openai = getClient(options);
+  if (!openai) throw new Error('An API key is required for the selected AI provider.');
   const requestConfig = openAIRequestConfig(options);
   const response = await withOpenAIRetry(() => openai.responses.create({
     ...requestConfig,
