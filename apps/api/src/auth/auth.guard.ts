@@ -17,6 +17,8 @@ export type AuthenticatedRequest = Request & {
   };
 };
 
+export type AuthenticatedUser = NonNullable<AuthenticatedRequest['user']>;
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(

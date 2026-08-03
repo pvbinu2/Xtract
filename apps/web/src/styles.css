@@ -3783,6 +3783,25 @@ textarea {
   color: #b91c1c;
 }
 
+.icon-button.locked-action {
+  position: relative;
+}
+
+.icon-button.locked-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.not-allowed-mark {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: var(--icon-bg);
+  color: #b91c1c;
+  stroke-width: 3;
+}
+
 .type-list,
 .document-table,
 .classification-table,
@@ -5351,15 +5370,19 @@ textarea {
 }
 
 .document-row:has(.pill.validated)::before {
-  background: #22c55e;
+  background: #15803d;
 }
 
 .document-row:has(.pill.extracted) {
-  border-color: color-mix(in srgb, #15803d 30%, var(--border));
+  border-color: color-mix(in srgb, #2563eb 30%, var(--border));
 }
 
 .document-row:has(.pill.extracted)::before {
-  background: #15803d;
+  background: #2563eb;
+}
+
+.document-row:has(.pill.validated) {
+  border-color: color-mix(in srgb, #15803d 30%, var(--border));
 }
 
 .document-row:has(.pill.failed)::before,
@@ -5379,6 +5402,11 @@ textarea {
 }
 
 .document-row:has(.pill.extracted):hover {
+  border-color: color-mix(in srgb, #2563eb 55%, var(--border));
+  box-shadow: 0 10px 28px rgb(37 99 235 / 0.16);
+}
+
+.document-row:has(.pill.validated):hover {
   border-color: color-mix(in srgb, #15803d 55%, var(--border));
   box-shadow: 0 10px 28px rgb(21 128 61 / 0.16);
 }
@@ -5474,6 +5502,21 @@ textarea {
   display: block;
   color: var(--muted);
   font-size: 12px;
+}
+
+.document-primary-info .document-validator,
+.document-primary-info .document-reviewer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: #15803d;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.document-primary-info .document-reviewer.rejected {
+  color: #b91c1c;
 }
 
 .document-primary-info small i {
@@ -5610,13 +5653,13 @@ textarea {
 }
 
 .pill.extracted {
-  background: #15803d;
-  color: #f0fdf4;
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .pill.validated {
-  background: #dcfce7;
-  color: #166534;
+  background: #15803d;
+  color: #f0fdf4;
 }
 
 .pill.rejected {
@@ -5784,6 +5827,36 @@ textarea {
 
 .validation-refresh-button {
   margin-right: 0;
+}
+
+.validation-audit-line {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #15803d 10%, var(--surface));
+  padding: 5px 9px;
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.validation-audit-line time {
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, #15803d 25%, var(--border));
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.validation-audit-line.rejected {
+  background: color-mix(in srgb, #b91c1c 10%, var(--surface));
+  color: #b91c1c;
+}
+
+.validation-audit-line.rejected time {
+  border-left-color: color-mix(in srgb, #b91c1c 25%, var(--border));
 }
 
 .extraction-pane-content {
@@ -6130,17 +6203,50 @@ button.clickable-status {
 }
 
 .document-flow-stage {
+  --flow-color: #64748b;
+  --flow-soft: rgb(100 116 139 / 0.1);
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
   min-height: 112px;
 }
 
+.document-flow-stage.received {
+  --flow-color: #b45309;
+  --flow-soft: rgb(245 158 11 / 0.12);
+}
+
+.document-flow-stage.preprocessed {
+  --flow-color: #0369a1;
+  --flow-soft: rgb(14 165 233 / 0.11);
+}
+
+.document-flow-stage.classified {
+  --flow-color: #6d28d9;
+  --flow-soft: rgb(124 58 237 / 0.1);
+}
+
+.document-flow-stage.extracted {
+  --flow-color: #1d4ed8;
+  --flow-soft: rgb(37 99 235 / 0.11);
+}
+
+.document-flow-stage.validated {
+  --flow-color: #15803d;
+  --flow-soft: rgb(21 128 61 / 0.11);
+}
+
+.document-flow-stage.rejected,
+.document-flow-stage.failed {
+  --flow-color: #b91c1c;
+  --flow-soft: rgb(239 68 68 / 0.1);
+}
+
 .document-flow-marker {
   position: relative;
   display: flex;
   justify-content: center;
-  color: var(--muted);
+  color: var(--flow-color);
 }
 
 .document-flow-marker > svg {
@@ -6160,14 +6266,6 @@ button.clickable-status {
   background: var(--border);
 }
 
-.document-flow-stage.completed .document-flow-marker {
-  color: #15803d;
-}
-
-.document-flow-stage.current .document-flow-marker {
-  color: #2563eb;
-}
-
 .document-flow-stage-card {
   align-self: start;
   padding: 12px 14px;
@@ -6176,9 +6274,13 @@ button.clickable-status {
   background: var(--surface-muted);
 }
 
+.document-flow-stage .document-flow-stage-card {
+  border-color: color-mix(in srgb, var(--flow-color) 28%, var(--border));
+}
+
 .document-flow-stage.current .document-flow-stage-card {
-  border-color: rgb(59 130 246 / 0.55);
-  box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+  border-color: color-mix(in srgb, var(--flow-color) 60%, var(--border));
+  box-shadow: 0 0 0 3px var(--flow-soft);
 }
 
 .document-flow-stage-heading {
@@ -6190,6 +6292,11 @@ button.clickable-status {
 }
 
 .document-flow-stage-heading strong {
+  border-radius: 999px;
+  background: var(--flow-soft);
+  padding: 4px 8px;
+  color: var(--flow-color);
+  font-size: 12px;
   text-transform: capitalize;
 }
 

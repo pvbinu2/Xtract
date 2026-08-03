@@ -91,6 +91,18 @@ export type IncomingDocument = {
     | 'processing';
   revision?: number;
   extractedData: ExtractedValue[];
+  validatedBy?: {
+    userId: string;
+    username: string;
+    role: UserRole;
+  };
+  validatedAt?: string;
+  rejectedBy?: {
+    userId: string;
+    username: string;
+    role: UserRole;
+  };
+  rejectedAt?: string;
   createdAt: string;
   updatedAt: string;
 };

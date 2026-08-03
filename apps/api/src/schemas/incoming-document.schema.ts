@@ -109,6 +109,20 @@ export class ProcessingMetrics {
 
 const ProcessingMetricsSchema = SchemaFactory.createForClass(ProcessingMetrics);
 
+@Schema({ _id: false })
+export class DocumentValidator {
+  @Prop({ required: true })
+  userId!: string;
+
+  @Prop({ required: true })
+  username!: string;
+
+  @Prop({ required: true, enum: ['admin', 'validator'] })
+  role!: 'admin' | 'validator';
+}
+
+const DocumentValidatorSchema = SchemaFactory.createForClass(DocumentValidator);
+
 @Schema({ timestamps: true })
 export class IncomingDocument {
   @Prop({ required: true })
@@ -193,6 +207,18 @@ export class IncomingDocument {
 
   @Prop({ type: [ExtractedValueSchema], default: [] })
   extractedData!: ExtractedValue[];
+
+  @Prop({ type: DocumentValidatorSchema })
+  validatedBy?: DocumentValidator;
+
+  @Prop()
+  validatedAt?: Date;
+
+  @Prop({ type: DocumentValidatorSchema })
+  rejectedBy?: DocumentValidator;
+
+  @Prop()
+  rejectedAt?: Date;
 
   @Prop({ type: ProcessingMetricsSchema })
   processingMetrics?: ProcessingMetrics;

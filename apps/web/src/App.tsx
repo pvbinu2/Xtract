@@ -4697,6 +4697,16 @@ function DocumentList({
                 <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
                 <span>
                   <strong>{doc.originalName}</strong>
+                  {doc.validatedBy && (
+                    <small className="document-validator">
+                      <ShieldCheck size={12} /> Validated by {doc.validatedBy.username}
+                    </small>
+                  )}
+                  {doc.rejectedBy && (
+                    <small className="document-reviewer rejected">
+                      <CircleX size={12} /> Rejected by {doc.rejectedBy.username}
+                    </small>
+                  )}
                 </span>
               </span>
               <span className="document-type-capsule">
@@ -4738,8 +4748,9 @@ function DocumentList({
             {canManage && (
               <div className="row-actions">
                 <button
-                  className="icon-button"
-                  title="Reclassify document"
+                  className="icon-button locked-action"
+                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
+                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReclassifyTarget(doc);
@@ -4749,16 +4760,19 @@ function DocumentList({
                   }}
                 >
                   <BrainCircuit size={16} />
+                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
-                  className="icon-button"
-                  title="Reprocess document"
+                  className="icon-button locked-action"
+                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
+                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReprocessTarget(doc);
                   }}
                 >
                   <RotateCcw size={16} />
+                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
                   className="icon-button danger"
@@ -5030,10 +5044,11 @@ function DocumentFlowDialog({
             const showQueueWait = index < baseStatuses.length - 1
               && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
             const isCurrent = status === document.status;
-            const completed = Boolean(timing?.endTime);
+            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed';
+            const completed = Boolean(timing?.endTime) || (isCurrent && isTerminalStatus);
             return (
               <Fragment key={status}>
-                <div className={`document-flow-stage${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+                <div className={`document-flow-stage ${status}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
                   <div className="document-flow-marker">
                     {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
                     {index < statuses.length - 1 && <span />}
@@ -5041,7 +5056,7 @@ function DocumentFlowDialog({
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
                       <strong>{status}</strong>
-                      <span>{isCurrent && !timing?.endTime ? 'In progress' : timing ? completed ? 'Completed' : 'Started' : 'Not started'}</span>
+                      <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
                     </div>
                     <dl>
                       <div>
@@ -5405,6 +5420,10 @@ function ValidationScreen({
       extractionModel: document.processingMetrics?.model,
       processingMode: document.processingMode,
       status: document.status,
+      validatedBy: document.validatedBy,
+      validatedAt: document.validatedAt,
+      rejectedBy: document.rejectedBy,
+      rejectedAt: document.rejectedAt,
       extractedData: normalizedValues,
       exportedAt: new Date().toISOString(),
     });
@@ -5474,6 +5493,20 @@ function ValidationScreen({
                 <span>Classification: {displayModel(document.classificationModel)}</span>
                 <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
               </div>
+              {document.validatedBy && (
+                <div className="validation-audit-line">
+                  <ShieldCheck size={14} />
+                  <span>Validated by <strong>{document.validatedBy.username}</strong></span>
+                  {document.validatedAt && <time>{new Date(document.validatedAt).toLocaleString()}</time>}
+                </div>
+              )}
+              {document.rejectedBy && (
+                <div className="validation-audit-line rejected">
+                  <CircleX size={14} />
+                  <span>Rejected by <strong>{document.rejectedBy.username}</strong></span>
+                  {document.rejectedAt && <time>{new Date(document.rejectedAt).toLocaleString()}</time>}
+                </div>
+              )}
             </div>
             <div className="panel-heading-actions">
               <div className="validation-header-badges">
@@ -5622,8 +5655,7 @@ function ValidationScreen({
             </div>
           )}
         </div>
-        {!isLocked && (
-          <div className="extraction-pane-footer">
+        <div className="extraction-pane-footer">
             <div className="validation-actions">
               <button
                 className="icon-button"
@@ -5656,36 +5688,43 @@ function ValidationScreen({
               {canAdminActions && (
                 <>
                   <button
-                    className="icon-button"
+                    className="icon-button locked-action"
                     type="button"
-                    title="Reclassify document"
+                    title={isLocked ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
                     aria-label="Reclassify document"
+                    disabled={isLocked}
                     onClick={() => setShowReclassifyDialog(true)}
                   >
                     <BrainCircuit size={16} />
+                    {isLocked && <CircleX className="not-allowed-mark" size={12} />}
                   </button>
                   <button
-                    className="icon-button"
+                    className="icon-button locked-action"
                     type="button"
-                    title="Reprocess document"
+                    title={isLocked ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
                     aria-label="Reprocess document"
+                    disabled={isLocked}
                     onClick={() => setShowReprocessDialog(true)}
                   >
                     <RotateCcw size={16} />
+                    {isLocked && <CircleX className="not-allowed-mark" size={12} />}
                   </button>
                 </>
               )}
-              <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
-                <X size={16} />
-                Reject
-              </button>
-              <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
-                <CheckCircle2 size={16} />
-                Validate
-              </button>
+              {!isLocked && (
+                <>
+                  <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
+                    <X size={16} />
+                    Reject
+                  </button>
+                  <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
+                    <CheckCircle2 size={16} />
+                    Validate
+                  </button>
+                </>
+              )}
             </div>
           </div>
-        )}
       </section>
       {tableEditIndex !== null && values[tableEditIndex] && (
         <TableEditDialog
