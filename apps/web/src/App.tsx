@@ -35,6 +35,7 @@ import {
   Trash2,
   Upload,
   Download,
+  Database,
   FileText,
   FileImage,
   FileSpreadsheet,
@@ -60,6 +61,17 @@ type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' |
 type AppConfig = AppConfigPayload;
 type AiProvider = AppConfig['aiProvider'];
 type EmbeddingProvider = AppConfig['embeddingProvider'];
+type TurnstileApi = {
+  render: (container: HTMLElement, options: Record<string, unknown>) => string;
+  execute: (widgetId: string) => void;
+  remove: (widgetId: string) => void;
+};
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
 type OperationsMetrics = {
   filesProcessed: number;
   totalCostUsd: number;
@@ -77,6 +89,62 @@ const defaultOllamaBaseUrl = 'http://127.0.0.1:11434';
 const defaultOllamaModel = 'llama3.2';
 const defaultOpenAIEmbeddingModel = 'text-embedding-3-small';
 const defaultOllamaEmbeddingModel = 'qwen3-embedding:4b';
+let turnstileScriptPromise: Promise<void> | undefined;
+
+function loadTurnstileScript() {
+  if (window.turnstile) return Promise.resolve();
+  if (!turnstileScriptPromise) {
+    turnstileScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Verification could not be loaded. Please try again.'));
+      document.head.appendChild(script);
+    });
+  }
+  return turnstileScriptPromise;
+}
+
+async function requestTurnstileToken(sitekey: string, action: string) {
+  await loadTurnstileScript();
+  if (!window.turnstile) throw new Error('Verification could not be loaded. Please try again.');
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  return new Promise<string>((resolve, reject) => {
+    let widgetId = '';
+    const cleanup = () => {
+      if (widgetId) window.turnstile?.remove(widgetId);
+      container.remove();
+    };
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Verification timed out. Please try again.'));
+    }, 10000);
+    widgetId = window.turnstile!.render(container, {
+      sitekey,
+      action,
+      size: 'invisible',
+      callback: (token: string) => {
+        window.clearTimeout(timeout);
+        cleanup();
+        resolve(token);
+      },
+      'error-callback': () => {
+        window.clearTimeout(timeout);
+        cleanup();
+        reject(new Error('Verification failed. Please try again.'));
+      },
+      'expired-callback': () => {
+        window.clearTimeout(timeout);
+        cleanup();
+        reject(new Error('Verification expired. Please try again.'));
+      },
+    });
+    window.turnstile!.execute(widgetId);
+  });
+}
 const openAIEmbeddingModelOptions = [
   { value: 'text-embedding-3-small', label: 'Text Embedding 3 Small' },
   { value: 'text-embedding-3-large', label: 'Text Embedding 3 Large' },
@@ -538,6 +606,18 @@ function OperationsApp() {
     filesReady: 0,
   });
   const [config, setConfig] = useState<AppConfig>({
+    storageEncryptionEnabled: false,
+    databaseEncryptionEnabled: false,
+    storageEncryptionKeyConfigured: false,
+    databaseEncryptionKeyConfigured: false,
+    cachingEnabled: true,
+    configurationCacheTtlSeconds: 30,
+    turnstileEnabled: false,
+    turnstileSiteKey: '',
+    turnstileSecretKey: '',
+    turnstileSecretKeyConfigured: false,
+    turnstileExpectedHostname: '',
+    turnstileExpectedAction: 'request-demo',
     downstreamUrl: '',
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
@@ -573,6 +653,18 @@ function OperationsApp() {
     try {
       const saved = await api.getConfiguration();
       setConfig({
+        storageEncryptionEnabled: Boolean(saved.storageEncryptionEnabled),
+        databaseEncryptionEnabled: Boolean(saved.databaseEncryptionEnabled),
+        storageEncryptionKeyConfigured: Boolean(saved.storageEncryptionKeyConfigured),
+        databaseEncryptionKeyConfigured: Boolean(saved.databaseEncryptionKeyConfigured),
+        cachingEnabled: saved.cachingEnabled !== false,
+        configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(saved.configurationCacheTtlSeconds) || 30)),
+        turnstileEnabled: Boolean(saved.turnstileEnabled),
+        turnstileSiteKey: saved.turnstileSiteKey || '',
+        turnstileSecretKey: '',
+        turnstileSecretKeyConfigured: Boolean(saved.turnstileSecretKeyConfigured),
+        turnstileExpectedHostname: saved.turnstileExpectedHostname || '',
+        turnstileExpectedAction: saved.turnstileExpectedAction || 'request-demo',
         downstreamUrl: saved.downstreamUrl || '',
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
@@ -609,6 +701,18 @@ function OperationsApp() {
         try {
           const parsed = JSON.parse(storedConfig);
           setConfig({
+            storageEncryptionEnabled: Boolean(parsed.storageEncryptionEnabled),
+            databaseEncryptionEnabled: Boolean(parsed.databaseEncryptionEnabled),
+            storageEncryptionKeyConfigured: Boolean(parsed.storageEncryptionKeyConfigured),
+            databaseEncryptionKeyConfigured: Boolean(parsed.databaseEncryptionKeyConfigured),
+            cachingEnabled: parsed.cachingEnabled !== false,
+            configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(parsed.configurationCacheTtlSeconds) || 30)),
+            turnstileEnabled: Boolean(parsed.turnstileEnabled),
+            turnstileSiteKey: parsed.turnstileSiteKey || '',
+            turnstileSecretKey: '',
+            turnstileSecretKeyConfigured: Boolean(parsed.turnstileSecretKeyConfigured),
+            turnstileExpectedHostname: parsed.turnstileExpectedHostname || '',
+            turnstileExpectedAction: parsed.turnstileExpectedAction || 'request-demo',
             downstreamUrl: parsed.downstreamUrl || '',
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
@@ -948,7 +1052,14 @@ function OperationsApp() {
   }, [darkMode]);
 
   useEffect(() => {
-    localStorage.setItem('xtract-config', JSON.stringify(config));
+    const {
+      apiKey: _apiKey,
+      openAiApiKey: _openAiApiKey,
+      customApiKey: _customApiKey,
+      turnstileSecretKey: _turnstileSecretKey,
+      ...safeConfig
+    } = config;
+    localStorage.setItem('xtract-config', JSON.stringify(safeConfig));
   }, [config]);
 
   useEffect(() => {
@@ -1242,7 +1353,12 @@ function OperationsApp() {
           />
         )}
         {!selectedPageLoading && isAdmin && view === 'demo-requests' && (
-          <DemoRequestsScreen onNotify={showToast} />
+          <DemoRequestsScreen
+            config={config}
+            onConfigChange={setConfig}
+            onSaveConfig={saveConfiguration}
+            onNotify={showToast}
+          />
         )}
         {!selectedPageLoading && isAdmin && view === 'users' && (
           <UserManagementScreen currentUser={currentUser} onNotify={showToast} />
@@ -1313,6 +1429,7 @@ function StatusMetric({ label, value, onClick }: { label: string; value: number 
 function MarketingSite() {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [website, setWebsite] = useState('');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -1321,9 +1438,17 @@ function MarketingSite() {
     setSubmitting(true);
     setStatus(null);
     try {
-      await api.createDemoRequest({ email, phone, source: 'xtractor-marketing-site' });
+      const settings = await api.getDemoRequestSettings();
+      if (settings.turnstileEnabled && !settings.turnstileSiteKey) {
+        throw new Error('Demo verification is temporarily unavailable. Please try again later.');
+      }
+      const turnstileToken = settings.turnstileEnabled
+        ? await requestTurnstileToken(settings.turnstileSiteKey, settings.turnstileAction)
+        : undefined;
+      await api.createDemoRequest({ email, phone, website, turnstileToken });
       setEmail('');
       setPhone('');
+      setWebsite('');
       setStatus({ type: 'success', text: 'Demo request received. We will contact you shortly.' });
     } catch (error) {
       setStatus({ type: 'error', text: error instanceof Error ? error.message : 'Failed to submit request.' });
@@ -1535,6 +1660,17 @@ function MarketingSite() {
                 onChange={(event) => setEmail(event.target.value)}
               />
             </div>
+          </label>
+          <label className="demo-request-honeypot" aria-hidden="true">
+            Website
+            <input
+              type="text"
+              name="website"
+              autoComplete="off"
+              tabIndex={-1}
+              value={website}
+              onChange={(event) => setWebsite(event.target.value)}
+            />
           </label>
           <label>
             Phone <span>optional</span>
@@ -2398,9 +2534,21 @@ function HealthDashboard({
   );
 }
 
-function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+function DemoRequestsScreen({
+  config,
+  onConfigChange,
+  onSaveConfig,
+  onNotify,
+}: {
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+  onSaveConfig: (config: AppConfig) => Promise<AppConfig>;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
+}) {
   const [requests, setRequests] = useState<DemoRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
+  const [savingProtection, setSavingProtection] = useState(false);
+  const [activeTab, setActiveTab] = useState<'requests' | 'settings'>('requests');
 
   async function loadRequests() {
     setLoadingRequests(true);
@@ -2410,6 +2558,17 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
       onNotify(error instanceof Error ? error.message : 'Failed to load demo requests', 'error');
     } finally {
       setLoadingRequests(false);
+    }
+  }
+
+  async function saveProtection() {
+    setSavingProtection(true);
+    try {
+      await onSaveConfig(config);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to save demo request protection', 'error');
+    } finally {
+      setSavingProtection(false);
     }
   }
 
@@ -2434,18 +2593,111 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
               <p>Potential clients who requested a walkthrough from the Xtractor marketing site.</p>
             </div>
           </div>
-          <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
-            {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          {activeTab === 'requests' && (
+            <button className="icon-button" title="Refresh demo requests" onClick={loadRequests}>
+              {loadingRequests ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            </button>
+          )}
+        </div>
+        <div className="demo-request-tabs" role="tablist" aria-label="Demo requests">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'requests'}
+            className={activeTab === 'requests' ? 'active' : ''}
+            onClick={() => setActiveTab('requests')}
+          >
+            <Mail size={15} /> Requests
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'settings'}
+            className={activeTab === 'settings' ? 'active' : ''}
+            onClick={() => setActiveTab('settings')}
+          >
+            <ShieldCheck size={15} /> Settings
           </button>
         </div>
-        <div className="demo-request-summary">
-          <div><Mail size={17} /><span>Total requests<strong>{requests.length}</strong></span></div>
-          <div><TrendingUp size={17} /><span>Lead sources<strong>{sourceCount}</strong></span></div>
-          <div><Clock3 size={17} /><span>Latest request<strong>{latestRequest ? latestRequest.toLocaleDateString() : '—'}</strong></span></div>
-        </div>
+        {activeTab === 'requests' && (
+          <div className="demo-request-summary">
+            <div><Mail size={17} /><span>Total requests<strong>{requests.length}</strong></span></div>
+            <div><TrendingUp size={17} /><span>Lead sources<strong>{sourceCount}</strong></span></div>
+            <div><Clock3 size={17} /><span>Latest request<strong>{latestRequest ? latestRequest.toLocaleDateString() : '—'}</strong></span></div>
+          </div>
+        )}
       </section>
 
-      <section className="panel demo-requests-list">
+      {activeTab === 'settings' && <section className="panel demo-request-protection">
+        <div className="demo-requests-list-heading">
+          <div>
+            <strong><ShieldCheck size={17} /> Demo request protection</strong>
+            <small>Configure Cloudflare Turnstile for the public request form.</small>
+          </div>
+          <button className="primary-button compact" type="button" disabled={savingProtection} onClick={saveProtection}>
+            {savingProtection ? <Loader2 size={15} className="spin" /> : <Save size={15} />}
+            Save protection
+          </button>
+        </div>
+        <div className="turnstile-settings">
+          <label className="turnstile-toggle-card">
+            <input
+              type="checkbox"
+              checked={config.turnstileEnabled}
+              onChange={(event) => onConfigChange({ ...config, turnstileEnabled: event.target.checked })}
+            />
+            <span>
+              <strong>Enable Turnstile verification</strong>
+              <small>When enabled, demo submissions fail closed unless Cloudflare validates the visitor.</small>
+            </span>
+          </label>
+          <label>
+            Site key
+            <input
+              type="text"
+              value={config.turnstileSiteKey}
+              onChange={(event) => onConfigChange({ ...config, turnstileSiteKey: event.target.value })}
+              placeholder="Public Turnstile site key"
+            />
+          </label>
+          <label>
+            <span className="configuration-field-label">
+              Secret key
+              {config.turnstileSecretKeyConfigured && (
+                <CheckCircle2 className="configuration-configured-icon" size={17} aria-label="Secret key configured" />
+              )}
+            </span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={config.turnstileSecretKey}
+              onChange={(event) => onConfigChange({ ...config, turnstileSecretKey: event.target.value })}
+              placeholder={config.turnstileSecretKeyConfigured ? 'Secret configured — enter a new value to replace it' : 'Private Turnstile secret key'}
+            />
+          </label>
+          <label>
+            Expected hostname
+            <input
+              type="text"
+              value={config.turnstileExpectedHostname}
+              onChange={(event) => onConfigChange({ ...config, turnstileExpectedHostname: event.target.value })}
+              placeholder="xtract.example.com"
+            />
+          </label>
+          <label>
+            Expected action
+            <input
+              type="text"
+              value={config.turnstileExpectedAction}
+              onChange={(event) => onConfigChange({ ...config, turnstileExpectedAction: event.target.value })}
+              placeholder="request-demo"
+            />
+          </label>
+          <p className="help-text">The site key is public. The secret is encrypted in MongoDB and is never returned to the browser.</p>
+        </div>
+      </section>}
+
+      {activeTab === 'requests' && <section className="panel demo-requests-list">
         <div className="demo-requests-list-heading">
           <div>
             <strong>Request inbox</strong>
@@ -2480,7 +2732,7 @@ function DemoRequestsScreen({ onNotify }: { onNotify: (notification: string, typ
           </div>
         )}
         </div>
-      </section>
+      </section>}
       </div>
   );
 }
@@ -3073,6 +3325,92 @@ function ConfigurationScreen({
               <p className="help-text">
                 Limits apply to new queue invocations after saving. Higher AI concurrency may increase model rate-limit errors.
               </p>
+          </div>
+        </div>
+
+        <div className="configuration-section caching expanded">
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Database size={20} /></span>
+              <span>
+                <strong>Caching</strong>
+                <small>Control per-process configuration caching and MongoDB refresh frequency</small>
+              </span>
+            </span>
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body caching-settings">
+            <div className={`caching-card${config.cachingEnabled ? ' enabled' : ''}`}>
+              <label className="caching-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={config.cachingEnabled}
+                  onChange={(event) => onConfigChange({ ...config, cachingEnabled: event.target.checked })}
+                />
+                <span>
+                  <strong>In-memory configuration caching</strong>
+                  <small>
+                    {config.cachingEnabled
+                      ? 'Configuration is cached independently in every API and processor instance.'
+                      : 'Every configuration lookup reads directly from MongoDB.'}
+                  </small>
+                </span>
+                <b>{config.cachingEnabled ? 'On' : 'Off'}</b>
+              </label>
+              <label className="caching-ttl-row">
+                <span>
+                  <strong>Cache TTL</strong>
+                  <small>Each instance reloads configuration from MongoDB after this interval.</small>
+                </span>
+                <span className="caching-ttl-input">
+                  <input
+                    type="number"
+                    min={1}
+                    max={86400}
+                    step={1}
+                    disabled={!config.cachingEnabled}
+                    value={config.configurationCacheTtlSeconds}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(event.target.value) || 1)),
+                    })}
+                  />
+                  <span>seconds</span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="configuration-section processing expanded">
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><ShieldCheck size={20} /></span>
+              <span>
+                <strong>Data Encryption</strong>
+                <small>Application-level protection before data reaches storage or the database</small>
+              </span>
+            </span>
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+            <div className="document-processing-option-card">
+              <label className="checkbox-row">
+                <input type="checkbox" checked={config.storageEncryptionEnabled}
+                  onChange={(event) => onConfigChange({ ...config, storageEncryptionEnabled: event.target.checked })} />
+                <span><strong>Processing Storage Encryption</strong><small>Encrypt original, converted, OCR, and markdown processing artifacts.</small></span>
+              </label>
+              <p className="help-text">{config.storageEncryptionKeyConfigured ? 'Encryption key configured.' : config.storageEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+            </div>
+            <div className="document-processing-option-card">
+              <label className="checkbox-row">
+                <input type="checkbox" checked={config.databaseEncryptionEnabled}
+                  onChange={(event) => onConfigChange({ ...config, databaseEncryptionEnabled: event.target.checked })} />
+                <span><strong>Database Extracted-Data Encryption</strong><small>Encrypt only extracted field values before saving them in the database.</small></span>
+              </label>
+              <p className="help-text">{config.databaseEncryptionKeyConfigured ? 'Encryption key configured.' : config.databaseEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+            </div>
+            <p className="help-text">These settings apply only to newly ingested documents. Disabling encryption does not decrypt existing data, which remains readable using the retained keys.</p>
           </div>
         </div>
 

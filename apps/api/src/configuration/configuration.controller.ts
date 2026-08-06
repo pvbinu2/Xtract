@@ -17,6 +17,15 @@ export class ConfigurationController {
   async saveConfiguration(
     @Body()
     body: {
+      storageEncryptionEnabled?: boolean;
+      databaseEncryptionEnabled?: boolean;
+      cachingEnabled?: boolean;
+      configurationCacheTtlSeconds?: number;
+      turnstileEnabled?: boolean;
+      turnstileSiteKey?: string;
+      turnstileSecretKey?: string;
+      turnstileExpectedHostname?: string;
+      turnstileExpectedAction?: string;
       downstreamUrl: string;
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;

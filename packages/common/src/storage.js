@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { BlobServiceClient } = require('@azure/storage-blob');
+const { decryptBuffer, encryptBuffer } = require('./data-encryption');
 
 const TRAIN_CONTAINER = 'train';
 const PROCESSING_CONTAINER = 'processing';
@@ -36,24 +37,29 @@ class AzureBlobStorage {
     return folder ? `${this.safeFolderName(folder)}/${uniqueName}` : uniqueName;
   }
 
-  async uploadBuffer(containerName, blobName, buffer, contentType) {
+  async uploadBuffer(containerName, blobName, buffer, contentType, encryption) {
     const container = this.getClient().getContainerClient(containerName);
     await container.createIfNotExists();
     const blob = container.getBlockBlobClient(blobName);
-    await blob.uploadData(buffer, { blobHTTPHeaders: { blobContentType: contentType || 'application/octet-stream' } });
+    const payload = encryption?.key ? encryptBuffer(buffer, {
+      key: encryption.key, keyVersion: encryption.keyVersion, contentType,
+      context: `${containerName}/${blobName}`,
+    }) : buffer;
+    await blob.uploadData(payload, { blobHTTPHeaders: { blobContentType: encryption?.key ? 'application/octet-stream' : (contentType || 'application/octet-stream') } });
     return { containerName, blobName, url: blob.url };
   }
 
-  async uploadFile(containerName, blobName, filePath, contentType) {
-    return this.uploadBuffer(containerName, blobName, await fs.promises.readFile(filePath), contentType);
+  async uploadFile(containerName, blobName, filePath, contentType, encryption) {
+    return this.uploadBuffer(containerName, blobName, await fs.promises.readFile(filePath), contentType, encryption);
   }
 
-  async downloadBuffer(containerName, blobName) {
-    return this.getClient().getContainerClient(containerName).getBlobClient(blobName).downloadToBuffer();
+  async downloadBuffer(containerName, blobName, encryption = {}) {
+    const value = await this.getClient().getContainerClient(containerName).getBlobClient(blobName).downloadToBuffer();
+    return decryptBuffer(value, { ...encryption, context: `${containerName}/${blobName}` }).buffer;
   }
 
-  async downloadToTemp(containerName, blobName) {
-    const buffer = await this.downloadBuffer(containerName, blobName);
+  async downloadToTemp(containerName, blobName, encryption) {
+    const buffer = await this.downloadBuffer(containerName, blobName, encryption);
     const folder = path.join(os.tmpdir(), 'xtract-storage');
     await fs.promises.mkdir(folder, { recursive: true });
     const filePath = path.join(folder, `${Date.now()}-${Math.round(Math.random() * 1e9)}-${path.basename(blobName)}`);
@@ -66,13 +72,19 @@ class AzureBlobStorage {
     await this.getClient().getContainerClient(containerName).getBlobClient(blobName).deleteIfExists();
   }
 
-  async moveBlob(sourceContainerName, sourceBlobName, targetContainerName, targetBlobName) {
+  async moveBlob(sourceContainerName, sourceBlobName, targetContainerName, targetBlobName, options = {}) {
     const source = this.getClient().getContainerClient(sourceContainerName).getBlobClient(sourceBlobName);
     const targetContainer = this.getClient().getContainerClient(targetContainerName);
     await targetContainer.createIfNotExists();
     const target = targetContainer.getBlockBlobClient(targetBlobName);
-    const [buffer, properties] = await Promise.all([source.downloadToBuffer(), source.getProperties()]);
-    await target.uploadData(buffer, { blobHTTPHeaders: { blobContentType: properties.contentType || 'application/octet-stream' } });
+    const [raw, properties] = await Promise.all([source.downloadToBuffer(), source.getProperties()]);
+    const decoded = decryptBuffer(raw, { ...(options.source || {}), context: `${sourceContainerName}/${sourceBlobName}`, contentType: properties.contentType });
+    const contentType = decoded.contentType || properties.contentType || 'application/octet-stream';
+    const payload = options.target?.key ? encryptBuffer(decoded.buffer, {
+      key: options.target.key, keyVersion: options.target.keyVersion, contentType,
+      context: `${targetContainerName}/${targetBlobName}`,
+    }) : decoded.buffer;
+    await target.uploadData(payload, { blobHTTPHeaders: { blobContentType: options.target?.key ? 'application/octet-stream' : contentType } });
     await source.deleteIfExists();
     return { containerName: targetContainerName, blobName: targetBlobName, url: target.url };
   }

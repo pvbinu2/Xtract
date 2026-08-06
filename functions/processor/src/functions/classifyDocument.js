@@ -2,6 +2,7 @@ const { app, output } = require('@azure/functions');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
 const { withClassificationConcurrency } = require('../aiConcurrency');
 const { publishDocumentChanged } = require('../documentEvents');
+const { getConfiguration } = require('../configurationCache');
 const {
   ObjectId,
   beginDocumentStage,
@@ -41,7 +42,7 @@ async function classifyQueuedDocument(message, context) {
   }
   await beginDocumentStage(documents, document._id, 'classified');
 
-  const configuration = await db.collection('configuration').findOne({});
+  const configuration = await getConfiguration();
   const {
     aiOptions,
     forceClassification,
@@ -78,8 +79,8 @@ async function classifyQueuedDocument(message, context) {
     let classificationUpdate = {};
 
     if (!documentType) {
-      const localFilePath = await resolveDocumentFile(document);
-      const preparedText = await resolvePreparedDocumentText(document);
+      const localFilePath = await resolveDocumentFile(document, configuration);
+      const preparedText = await resolvePreparedDocumentText(document, configuration);
       const localDocument = { ...document, filePath: localFilePath };
       try {
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();

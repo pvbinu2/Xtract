@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { withExtractionConcurrency } = require('../aiConcurrency');
 const { publishDocumentChanged } = require('../documentEvents');
+const { getConfiguration } = require('../configurationCache');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -16,6 +17,7 @@ const {
   markDocumentFailed,
   normalizeDocumentTypeId,
   processingOptionsFor,
+  extractedDataUpdate,
   recordBusinessReviewProcessing,
   removeTempFile,
   resolveDocumentFile,
@@ -449,7 +451,7 @@ async function extractQueuedDocument(message, context) {
   }
   await beginDocumentStage(documents, document._id, 'extracted');
 
-  const configuration = await db.collection('configuration').findOne({});
+  const configuration = await getConfiguration();
   const {
     aiOptions,
     reprocessOptions,
@@ -483,8 +485,8 @@ async function extractQueuedDocument(message, context) {
 
   let localFilePath;
   try {
-    localFilePath = await resolveDocumentFile(document);
-    const preparedText = await resolvePreparedDocumentText(document);
+    localFilePath = await resolveDocumentFile(document, configuration);
+    const preparedText = await resolvePreparedDocumentText(document, configuration);
     const preparedTextMode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
     const effectiveDocumentType = {
       ...documentType,
@@ -575,19 +577,20 @@ async function extractQueuedDocument(message, context) {
       processingMetrics.embeddingCostUsd
     ).toFixed(8));
 
+    const protectedExtractedData = extractedDataUpdate(document, extractedData, configuration);
     await completeDocumentStage(
       documents,
       document._id,
       'extracted',
       {
         ...(payload.classificationUpdate || {}),
-        extractedData,
+        ...protectedExtractedData.$set,
         processingMetrics,
         classificationModel: localDocument.classificationModel,
         processingMode: effectiveProcessingMode,
         error: null,
       },
-      ['reprocessOptions'],
+      ['reprocessOptions', ...Object.keys(protectedExtractedData.$unset || {})],
     );
     await publishDocumentChanged(
       documents,

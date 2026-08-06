@@ -98,6 +98,7 @@ services:
       - OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b
       - SIGNALR_ENABLED=${SIGNALR_ENABLED:-true}
       - JWT_SECRET=${JWT_SECRET:-xtract-local-dev-secret-change-me-32}
+      - CONFIG_ENCRYPTION_KEY=${CONFIG_ENCRYPTION_KEY:-xtract-local-config-encryption-key-change-me}
       - REALTIME_BROADCAST_URL=http://realtime:5080/internal/document-changed
       - REALTIME_HEALTH_URL=http://realtime:5080/health
       - PROCESSOR_HEALTH_URL=http://127.0.0.1:7071/admin/host/status

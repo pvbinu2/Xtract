@@ -1,6 +1,18 @@
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
 
 export type AppConfigPayload = {
+  storageEncryptionEnabled: boolean;
+  databaseEncryptionEnabled: boolean;
+  storageEncryptionKeyConfigured?: boolean;
+  databaseEncryptionKeyConfigured?: boolean;
+  cachingEnabled: boolean;
+  configurationCacheTtlSeconds: number;
+  turnstileEnabled: boolean;
+  turnstileSiteKey: string;
+  turnstileSecretKey: string;
+  turnstileSecretKeyConfigured?: boolean;
+  turnstileExpectedHostname: string;
+  turnstileExpectedAction: string;
   downstreamUrl: string;
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
@@ -83,7 +95,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
-    const message = await response.text();
+    const rawMessage = await response.text();
+    let message = rawMessage;
+    try {
+      const parsed = JSON.parse(rawMessage) as { message?: string | string[] };
+      message = Array.isArray(parsed.message) ? parsed.message.join(' ') : parsed.message || rawMessage;
+    } catch {
+      // Keep non-JSON error responses unchanged.
+    }
     throw new Error(message || `Request failed: ${response.status}`);
   }
   return response.json();
@@ -249,8 +268,9 @@ export const api = {
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
   getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
   resetBusinessReview: () => request<{ reset: boolean }>('/documents/business-review', { method: 'DELETE' }),
-  createDemoRequest: (payload: { email: string; phone?: string; source?: string }) =>
-    request<DemoRequest>('/demo-requests', {
+  getDemoRequestSettings: () => request<{ turnstileEnabled: boolean; turnstileSiteKey: string; turnstileAction: string }>('/demo-requests/settings'),
+  createDemoRequest: (payload: { email: string; phone?: string; turnstileToken?: string; website?: string }) =>
+    request<{ accepted: boolean }>('/demo-requests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

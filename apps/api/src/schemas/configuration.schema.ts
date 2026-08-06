@@ -7,6 +7,44 @@ export type ClassificationMode = 'vector' | 'llm' | 'rag';
 
 @Schema({ collection: 'configuration' })
 export class Configuration {
+  @Prop({ default: false })
+  storageEncryptionEnabled!: boolean;
+
+  @Prop({ default: false })
+  databaseEncryptionEnabled!: boolean;
+
+  @Prop({ default: '', select: false })
+  encryptedStorageDataKey!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedDatabaseDataKey!: string;
+
+  @Prop({ default: 1 })
+  storageEncryptionKeyVersion!: number;
+
+  @Prop({ default: 1 })
+  databaseEncryptionKeyVersion!: number;
+  @Prop({ default: true })
+  cachingEnabled!: boolean;
+
+  @Prop({ default: 30, min: 1, max: 86400 })
+  configurationCacheTtlSeconds!: number;
+
+  @Prop({ default: false })
+  turnstileEnabled!: boolean;
+
+  @Prop({ default: '' })
+  turnstileSiteKey!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedTurnstileSecretKey!: string;
+
+  @Prop({ default: '' })
+  turnstileExpectedHostname!: string;
+
+  @Prop({ default: 'request-demo' })
+  turnstileExpectedAction!: string;
+
   @Prop({ required: true })
   downstreamUrl!: string;
 

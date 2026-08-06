@@ -16,7 +16,9 @@ const {
 } = require('../documentProcessingCommon');
 const { extractDocumentContent } = require('../documentText');
 const { publishDocumentChanged } = require('../documentEvents');
+const { getConfiguration } = require('../configurationCache');
 const { imageBufferToPdf, isImageDocument } = require('../imageToPdf');
+const { resolveDataEncryptionSettings } = require('@xtract/common');
 const {
   PROCESSING_CONTAINER,
   deleteBlob,
@@ -72,13 +74,19 @@ async function prepareDocumentText(message, context) {
 
   let localFilePath;
   try {
+    const configuration = await getConfiguration();
+    const settings = resolveDataEncryptionSettings(configuration);
+    const storageEncryption = document.encryptionPolicy?.storageEncryptionEnabled
+      ? { key: settings.storage.key, keyVersion: Number(document.encryptionPolicy.storageEncryptionKeyVersion) || 1 }
+      : undefined;
+    const storageKeys = { keys: settings.storage.key ? { [String(settings.storage.keyVersion)]: settings.storage.key } : {} };
     if (isImageDocument(document) && !document.convertedToPdf) {
-      localFilePath = await resolveDocumentFile(document);
+      localFilePath = await resolveDocumentFile(document, configuration);
       const pdfBuffer = await imageBufferToPdf(await fs.readFile(localFilePath));
       const previousContainer = document.storageContainer;
       const previousBlobName = document.storageBlobName;
       const pdfBlobName = convertedPdfBlobName(document);
-      await uploadBuffer(PROCESSING_CONTAINER, pdfBlobName, pdfBuffer, 'application/pdf');
+      await uploadBuffer(PROCESSING_CONTAINER, pdfBlobName, pdfBuffer, 'application/pdf', storageEncryption);
       await documents.updateOne(
         { _id: document._id },
         {
@@ -113,7 +121,7 @@ async function prepareDocumentText(message, context) {
     if (document.storageContainer === PROCESSING_CONTAINER && document.storageBlobName) {
       const nextSourceBlobName = sourceBlobName(document);
       if (document.storageBlobName !== nextSourceBlobName) {
-        await moveBlob(PROCESSING_CONTAINER, document.storageBlobName, PROCESSING_CONTAINER, nextSourceBlobName);
+        await moveBlob(PROCESSING_CONTAINER, document.storageBlobName, PROCESSING_CONTAINER, nextSourceBlobName, { source: storageKeys, target: storageEncryption });
         await documents.updateOne(
           { _id: document._id },
           {
@@ -134,9 +142,8 @@ async function prepareDocumentText(message, context) {
       }
     }
 
-    const configuration = await db.collection('configuration').findOne({});
     const { documentTextMode, textOptions } = processingOptionsFor(document, configuration);
-    localFilePath = await resolveDocumentFile(document);
+    localFilePath = await resolveDocumentFile(document, configuration);
     const content = await extractDocumentContent(localFilePath, undefined, {
       ...textOptions,
       fileName: document.convertedToPdf
@@ -149,6 +156,7 @@ async function prepareDocumentText(message, context) {
       artifactBlobName,
       Buffer.from(content.text, 'utf8'),
       documentTextMode === 'markdown' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8',
+      storageEncryption,
     );
     if (
       document.textArtifactContainer &&

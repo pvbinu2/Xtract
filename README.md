@@ -53,6 +53,7 @@ Xtract is designed for organizations that need to automate document processing w
 - **API**: NestJS
 - **Persistence**: MongoDB
 - **Document storage and queueing**: Azure Blob Storage and Azure Queue Storage, with Azurite for local development
+- **Configuration cache**: Per-process in-memory caching with periodic MongoDB refresh
 - **Processing worker**: JavaScript Azure Function
 - **Markdown extraction**: Python Azure Function using Docling
 - **Vector search**: Qdrant
@@ -100,6 +101,16 @@ VITE_REALTIME_URL=http://127.0.0.1:5080/hubs/documents
 ```
 
 The Function broadcaster consumes `document-events` and posts each event to the internal endpoint. The hub broadcasts `documentChanged` to authenticated admin and validator clients. The browser applies status events immediately and performs a debounced REST refresh. Set `WEB_ORIGIN` to the allowed browser origins. When `SIGNALR_ENABLED=false` or `VITE_REALTIME_URL` is absent, processing and manual REST refresh continue without real-time updates.
+
+### Configuration Cache
+
+The Configuration screen can enable or disable per-process caching and stores its TTL in MongoDB. The default is enabled with a 30-second TTL. Concurrent cold or refresh requests are coalesced into one MongoDB read. If an enabled-cache refresh fails after a successful load, the last in-memory configuration remains available and a warning is logged. When caching is disabled, every lookup reads MongoDB and failures never return stale configuration.
+
+### Demo Request Protection
+
+The public demo-request form supports Cloudflare Turnstile configured from the admin Configuration screen. The public site key, expected hostname, and action are stored in MongoDB; the secret key is encrypted and is never returned to the browser. When enabled, verification fails closed. The API also applies a five-request-per-ten-minute in-process IP limit, a 16 KB JSON limit, a honeypot, strict field validation, and 24-hour duplicate suppression.
+
+For local development, leave Turnstile disabled or configure Cloudflare's official invisible test site key `1x00000000000000000000BB` and passing test secret `1x0000000000000000000000000000000AA`, with the expected hostname set to `localhost`. Production must use a real widget and should place the API behind Azure Front Door WAF; application rate limiting alone is not volumetric DDoS protection.
 
 ### Docling Markdown Extraction
 
