@@ -1,6 +1,8 @@
 const path = require('path');
 const { app, output } = require('@azure/functions');
-const { ObjectId, getClient } = require('../documentProcessingCommon');
+const { ObjectId, encryptionPolicyFor, extractedDataUpdate, getClient } = require('../documentProcessingCommon');
+const { getConfiguration } = require('../configurationCache');
+const { resolveDataEncryptionSettings } = require('@xtract/common');
 const { publishDocumentChanged } = require('../documentEvents');
 const {
   PROCESSING_CONTAINER,
@@ -73,11 +75,16 @@ async function ingestTriggeredDocument(_blob, context) {
 
   const originalName = path.basename(triggerBlobName);
   const documentId = new ObjectId();
+  const configuration = await getConfiguration();
+  const settings = resolveDataEncryptionSettings(configuration);
+  const encryptionPolicy = encryptionPolicyFor(configuration);
   const processingBlobName = createBlobName(originalName, String(documentId));
-  await moveBlob(TRIGGER_CONTAINER, triggerBlobName, PROCESSING_CONTAINER, processingBlobName);
+  await moveBlob(TRIGGER_CONTAINER, triggerBlobName, PROCESSING_CONTAINER, processingBlobName, {
+    target: settings.storage.enabled ? { key: settings.storage.key, keyVersion: settings.storage.keyVersion } : undefined,
+  });
 
   const now = new Date();
-  const result = await documents.insertOne({
+  const newDocument = {
     _id: documentId,
     fileName: processingBlobName,
     originalName,
@@ -93,10 +100,13 @@ async function ingestTriggeredDocument(_blob, context) {
     status: 'received',
     stageTimings: [{ status: 'received', startTime: now, endTime: now }],
     revision: 1,
-    extractedData: [],
+    encryptionPolicy,
     createdAt: now,
     updatedAt: now,
-  });
+  };
+  const initial = extractedDataUpdate(newDocument, [], configuration);
+  Object.assign(newDocument, initial.$set);
+  const result = await documents.insertOne(newDocument);
 
   context.info(`Ingested trigger blob ${triggerBlobName} as document ${result.insertedId}.`);
   await publishDocumentChanged(documents, result.insertedId, ['status'], context);

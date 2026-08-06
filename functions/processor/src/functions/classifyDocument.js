@@ -79,8 +79,8 @@ async function classifyQueuedDocument(message, context) {
     let classificationUpdate = {};
 
     if (!documentType) {
-      const localFilePath = await resolveDocumentFile(document);
-      const preparedText = await resolvePreparedDocumentText(document);
+      const localFilePath = await resolveDocumentFile(document, configuration);
+      const preparedText = await resolvePreparedDocumentText(document, configuration);
       const localDocument = { ...document, filePath: localFilePath };
       try {
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();

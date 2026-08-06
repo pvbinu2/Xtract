@@ -125,6 +125,13 @@ const DocumentValidatorSchema = SchemaFactory.createForClass(DocumentValidator);
 
 @Schema({ timestamps: true })
 export class IncomingDocument {
+  @Prop({ type: Object, default: undefined, immutable: true })
+  encryptionPolicy?: {
+    storageEncryptionEnabled: boolean;
+    databaseEncryptionEnabled: boolean;
+    storageEncryptionKeyVersion?: number;
+    databaseEncryptionKeyVersion?: number;
+  };
   @Prop({ required: true })
   fileName!: string;
 
@@ -205,8 +212,11 @@ export class IncomingDocument {
   @Prop({ default: 0 })
   revision!: number;
 
-  @Prop({ type: [ExtractedValueSchema], default: [] })
-  extractedData!: ExtractedValue[];
+  @Prop({ type: [ExtractedValueSchema], default: undefined })
+  extractedData?: ExtractedValue[];
+
+  @Prop({ type: Object, default: undefined })
+  encryptedExtractedData?: Record<string, unknown>;
 
   @Prop({ type: DocumentValidatorSchema })
   validatedBy?: DocumentValidator;

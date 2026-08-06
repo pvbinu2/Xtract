@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { ConfigurationCache, decryptSecret, encryptSecret } from '@xtract/common';
+import { ConfigurationCache, decryptSecret, encryptSecret, generateDataEncryptionKey } from '@xtract/common';
 import { Configuration, ConfigurationDocument } from '../schemas/configuration.schema';
 
 @Injectable()
@@ -17,7 +17,7 @@ export class ConfigurationService {
   private loadRaw() {
     return this.configModel
       .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
       .lean()
       .exec()
       .then((config) => config || {});
@@ -25,6 +25,10 @@ export class ConfigurationService {
 
   private normalize(config: any = {}) {
     const defaults = {
+      storageEncryptionEnabled: false,
+      databaseEncryptionEnabled: false,
+      storageEncryptionKeyVersion: 1,
+      databaseEncryptionKeyVersion: 1,
       cachingEnabled: true,
       configurationCacheTtlSeconds: 30,
       turnstileEnabled: false,
@@ -56,6 +60,8 @@ export class ConfigurationService {
     return {
       ...defaults,
       ...config,
+      storageEncryptionEnabled: Boolean(config?.storageEncryptionEnabled),
+      databaseEncryptionEnabled: Boolean(config?.databaseEncryptionEnabled),
       cachingEnabled: config?.cachingEnabled !== false,
       configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(config?.configurationCacheTtlSeconds) || 30)),
       turnstileEnabled: Boolean(config?.turnstileEnabled),
@@ -97,12 +103,18 @@ export class ConfigurationService {
     const turnstileSecretKey = config?.encryptedTurnstileSecretKey
       ? decryptSecret(config.encryptedTurnstileSecretKey)
       : '';
+    const storageDataEncryptionKey = config?.encryptedStorageDataKey ? decryptSecret(config.encryptedStorageDataKey) : '';
+    const databaseDataEncryptionKey = config?.encryptedDatabaseDataKey ? decryptSecret(config.encryptedDatabaseDataKey) : '';
     return {
       ...normalized,
       openAiApiKey,
       customApiKey,
       turnstileSecretKey,
       turnstileSecretKeyConfigured: Boolean(turnstileSecretKey),
+      storageDataEncryptionKey,
+      databaseDataEncryptionKey,
+      storageEncryptionKeyConfigured: Boolean(storageDataEncryptionKey),
+      databaseEncryptionKeyConfigured: Boolean(databaseDataEncryptionKey),
       apiKey: normalized.aiProvider === 'custom' ? customApiKey : openAiApiKey,
       openAiApiKeyConfigured: Boolean(openAiApiKey),
       customApiKeyConfigured: Boolean(customApiKey),
@@ -110,12 +122,14 @@ export class ConfigurationService {
       encryptedOpenAiApiKey: undefined,
       encryptedCustomApiKey: undefined,
       encryptedTurnstileSecretKey: undefined,
+      encryptedStorageDataKey: undefined,
+      encryptedDatabaseDataKey: undefined,
     } as Configuration;
   }
 
   async getPublic(): Promise<Configuration> {
     const runtime: any = await this.get();
-    const { apiKey, openAiApiKey, customApiKey, turnstileSecretKey, ...publicConfig } = runtime;
+    const { apiKey, openAiApiKey, customApiKey, turnstileSecretKey, storageDataEncryptionKey, databaseDataEncryptionKey, ...publicConfig } = runtime;
     return {
       ...publicConfig,
       apiKey: '',
@@ -130,6 +144,8 @@ export class ConfigurationService {
 
   async save(config: {
     cachingEnabled?: boolean;
+    storageEncryptionEnabled?: boolean;
+    databaseEncryptionEnabled?: boolean;
     configurationCacheTtlSeconds?: number;
     turnstileEnabled?: boolean;
     turnstileSiteKey?: string;
@@ -182,7 +198,7 @@ export class ConfigurationService {
     const extractionConcurrency = Math.min(16, Math.max(1, Number(config.extractionConcurrency) || 1));
     const existing: any = await this.configModel
       .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
       .lean()
       .exec();
     const encryptedOpenAiApiKey = config.openAiApiKey?.trim()
@@ -196,6 +212,19 @@ export class ConfigurationService {
     const encryptedTurnstileSecretKey = config.turnstileSecretKey?.trim()
       ? encryptSecret(config.turnstileSecretKey.trim())
       : existing?.encryptedTurnstileSecretKey || '';
+    let encryptedStorageDataKey = existing?.encryptedStorageDataKey || '';
+    let encryptedDatabaseDataKey = existing?.encryptedDatabaseDataKey || '';
+    try {
+      if ((config.storageEncryptionEnabled || config.databaseEncryptionEnabled) && !process.env.CONFIG_ENCRYPTION_KEY) {
+        throw new Error('master key missing');
+      }
+      if (config.storageEncryptionEnabled && !encryptedStorageDataKey) encryptedStorageDataKey = encryptSecret(generateDataEncryptionKey());
+      if (config.databaseEncryptionEnabled && !encryptedDatabaseDataKey) encryptedDatabaseDataKey = encryptSecret(generateDataEncryptionKey());
+      if (config.storageEncryptionEnabled && encryptedStorageDataKey) decryptSecret(encryptedStorageDataKey);
+      if (config.databaseEncryptionEnabled && encryptedDatabaseDataKey) decryptSecret(encryptedDatabaseDataKey);
+    } catch {
+      throw new BadRequestException('CONFIG_ENCRYPTION_KEY must be configured before application-level encryption can be enabled.');
+    }
     if (turnstileSiteKey.length > 64 || (config.turnstileSecretKey?.trim().length || 0) > 128) {
       throw new BadRequestException('Turnstile credentials are too long.');
     }
@@ -227,6 +256,12 @@ export class ConfigurationService {
           turnstileExpectedHostname,
           turnstileExpectedAction,
           encryptedTurnstileSecretKey,
+          storageEncryptionEnabled: Boolean(config.storageEncryptionEnabled),
+          databaseEncryptionEnabled: Boolean(config.databaseEncryptionEnabled),
+          encryptedStorageDataKey,
+          encryptedDatabaseDataKey,
+          storageEncryptionKeyVersion: Number(existing?.storageEncryptionKeyVersion) || 1,
+          databaseEncryptionKeyVersion: Number(existing?.databaseEncryptionKeyVersion) || 1,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           documentTextMode,
@@ -255,7 +290,7 @@ export class ConfigurationService {
           setDefaultsOnInsert: true,
         },
       )
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
       .lean()
       .exec();
     this.cache.replace(updated || {});

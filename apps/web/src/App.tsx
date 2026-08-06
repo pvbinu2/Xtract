@@ -606,6 +606,10 @@ function OperationsApp() {
     filesReady: 0,
   });
   const [config, setConfig] = useState<AppConfig>({
+    storageEncryptionEnabled: false,
+    databaseEncryptionEnabled: false,
+    storageEncryptionKeyConfigured: false,
+    databaseEncryptionKeyConfigured: false,
     cachingEnabled: true,
     configurationCacheTtlSeconds: 30,
     turnstileEnabled: false,
@@ -649,6 +653,10 @@ function OperationsApp() {
     try {
       const saved = await api.getConfiguration();
       setConfig({
+        storageEncryptionEnabled: Boolean(saved.storageEncryptionEnabled),
+        databaseEncryptionEnabled: Boolean(saved.databaseEncryptionEnabled),
+        storageEncryptionKeyConfigured: Boolean(saved.storageEncryptionKeyConfigured),
+        databaseEncryptionKeyConfigured: Boolean(saved.databaseEncryptionKeyConfigured),
         cachingEnabled: saved.cachingEnabled !== false,
         configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(saved.configurationCacheTtlSeconds) || 30)),
         turnstileEnabled: Boolean(saved.turnstileEnabled),
@@ -693,6 +701,10 @@ function OperationsApp() {
         try {
           const parsed = JSON.parse(storedConfig);
           setConfig({
+            storageEncryptionEnabled: Boolean(parsed.storageEncryptionEnabled),
+            databaseEncryptionEnabled: Boolean(parsed.databaseEncryptionEnabled),
+            storageEncryptionKeyConfigured: Boolean(parsed.storageEncryptionKeyConfigured),
+            databaseEncryptionKeyConfigured: Boolean(parsed.databaseEncryptionKeyConfigured),
             cachingEnabled: parsed.cachingEnabled !== false,
             configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(parsed.configurationCacheTtlSeconds) || 30)),
             turnstileEnabled: Boolean(parsed.turnstileEnabled),
@@ -3367,6 +3379,38 @@ function ConfigurationScreen({
                 </span>
               </label>
             </div>
+          </div>
+        </div>
+
+        <div className="configuration-section processing expanded">
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><ShieldCheck size={20} /></span>
+              <span>
+                <strong>Data Encryption</strong>
+                <small>Application-level protection before data reaches storage or the database</small>
+              </span>
+            </span>
+            <ChevronUp size={18} />
+          </div>
+          <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+            <div className="document-processing-option-card">
+              <label className="checkbox-row">
+                <input type="checkbox" checked={config.storageEncryptionEnabled}
+                  onChange={(event) => onConfigChange({ ...config, storageEncryptionEnabled: event.target.checked })} />
+                <span><strong>Processing Storage Encryption</strong><small>Encrypt original, converted, OCR, and markdown processing artifacts.</small></span>
+              </label>
+              <p className="help-text">{config.storageEncryptionKeyConfigured ? 'Encryption key configured.' : config.storageEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+            </div>
+            <div className="document-processing-option-card">
+              <label className="checkbox-row">
+                <input type="checkbox" checked={config.databaseEncryptionEnabled}
+                  onChange={(event) => onConfigChange({ ...config, databaseEncryptionEnabled: event.target.checked })} />
+                <span><strong>Database Extracted-Data Encryption</strong><small>Encrypt only extracted field values before saving them in the database.</small></span>
+              </label>
+              <p className="help-text">{config.databaseEncryptionKeyConfigured ? 'Encryption key configured.' : config.databaseEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+            </div>
+            <p className="help-text">These settings apply only to newly ingested documents. Disabling encryption does not decrypt existing data, which remains readable using the retained keys.</p>
           </div>
         </div>
 

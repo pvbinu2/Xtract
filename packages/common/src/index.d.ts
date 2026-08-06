@@ -6,6 +6,17 @@ export const PROCESSING_CONTAINER: string;
 export const TRIGGER_CONTAINER: string;
 export function encryptSecret(value: string): string;
 export function decryptSecret(value?: string): string;
+export function generateDataEncryptionKey(): string;
+export type DataEncryptionEnvelope = { version: number; keyVersion: number; algorithm: string; iv: string; tag: string; ciphertext: string };
+export function encryptJson<T>(value: T, options: { key: string; keyVersion?: number; context: string }): DataEncryptionEnvelope;
+export function decryptJson<T>(value: DataEncryptionEnvelope, options: { key?: string; keys?: Record<string, string>; context: string }): T;
+export function encryptBuffer(value: Buffer, options: { key: string; keyVersion?: number; context: string; contentType?: string }): Buffer;
+export function decryptBuffer(value: Buffer, options?: { key?: string; keys?: Record<string, string>; context?: string; contentType?: string }): { buffer: Buffer; encrypted: boolean; contentType?: string; keyVersion?: number };
+export function isEncryptedBuffer(value: Buffer): boolean;
+export function resolveDataEncryptionSettings(config: Record<string, any>): {
+  storage: { enabled: boolean; keyVersion: number; key: string };
+  database: { enabled: boolean; keyVersion: number; key: string };
+};
 
 export class ConfigurationCache<T = Record<string, unknown>> {
   constructor(options: {
@@ -33,12 +44,15 @@ export class AzureBlobStorage {
   isConfigured(): boolean;
   safeFolderName(value: string): string;
   createBlobName(originalName: string, folder?: string): string;
-  uploadBuffer(containerName: string, blobName: string, buffer: Buffer, contentType?: string): Promise<{containerName: string; blobName: string; url: string}>;
-  uploadFile(containerName: string, blobName: string, filePath: string, contentType?: string): Promise<{containerName: string; blobName: string; url: string}>;
-  downloadBuffer(containerName: string, blobName: string): Promise<Buffer>;
-  downloadToTemp(containerName: string, blobName: string): Promise<string>;
+  uploadBuffer(containerName: string, blobName: string, buffer: Buffer, contentType?: string, encryption?: {key: string; keyVersion: number}): Promise<{containerName: string; blobName: string; url: string}>;
+  uploadFile(containerName: string, blobName: string, filePath: string, contentType?: string, encryption?: {key: string; keyVersion: number}): Promise<{containerName: string; blobName: string; url: string}>;
+  downloadBuffer(containerName: string, blobName: string, encryption?: {key?: string; keys?: Record<string,string>}): Promise<Buffer>;
+  downloadToTemp(containerName: string, blobName: string, encryption?: {key?: string; keys?: Record<string,string>}): Promise<string>;
   deleteBlob(containerName?: string, blobName?: string): Promise<void>;
-  moveBlob(sourceContainerName: string, sourceBlobName: string, targetContainerName: string, targetBlobName: string): Promise<{containerName: string; blobName: string; url: string}>;
+  moveBlob(sourceContainerName: string, sourceBlobName: string, targetContainerName: string, targetBlobName: string, options?: {
+    source?: {key?: string; keys?: Record<string,string>};
+    target?: {key: string; keyVersion: number};
+  }): Promise<{containerName: string; blobName: string; url: string}>;
   removeTempFile(filePath?: string): Promise<void>;
 }
 

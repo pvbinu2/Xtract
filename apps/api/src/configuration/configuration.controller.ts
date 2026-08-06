@@ -17,6 +17,8 @@ export class ConfigurationController {
   async saveConfiguration(
     @Body()
     body: {
+      storageEncryptionEnabled?: boolean;
+      databaseEncryptionEnabled?: boolean;
       cachingEnabled?: boolean;
       configurationCacheTtlSeconds?: number;
       turnstileEnabled?: boolean;

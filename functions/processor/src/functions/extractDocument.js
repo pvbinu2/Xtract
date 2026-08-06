@@ -17,6 +17,7 @@ const {
   markDocumentFailed,
   normalizeDocumentTypeId,
   processingOptionsFor,
+  extractedDataUpdate,
   recordBusinessReviewProcessing,
   removeTempFile,
   resolveDocumentFile,
@@ -484,8 +485,8 @@ async function extractQueuedDocument(message, context) {
 
   let localFilePath;
   try {
-    localFilePath = await resolveDocumentFile(document);
-    const preparedText = await resolvePreparedDocumentText(document);
+    localFilePath = await resolveDocumentFile(document, configuration);
+    const preparedText = await resolvePreparedDocumentText(document, configuration);
     const preparedTextMode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
     const effectiveDocumentType = {
       ...documentType,
@@ -576,19 +577,20 @@ async function extractQueuedDocument(message, context) {
       processingMetrics.embeddingCostUsd
     ).toFixed(8));
 
+    const protectedExtractedData = extractedDataUpdate(document, extractedData, configuration);
     await completeDocumentStage(
       documents,
       document._id,
       'extracted',
       {
         ...(payload.classificationUpdate || {}),
-        extractedData,
+        ...protectedExtractedData.$set,
         processingMetrics,
         classificationModel: localDocument.classificationModel,
         processingMode: effectiveProcessingMode,
         error: null,
       },
-      ['reprocessOptions'],
+      ['reprocessOptions', ...Object.keys(protectedExtractedData.$unset || {})],
     );
     await publishDocumentChanged(
       documents,

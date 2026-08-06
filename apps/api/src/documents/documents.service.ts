@@ -22,6 +22,7 @@ import {
 import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
 import type { AuthenticatedUser } from '../auth/auth.guard';
+import { decryptJson, encryptJson, resolveDataEncryptionSettings } from '@xtract/common';
 
 @Injectable()
 export class DocumentsService {
@@ -38,6 +39,43 @@ export class DocumentsService {
 
   private escapeRegex(input: string) {
     return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private async encryptionSettings() {
+    return resolveDataEncryptionSettings(await this.configurationService.get() as any);
+  }
+
+  private async storageReadKeys() {
+    const settings = await this.encryptionSettings();
+    return { keys: settings.storage.key ? { [String(settings.storage.keyVersion)]: settings.storage.key } : {} };
+  }
+
+  private policyFor(settings: any) {
+    return {
+      storageEncryptionEnabled: settings.storage.enabled,
+      databaseEncryptionEnabled: settings.database.enabled,
+      storageEncryptionKeyVersion: settings.storage.enabled ? settings.storage.keyVersion : undefined,
+      databaseEncryptionKeyVersion: settings.database.enabled ? settings.database.keyVersion : undefined,
+    };
+  }
+
+  private decryptExtractedData(document: any, settings: any): ExtractedValue[] {
+    if (!document.encryptedExtractedData) return document.extractedData || [];
+    return decryptJson(document.encryptedExtractedData, {
+      keys: { [String(settings.database.keyVersion)]: settings.database.key },
+      context: `${String(document._id)}:extractedData`,
+    }) as ExtractedValue[];
+  }
+
+  private extractedDataUpdate(document: any, data: ExtractedValue[], settings: any) {
+    if (!document.encryptionPolicy?.databaseEncryptionEnabled) {
+      return { $set: { extractedData: data }, $unset: { encryptedExtractedData: '' } };
+    }
+    const keyVersion = Number(document.encryptionPolicy.databaseEncryptionKeyVersion) || 1;
+    return {
+      $set: { encryptedExtractedData: encryptJson(data, { key: settings.database.key, keyVersion, context: `${String(document._id)}:extractedData` }) },
+      $unset: { extractedData: '' },
+    };
   }
 
   private transitionStatus(
@@ -65,7 +103,7 @@ export class DocumentsService {
     sort?: string;
     page?: string;
     pageSize?: string;
-  }) {
+  }): Promise<any> {
     const filter: Record<string, unknown> = {};
     if (query.status === 'in-progress') {
       filter.status = { $in: ['received', 'preprocessed', 'classified', 'uploaded', 'processing'] };
@@ -80,12 +118,12 @@ export class DocumentsService {
     const pageSize = Math.min(Math.max(Number(query.pageSize) || 25, 5), 100);
     const skip = (page - 1) * pageSize;
     const [items, total] = await Promise.all([
-      this.documentModel.find(filter).sort(sort).skip(skip).limit(pageSize).lean(),
+      this.documentModel.find(filter).select('-extractedData -encryptedExtractedData').sort(sort).skip(skip).limit(pageSize).lean(),
       this.documentModel.countDocuments(filter),
     ]);
 
     return {
-      items,
+      items: items.map((item) => ({ ...item, extractedData: [] })),
       total,
       page,
       pageSize,
@@ -100,9 +138,10 @@ export class DocumentsService {
     mimeType?: string;
     category?: string;
     documentTypeId?: string;
-  }[]) {
+  }[]): Promise<any> {
     this.queueConnectionString();
     const documents = [] as IncomingDocumentDocument[];
+    const settings = await this.encryptionSettings();
 
     for (const item of payload) {
       const docType = item.documentTypeId ? await this.documentTypeModel.findById(item.documentTypeId) : undefined;
@@ -110,7 +149,13 @@ export class DocumentsService {
 
       const documentId = new Types.ObjectId();
       const blobName = this.blobStorage.createBlobName(item.originalName, documentId.toString());
-      await this.blobStorage.uploadBuffer(PROCESSING_CONTAINER, blobName, item.buffer, item.mimeType);
+      await this.blobStorage.uploadBuffer(PROCESSING_CONTAINER, blobName, item.buffer, item.mimeType,
+        settings.storage.enabled ? { key: settings.storage.key, keyVersion: settings.storage.keyVersion } : undefined);
+
+      const encryptionPolicy = this.policyFor(settings);
+      const initialPayload = settings.database.enabled
+        ? { encryptedExtractedData: encryptJson([], { key: settings.database.key, keyVersion: settings.database.keyVersion, context: `${documentId}:extractedData` }) }
+        : { extractedData: [] };
 
       const document = await this.documentModel.create({
         _id: documentId,
@@ -133,7 +178,8 @@ export class DocumentsService {
           endTime: new Date(),
         }],
         revision: 1,
-        extractedData: [],
+        encryptionPolicy,
+        ...initialPayload,
       });
 
       documents.push(document);
@@ -185,7 +231,7 @@ export class DocumentsService {
     }
   }
 
-  async reprocess(id: string, options: ReprocessOptions = {}) {
+  async reprocess(id: string, options: ReprocessOptions = {}): Promise<any> {
     const document = await this.documentModel.findById(id);
     if (!document) throw new NotFoundException('Document not found');
     if (document.status === 'validated' || document.status === 'rejected') {
@@ -208,7 +254,7 @@ export class DocumentsService {
     this.queueConnectionString();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
-    document.extractedData = [];
+    const settings = await this.encryptionSettings();
     document.validatedBy = undefined;
     document.validatedAt = undefined;
     document.rejectedBy = undefined;
@@ -224,6 +270,7 @@ export class DocumentsService {
       forceClassification,
     };
     await document.save();
+    await this.documentModel.updateOne({ _id: document._id }, this.extractedDataUpdate(document, [], settings));
     await this.publishDocumentChanged(document, ['status', 'extractedData', 'validatedBy', 'validatedAt', 'rejectedBy', 'rejectedAt']);
 
     await this.enqueueProcessing(document.id);
@@ -231,10 +278,11 @@ export class DocumentsService {
     return this.findById(document.id);
   }
 
-  async findById(id: string) {
+  async findById(id: string): Promise<any> {
     const document = await this.documentModel.findById(id).lean();
     if (!document) throw new NotFoundException('Document not found');
-    return document;
+    const settings = await this.encryptionSettings();
+    return { ...document, extractedData: this.decryptExtractedData(document, settings), encryptedExtractedData: undefined };
   }
 
   async getFile(id: string) {
@@ -243,8 +291,8 @@ export class DocumentsService {
 
     if (document.storageContainer && document.storageBlobName) {
       return {
-        buffer: await this.blobStorage.downloadBuffer(document.storageContainer, document.storageBlobName),
-        contentType: 'application/pdf',
+        buffer: await this.blobStorage.downloadBuffer(document.storageContainer, document.storageBlobName, await this.storageReadKeys()),
+        contentType: document.convertedToPdf ? 'application/pdf' : (document.mimeType || 'application/octet-stream'),
       };
     }
 
@@ -266,6 +314,7 @@ export class DocumentsService {
       buffer: await this.blobStorage.downloadBuffer(
         document.textArtifactContainer,
         document.textArtifactBlobName,
+        await this.storageReadKeys(),
       ),
       contentType: document.textArtifactMode === 'markdown'
         ? 'text/markdown; charset=utf-8'
@@ -307,14 +356,14 @@ export class DocumentsService {
   }
 
   async updateExtractedData(id: string, extractedData: ExtractedValue[]) {
-    const updated = await this.documentModel.findByIdAndUpdate(
-      id,
-      { $set: { extractedData }, $inc: { revision: 1 } },
-      { new: true },
-    ).lean();
-    if (!updated) throw new NotFoundException('Document not found');
+    const document: any = await this.documentModel.findById(id).lean();
+    if (!document) throw new NotFoundException('Document not found');
+    const settings = await this.encryptionSettings();
+    const update: any = this.extractedDataUpdate(document, extractedData, settings);
+    update.$inc = { revision: 1 };
+    const updated: any = await this.documentModel.findByIdAndUpdate(id, update, { new: true }).lean();
     await this.publishDocumentChanged(updated, ['extractedData']);
-    return updated;
+    return { ...updated, extractedData, encryptedExtractedData: undefined };
   }
 
   private async recordBusinessReviewProcessing(document: IncomingDocumentDocument, metrics: ProcessingMetrics) {
@@ -548,10 +597,9 @@ export class DocumentsService {
     id: string,
     extractedData: ExtractedValue[],
     user: AuthenticatedUser,
-  ) {
+  ): Promise<any> {
     const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
-    updated.extractedData = extractedData;
     updated.validatedBy = {
       userId: user.id,
       username: user.username,
@@ -560,6 +608,8 @@ export class DocumentsService {
     updated.validatedAt = new Date();
     this.transitionStatus(updated, 'validated', false, true);
     await updated.save();
+    const encryptionSettings = await this.encryptionSettings();
+    await this.documentModel.updateOne({ _id: updated._id }, this.extractedDataUpdate(updated, extractedData, encryptionSettings));
     await this.publishDocumentChanged(updated, ['status', 'extractedData', 'validatedBy', 'validatedAt']);
 
     const configuration = await this.configurationService.get();
@@ -578,10 +628,10 @@ export class DocumentsService {
       }
     }
 
-    return updated;
+    return this.findById(updated.id);
   }
 
-  async reject(id: string, user: AuthenticatedUser) {
+  async reject(id: string, user: AuthenticatedUser): Promise<any> {
     const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
     updated.rejectedBy = {
@@ -595,10 +645,11 @@ export class DocumentsService {
     await this.publishDocumentChanged(updated, ['status', 'rejectedBy', 'rejectedAt']);
 
     const configuration = await this.configurationService.get();
+    const extractedData = this.decryptExtractedData(updated.toObject(), resolveDataEncryptionSettings(configuration as any));
     const downstreamConfig = await this.getDownstreamConfig();
     if (downstreamConfig) {
       try {
-        await this.sendToDownstream(updated, updated.extractedData || [], downstreamConfig);
+        await this.sendToDownstream(updated, extractedData, downstreamConfig);
         if (configuration.deleteAfterDownstream) {
           await this.remove(updated.id);
           return { deleted: true };
@@ -609,7 +660,7 @@ export class DocumentsService {
       }
     }
 
-    return updated;
+    return this.findById(updated.id);
   }
 
   async remove(id: string) {

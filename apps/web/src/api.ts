@@ -1,6 +1,10 @@
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
 
 export type AppConfigPayload = {
+  storageEncryptionEnabled: boolean;
+  databaseEncryptionEnabled: boolean;
+  storageEncryptionKeyConfigured?: boolean;
+  databaseEncryptionKeyConfigured?: boolean;
   cachingEnabled: boolean;
   configurationCacheTtlSeconds: number;
   turnstileEnabled: boolean;

@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { decryptSecret, MongoDatabase, ObjectId } = require('@xtract/common');
+const { decryptSecret, decryptJson, encryptJson, MongoDatabase, ObjectId, resolveDataEncryptionSettings } = require('@xtract/common');
 const { downloadBuffer, downloadToTemp, removeTempFile } = require('./blobStorage');
 
 const database = new MongoDatabase();
@@ -36,18 +36,46 @@ function fileExists(filePath) {
   }
 }
 
-async function resolveDocumentFile(document) {
+function storageKeys(configuration) {
+  const settings = resolveDataEncryptionSettings(configuration);
+  return { keys: settings.storage.key ? { [String(settings.storage.keyVersion)]: settings.storage.key } : {} };
+}
+
+async function resolveDocumentFile(document, configuration = {}) {
   if (document.storageContainer && document.storageBlobName) {
-    return downloadToTemp(document.storageContainer, document.storageBlobName);
+    return downloadToTemp(document.storageContainer, document.storageBlobName, storageKeys(configuration));
   }
   return document.filePath;
 }
 
-async function resolvePreparedDocumentText(document) {
+async function resolvePreparedDocumentText(document, configuration = {}) {
   if (!document.textArtifactContainer || !document.textArtifactBlobName) {
     throw new Error('Prepared OCR/markdown artifact is missing. Run document text preparation before classification.');
   }
-  return (await downloadBuffer(document.textArtifactContainer, document.textArtifactBlobName)).toString('utf8');
+  return (await downloadBuffer(document.textArtifactContainer, document.textArtifactBlobName, storageKeys(configuration))).toString('utf8');
+}
+
+function encryptionPolicyFor(configuration = {}) {
+  const settings = resolveDataEncryptionSettings(configuration);
+  return {
+    storageEncryptionEnabled: settings.storage.enabled,
+    databaseEncryptionEnabled: settings.database.enabled,
+    storageEncryptionKeyVersion: settings.storage.enabled ? settings.storage.keyVersion : undefined,
+    databaseEncryptionKeyVersion: settings.database.enabled ? settings.database.keyVersion : undefined,
+  };
+}
+
+function extractedDataUpdate(document, extractedData, configuration = {}) {
+  if (!document.encryptionPolicy?.databaseEncryptionEnabled) return { $set: { extractedData }, $unset: { encryptedExtractedData: '' } };
+  const settings = resolveDataEncryptionSettings(configuration);
+  const keyVersion = Number(document.encryptionPolicy.databaseEncryptionKeyVersion) || 1;
+  return { $set: { encryptedExtractedData: encryptJson(extractedData, { key: settings.database.key, keyVersion, context: `${document._id}:extractedData` }) }, $unset: { extractedData: '' } };
+}
+
+function readExtractedData(document, configuration = {}) {
+  if (!document.encryptedExtractedData) return document.extractedData || [];
+  const settings = resolveDataEncryptionSettings(configuration);
+  return decryptJson(document.encryptedExtractedData, { keys: { [String(settings.database.keyVersion)]: settings.database.key }, context: `${document._id}:extractedData` });
 }
 
 function processingOptionsFor(document, configuration = {}) {
@@ -318,6 +346,8 @@ module.exports = {
   markDocumentFailed,
   beginDocumentStage,
   completeDocumentStage,
+  encryptionPolicyFor,
+  extractedDataUpdate,
   transitionDocumentStatus,
   normalizeDocumentTypeId,
   processingOptionsFor,
@@ -326,5 +356,6 @@ module.exports = {
   resolveDocumentFile,
   resolveDocumentId,
   resolvePreparedDocumentText,
+  readExtractedData,
   resolveMessage,
 };

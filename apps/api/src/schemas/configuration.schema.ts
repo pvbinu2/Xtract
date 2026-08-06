@@ -7,6 +7,23 @@ export type ClassificationMode = 'vector' | 'llm' | 'rag';
 
 @Schema({ collection: 'configuration' })
 export class Configuration {
+  @Prop({ default: false })
+  storageEncryptionEnabled!: boolean;
+
+  @Prop({ default: false })
+  databaseEncryptionEnabled!: boolean;
+
+  @Prop({ default: '', select: false })
+  encryptedStorageDataKey!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedDatabaseDataKey!: string;
+
+  @Prop({ default: 1 })
+  storageEncryptionKeyVersion!: number;
+
+  @Prop({ default: 1 })
+  databaseEncryptionKeyVersion!: number;
   @Prop({ default: true })
   cachingEnabled!: boolean;
 
