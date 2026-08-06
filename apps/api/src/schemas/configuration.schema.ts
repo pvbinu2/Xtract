@@ -13,6 +13,21 @@ export class Configuration {
   @Prop({ default: 30, min: 1, max: 86400 })
   configurationCacheTtlSeconds!: number;
 
+  @Prop({ default: false })
+  turnstileEnabled!: boolean;
+
+  @Prop({ default: '' })
+  turnstileSiteKey!: string;
+
+  @Prop({ default: '', select: false })
+  encryptedTurnstileSecretKey!: string;
+
+  @Prop({ default: '' })
+  turnstileExpectedHostname!: string;
+
+  @Prop({ default: 'request-demo' })
+  turnstileExpectedAction!: string;
+
   @Prop({ required: true })
   downstreamUrl!: string;
 

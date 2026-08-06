@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigurationCache, decryptSecret, encryptSecret } from '@xtract/common';
@@ -17,7 +17,7 @@ export class ConfigurationService {
   private loadRaw() {
     return this.configModel
       .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey')
       .lean()
       .exec()
       .then((config) => config || {});
@@ -27,6 +27,10 @@ export class ConfigurationService {
     const defaults = {
       cachingEnabled: true,
       configurationCacheTtlSeconds: 30,
+      turnstileEnabled: false,
+      turnstileSiteKey: '',
+      turnstileExpectedHostname: '',
+      turnstileExpectedAction: 'request-demo',
       downstreamUrl: '',
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
@@ -54,6 +58,10 @@ export class ConfigurationService {
       ...config,
       cachingEnabled: config?.cachingEnabled !== false,
       configurationCacheTtlSeconds: Math.min(86400, Math.max(1, Number(config?.configurationCacheTtlSeconds) || 30)),
+      turnstileEnabled: Boolean(config?.turnstileEnabled),
+      turnstileSiteKey: config?.turnstileSiteKey?.trim() || '',
+      turnstileExpectedHostname: config?.turnstileExpectedHostname?.trim().toLowerCase() || '',
+      turnstileExpectedAction: config?.turnstileExpectedAction?.trim() || 'request-demo',
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
       markdownServiceUrl: config?.markdownServiceUrl || '',
       aiProvider: ['openai', 'custom', 'ollama'].includes(config?.aiProvider) ? config.aiProvider : 'openai',
@@ -86,27 +94,34 @@ export class ConfigurationService {
     const customApiKey = config?.encryptedCustomApiKey
       ? decryptSecret(config.encryptedCustomApiKey)
       : config?.aiProvider === 'custom' ? legacyKey : '';
+    const turnstileSecretKey = config?.encryptedTurnstileSecretKey
+      ? decryptSecret(config.encryptedTurnstileSecretKey)
+      : '';
     return {
       ...normalized,
       openAiApiKey,
       customApiKey,
+      turnstileSecretKey,
+      turnstileSecretKeyConfigured: Boolean(turnstileSecretKey),
       apiKey: normalized.aiProvider === 'custom' ? customApiKey : openAiApiKey,
       openAiApiKeyConfigured: Boolean(openAiApiKey),
       customApiKeyConfigured: Boolean(customApiKey),
       encryptedApiKey: undefined,
       encryptedOpenAiApiKey: undefined,
       encryptedCustomApiKey: undefined,
+      encryptedTurnstileSecretKey: undefined,
     } as Configuration;
   }
 
   async getPublic(): Promise<Configuration> {
     const runtime: any = await this.get();
-    const { apiKey, openAiApiKey, customApiKey, ...publicConfig } = runtime;
+    const { apiKey, openAiApiKey, customApiKey, turnstileSecretKey, ...publicConfig } = runtime;
     return {
       ...publicConfig,
       apiKey: '',
       openAiApiKey: '',
       customApiKey: '',
+      turnstileSecretKey: '',
       apiKeyConfigured: runtime.aiProvider === 'custom'
         ? Boolean(runtime.customApiKeyConfigured)
         : Boolean(runtime.openAiApiKeyConfigured),
@@ -116,6 +131,11 @@ export class ConfigurationService {
   async save(config: {
     cachingEnabled?: boolean;
     configurationCacheTtlSeconds?: number;
+    turnstileEnabled?: boolean;
+    turnstileSiteKey?: string;
+    turnstileSecretKey?: string;
+    turnstileExpectedHostname?: string;
+    turnstileExpectedAction?: string;
     downstreamUrl: string;
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
@@ -143,6 +163,10 @@ export class ConfigurationService {
   }): Promise<Configuration> {
     const cachingEnabled = config.cachingEnabled !== false;
     const configurationCacheTtlSeconds = Math.min(86400, Math.max(1, Number(config.configurationCacheTtlSeconds) || 30));
+    const turnstileEnabled = Boolean(config.turnstileEnabled);
+    const turnstileSiteKey = config.turnstileSiteKey?.trim() || '';
+    const turnstileExpectedHostname = config.turnstileExpectedHostname?.trim().toLowerCase() || '';
+    const turnstileExpectedAction = config.turnstileExpectedAction?.trim() || 'request-demo';
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
     const aiProvider = ['openai', 'custom', 'ollama'].includes(config.aiProvider || '')
       ? config.aiProvider
@@ -158,7 +182,7 @@ export class ConfigurationService {
     const extractionConcurrency = Math.min(16, Math.max(1, Number(config.extractionConcurrency) || 1));
     const existing: any = await this.configModel
       .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey')
       .lean()
       .exec();
     const encryptedOpenAiApiKey = config.openAiApiKey?.trim()
@@ -169,10 +193,26 @@ export class ConfigurationService {
       ? encryptSecret(config.customApiKey.trim())
       : existing?.encryptedCustomApiKey
         || (existing?.aiProvider === 'custom' ? existing?.encryptedApiKey : '');
+    const encryptedTurnstileSecretKey = config.turnstileSecretKey?.trim()
+      ? encryptSecret(config.turnstileSecretKey.trim())
+      : existing?.encryptedTurnstileSecretKey || '';
+    if (turnstileSiteKey.length > 64 || (config.turnstileSecretKey?.trim().length || 0) > 128) {
+      throw new BadRequestException('Turnstile credentials are too long.');
+    }
+    if (turnstileExpectedHostname.length > 253 || (turnstileExpectedHostname && !/^[a-z0-9.-]+$/.test(turnstileExpectedHostname))) {
+      throw new BadRequestException('Enter a valid Turnstile hostname without a protocol or path.');
+    }
+    if (!/^[a-zA-Z0-9_-]{1,32}$/.test(turnstileExpectedAction)) {
+      throw new BadRequestException('Turnstile action must contain only letters, numbers, hyphens, or underscores.');
+    }
+    if (turnstileEnabled && (!turnstileSiteKey || !encryptedTurnstileSecretKey || !turnstileExpectedHostname)) {
+      throw new BadRequestException('Site key, secret key, and expected hostname are required when Turnstile is enabled.');
+    }
     const {
       apiKey: _plainTextApiKey,
       openAiApiKey: _plainTextOpenAiApiKey,
       customApiKey: _plainTextCustomApiKey,
+      turnstileSecretKey: _plainTextTurnstileSecretKey,
       ...safeConfig
     } = config;
     const updated: any = await this.configModel
@@ -182,6 +222,11 @@ export class ConfigurationService {
           ...safeConfig,
           cachingEnabled,
           configurationCacheTtlSeconds,
+          turnstileEnabled,
+          turnstileSiteKey,
+          turnstileExpectedHostname,
+          turnstileExpectedAction,
+          encryptedTurnstileSecretKey,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           documentTextMode,
@@ -210,10 +255,19 @@ export class ConfigurationService {
           setDefaultsOnInsert: true,
         },
       )
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey')
       .lean()
       .exec();
     this.cache.replace(updated || {});
     return this.getPublic();
+  }
+
+  async getDemoRequestSettings() {
+    const config: any = await this.get();
+    return {
+      turnstileEnabled: Boolean(config.turnstileEnabled),
+      turnstileSiteKey: config.turnstileSiteKey || '',
+      turnstileAction: config.turnstileExpectedAction || 'request-demo',
+    };
   }
 }

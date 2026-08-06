@@ -19,6 +19,11 @@ export class ConfigurationController {
     body: {
       cachingEnabled?: boolean;
       configurationCacheTtlSeconds?: number;
+      turnstileEnabled?: boolean;
+      turnstileSiteKey?: string;
+      turnstileSecretKey?: string;
+      turnstileExpectedHostname?: string;
+      turnstileExpectedAction?: string;
       downstreamUrl: string;
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;

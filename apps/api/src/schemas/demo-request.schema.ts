@@ -18,3 +18,4 @@ export class DemoRequest {
 export const DemoRequestSchema = SchemaFactory.createForClass(DemoRequest);
 DemoRequestSchema.index({ createdAt: -1 });
 DemoRequestSchema.index({ email: 1 });
+DemoRequestSchema.index({ email: 1, createdAt: -1 });

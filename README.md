@@ -106,6 +106,12 @@ The Function broadcaster consumes `document-events` and posts each event to the 
 
 The Configuration screen can enable or disable per-process caching and stores its TTL in MongoDB. The default is enabled with a 30-second TTL. Concurrent cold or refresh requests are coalesced into one MongoDB read. If an enabled-cache refresh fails after a successful load, the last in-memory configuration remains available and a warning is logged. When caching is disabled, every lookup reads MongoDB and failures never return stale configuration.
 
+### Demo Request Protection
+
+The public demo-request form supports Cloudflare Turnstile configured from the admin Configuration screen. The public site key, expected hostname, and action are stored in MongoDB; the secret key is encrypted and is never returned to the browser. When enabled, verification fails closed. The API also applies a five-request-per-ten-minute in-process IP limit, a 16 KB JSON limit, a honeypot, strict field validation, and 24-hour duplicate suppression.
+
+For local development, leave Turnstile disabled or configure Cloudflare's official invisible test site key `1x00000000000000000000BB` and passing test secret `1x0000000000000000000000000000000AA`, with the expected hostname set to `localhost`. Production must use a real widget and should place the API behind Azure Front Door WAF; application rate limiting alone is not volumetric DDoS protection.
+
 ### Docling Markdown Extraction
 
 The Docling service lives in `functions/docling-markdown`. It is a Python Azure Function exposed at `/api/extract-markdown`. It accepts JSON containing a PDF as base64 and returns markdown that can be used for document classification, schema generation, and extraction.
