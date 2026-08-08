@@ -1,9 +1,10 @@
-import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
   Activity,
+  Archive,
   AlertTriangle,
   BarChart3,
   Building2,
@@ -13,13 +14,19 @@ import {
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
+  Calculator,
+  CircleDollarSign,
   Clock3,
+  Coins,
   Moon,
   PlusCircle,
   FilePlus2,
   FileSearch,
   Files,
   Gauge,
+  HardDrive,
+  ListOrdered,
+  Radio,
   ScanText,
   Network,
   Loader2,
@@ -638,6 +645,10 @@ function OperationsApp() {
     embeddingProvider: 'openai',
     embeddingModel: defaultOpenAIEmbeddingModel,
     ollamaEmbeddingModel: defaultOllamaEmbeddingModel,
+    vectorDatabaseProvider: 'qdrant',
+    vectorDatabaseEndpoint: 'http://127.0.0.1:6333',
+    vectorDatabaseApiKey: '',
+    vectorDatabaseApiKeyConfigured: false,
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
     classificationMode: 'vector',
@@ -688,6 +699,10 @@ function OperationsApp() {
         embeddingProvider: saved.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
         embeddingModel: saved.embeddingModel || defaultOpenAIEmbeddingModel,
         ollamaEmbeddingModel: saved.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
+        vectorDatabaseProvider: saved.vectorDatabaseProvider || 'qdrant',
+        vectorDatabaseEndpoint: saved.vectorDatabaseEndpoint || 'http://127.0.0.1:6333',
+        vectorDatabaseApiKey: '',
+        vectorDatabaseApiKeyConfigured: Boolean(saved.vectorDatabaseApiKeyConfigured),
         classificationModel: saved.classificationModel || lowCostOpenAIModel,
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
         classificationMode: saved.classificationMode === 'llm' || saved.classificationMode === 'rag' ? saved.classificationMode : 'vector',
@@ -736,6 +751,10 @@ function OperationsApp() {
             embeddingProvider: parsed.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
             embeddingModel: parsed.embeddingModel || defaultOpenAIEmbeddingModel,
             ollamaEmbeddingModel: parsed.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
+            vectorDatabaseProvider: parsed.vectorDatabaseProvider || 'qdrant',
+            vectorDatabaseEndpoint: parsed.vectorDatabaseEndpoint || 'http://127.0.0.1:6333',
+            vectorDatabaseApiKey: '',
+            vectorDatabaseApiKeyConfigured: Boolean(parsed.vectorDatabaseApiKeyConfigured),
             classificationModel: parsed.classificationModel || lowCostOpenAIModel,
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
             classificationMode: parsed.classificationMode === 'llm' || parsed.classificationMode === 'rag' ? parsed.classificationMode : 'vector',
@@ -2422,6 +2441,20 @@ function HealthDashboard({
     'AI',
   ];
 
+  function resourceIcon(check: HealthCheckResult['checks'][number]) {
+    if (check.id === 'api') return <Activity size={20} />;
+    if (check.id === 'mongodb' || check.id === 'qdrant') return <Database size={20} />;
+    if (check.id === 'blob-storage') return <HardDrive size={20} />;
+    if (check.id === 'queue-storage' || check.id.startsWith('queue-')) return <ListOrdered size={20} />;
+    if (check.id.startsWith('container-')) return <Archive size={20} />;
+    if (check.id === 'processor') return <FileSearch size={20} />;
+    if (check.id === 'realtime') return <Radio size={20} />;
+    if (check.id === 'docling') return <FileText size={20} />;
+    if (check.id === 'ai-provider') return <BrainCircuit size={20} />;
+    if (check.id === 'embedding-provider') return <Network size={20} />;
+    return <Activity size={20} />;
+  }
+
   async function refresh() {
     setChecking(true);
     try {
@@ -2517,13 +2550,7 @@ function HealthDashboard({
             <div className="health-resource-grid">
               {checks.map((check) => (
                 <article className={`health-resource ${check.status}`} key={check.id}>
-                  <div className="health-resource-icon">
-                    {check.status === 'ready'
-                      ? <CheckCircle2 size={20} />
-                      : check.status === 'unavailable'
-                        ? <CircleX size={20} />
-                        : <CircleHelp size={20} />}
-                  </div>
+                  <div className="health-resource-icon" aria-hidden="true">{resourceIcon(check)}</div>
                   <div>
                     <div className="health-resource-heading">
                       <strong>{check.name}</strong>
@@ -2745,10 +2772,13 @@ function DemoRequestsScreen({
   );
 }
 
-function ReviewMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
+function ReviewMetric({ label, value, helper, icon }: { label: string; value: string; helper?: string; icon: ReactNode }) {
   return (
     <div className="review-metric">
-      <span>{label}</span>
+      <div className="review-metric-heading">
+        <span className="review-metric-icon" aria-hidden="true">{icon}</span>
+        <span>{label}</span>
+      </div>
       <strong>{value}</strong>
       {helper && <small>{helper}</small>}
     </div>
@@ -2986,12 +3016,12 @@ function BusinessReviewScreen({
           </div>
         </div>
         <div className="review-metric-grid">
-          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} />
-          <ReviewMetric label="Estimated cost" value={formatReviewCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
-          <ReviewMetric label="Avg cost / document" value={formatReviewCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} />
-          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} />
-          <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
-          <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
+          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} icon={<Files size={18} />} />
+          <ReviewMetric label="Estimated cost" value={formatReviewCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" icon={<CircleDollarSign size={18} />} />
+          <ReviewMetric label="Avg cost / document" value={formatReviewCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} icon={<Calculator size={18} />} />
+          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} icon={<Coins size={18} />} />
+          <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} icon={<Download size={18} />} />
+          <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} icon={<Upload size={18} />} />
         </div>
         <MonthlyCostProjectionChart
           averageCostPerDocument={averageCostPerDocument}
@@ -3115,6 +3145,9 @@ const pendingConfigurationFields: Array<{
   { key: 'embeddingProvider', label: 'Embedding provider' },
   { key: 'embeddingModel', label: 'OpenAI embedding model' },
   { key: 'ollamaEmbeddingModel', label: 'Ollama embedding model' },
+  { key: 'vectorDatabaseProvider', label: 'Vector database provider' },
+  { key: 'vectorDatabaseEndpoint', label: 'Vector database endpoint' },
+  { key: 'vectorDatabaseApiKey', label: 'Vector database authentication key', secret: true },
   { key: 'classificationModel', label: 'Classification model' },
   { key: 'classificationReasoningEffort', label: 'Reasoning effort' },
   { key: 'classificationMode', label: 'Classification mode' },
@@ -3255,6 +3288,7 @@ function ConfigurationScreen({
                 <div><dt>Ollama endpoint</dt><dd title={config.ollamaBaseUrl}>{config.ollamaBaseUrl}</dd></div>
                 <div><dt>Classification</dt><dd>{config.classificationMode.toUpperCase()} · {config.classificationModel}</dd></div>
                 <div><dt>Embeddings</dt><dd>{config.embeddingProvider} · {config.embeddingProvider === 'ollama' ? config.ollamaEmbeddingModel : config.embeddingModel}</dd></div>
+                <div><dt>Vector database</dt><dd>{config.vectorDatabaseProvider} · {config.vectorDatabaseApiKeyConfigured ? 'Authenticated' : 'No key'}</dd></div>
               </dl>
             </div>
             <div className="configuration-summary-group">
@@ -3395,6 +3429,52 @@ function ConfigurationScreen({
             )}
             <p className="help-text">
               API keys are encrypted before storage and are never returned to the browser.
+            </p>
+            <div className="configuration-subsection-heading">
+              <Database size={18} />
+              <span>
+                <strong>Vector Database</strong>
+                <small>Configure the vector store used for classifier training, search, and RAG</small>
+              </span>
+            </div>
+            <label>
+              Provider name
+              <input
+                value={config.vectorDatabaseProvider}
+                placeholder="Qdrant"
+                onChange={(event) => onConfigChange({ ...config, vectorDatabaseProvider: event.target.value })}
+              />
+            </label>
+            <label>
+              Endpoint
+              <input
+                type="url"
+                value={config.vectorDatabaseEndpoint}
+                placeholder="https://vector-db.example.com"
+                onChange={(event) => onConfigChange({ ...config, vectorDatabaseEndpoint: event.target.value })}
+              />
+            </label>
+            <label>
+              <span className="configuration-field-label">
+                Authentication key
+                {config.vectorDatabaseApiKeyConfigured && (
+                  <CheckCircle2
+                    className="configuration-configured-icon"
+                    size={17}
+                    aria-label="Vector database authentication key configured"
+                  />
+                )}
+              </span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={config.vectorDatabaseApiKeyConfigured ? 'Key configured — enter a new key to replace it' : 'Enter authentication key (optional)'}
+                value={config.vectorDatabaseApiKey}
+                onChange={(event) => onConfigChange({ ...config, vectorDatabaseApiKey: event.target.value })}
+              />
+            </label>
+            <p className="help-text">
+              Compatible with Qdrant and services exposing the Qdrant HTTP API. The authentication key is encrypted before storage.
             </p>
           </div>
         </div>

@@ -6,8 +6,14 @@ const { withOpenAIRetry } = require('./openaiRetry');
 const { QdrantVectorDatabase } = require('@xtract/common');
 const { TRAIN_CONTAINER, downloadToTemp, isConfigured: isBlobStorageConfigured, removeTempFile } = require('./blobStorage');
 
-const vectorDatabase = new QdrantVectorDatabase();
 const { extractDocumentText } = require('./documentText');
+
+function vectorDatabase(options = {}) {
+  return new QdrantVectorDatabase({
+    baseUrl: options.vectorDatabaseEndpoint,
+    apiKey: options.vectorDatabaseApiKey,
+  });
+}
 
 function getOpenAI(options = {}) {
   if (!options.apiKey) return undefined;
@@ -315,12 +321,12 @@ function chunkText(text, maxChars = embeddingTextLimit(), maxChunks = maxTrainCh
   return chunks;
 }
 
-async function ensureVectorCollection(size = vectorSize()) {
-  return vectorDatabase.ensureCollection(size);
+async function ensureVectorCollection(size = vectorSize(), options = {}) {
+  return vectorDatabase(options).ensureCollection(size);
 }
 
-async function resetClassifierVectors() {
-  return vectorDatabase.resetCollection();
+async function resetClassifierVectors(options = {}) {
+  return vectorDatabase(options).resetCollection();
 }
 
 async function embedText(text, options = {}) {
@@ -359,8 +365,8 @@ async function embedText(text, options = {}) {
   };
 }
 
-async function deleteDocumentTypeVectors(documentTypeId) {
-  await vectorDatabase.deleteByFilter({
+async function deleteDocumentTypeVectors(documentTypeId, options = {}) {
+  await vectorDatabase(options).deleteByFilter({
     must: [{ key: 'documentTypeId', match: { value: String(documentTypeId) } }],
   });
 }
@@ -386,7 +392,7 @@ async function upsertDocumentTypeVectors(documentType, samples, options = {}) {
         const embedded = await embedText(chunks[chunkIndex], options);
         if (!ensuredVectorSize) {
           ensuredVectorSize = embedded.embedding.length;
-          await ensureVectorCollection(ensuredVectorSize);
+          await ensureVectorCollection(ensuredVectorSize, options);
         }
         points.push({
           id: pointId(documentType._id, sampleFileName, chunkIndex),
@@ -406,7 +412,7 @@ async function upsertDocumentTypeVectors(documentType, samples, options = {}) {
   }
 
   if (!points.length) return;
-  await vectorDatabase.upsert(points);
+  await vectorDatabase(options).upsert(points);
 }
 
 async function searchDocumentTypeVectors(document, textOptions = {}, options = {}, resultLimit) {
@@ -428,10 +434,10 @@ async function searchDocumentTypeVectors(document, textOptions = {}, options = {
     const embedded = await embedText(chunk, options);
     if (!ensuredVectorSize) {
       ensuredVectorSize = embedded.embedding.length;
-      await ensureVectorCollection(ensuredVectorSize);
+      await ensureVectorCollection(ensuredVectorSize, options);
     }
     embeddingMetrics = addMetrics(embeddingMetrics, embedded.metrics);
-    const hits = await vectorDatabase.search(
+    const hits = await vectorDatabase(options).search(
       embedded.embedding,
       resultLimit || Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5),
     );
@@ -456,7 +462,7 @@ async function trainClassifierProfile(documentType, sampleFileName, options = {}
 
   const embeddingsEnabled = embeddingProviderName(options) === 'ollama' || Boolean(options.apiKey);
   if (embeddingsEnabled) {
-    await deleteDocumentTypeVectors(documentType._id);
+    await deleteDocumentTypeVectors(documentType._id, options);
     await upsertDocumentTypeVectors(documentType, samples, options);
   }
 

@@ -57,7 +57,7 @@ export class AzureBlobStorage {
 }
 
 export class QdrantVectorDatabase {
-  constructor(options?: { baseUrl?: string; collectionName?: string; fetch?: typeof fetch });
+  constructor(options?: { baseUrl?: string; collectionName?: string; apiKey?: string; fetch?: typeof fetch });
   ensureCollection(size: number): Promise<void>;
   resetCollection(): Promise<void>;
   deleteByFilter(filter: object): Promise<void>;

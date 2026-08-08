@@ -42,6 +42,9 @@ export class ConfigurationController {
       embeddingProvider?: 'openai' | 'ollama';
       embeddingModel?: string;
       ollamaEmbeddingModel?: string;
+      vectorDatabaseProvider?: string;
+      vectorDatabaseEndpoint?: string;
+      vectorDatabaseApiKey?: string;
       classificationModel?: string;
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       classificationMode?: 'vector' | 'llm' | 'rag';

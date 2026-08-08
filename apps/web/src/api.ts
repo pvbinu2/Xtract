@@ -32,6 +32,10 @@ export type AppConfigPayload = {
   embeddingProvider: 'openai' | 'ollama';
   embeddingModel: string;
   ollamaEmbeddingModel: string;
+  vectorDatabaseProvider: string;
+  vectorDatabaseEndpoint: string;
+  vectorDatabaseApiKey: string;
+  vectorDatabaseApiKeyConfigured?: boolean;
   classificationModel: string;
   classificationReasoningEffort: ReasoningEffort;
   classificationMode: 'vector' | 'llm' | 'rag';

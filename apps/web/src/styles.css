@@ -621,12 +621,30 @@ nav {
   transform: translateY(-1px);
 }
 
-.review-metric span {
+.review-metric-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.review-metric-heading > span:last-child {
   color: var(--muted);
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.review-metric .review-metric-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--review-accent);
+  background: color-mix(in srgb, var(--review-accent) 11%, transparent);
 }
 
 .review-metric strong {
@@ -1351,6 +1369,15 @@ nav {
 .health-summary .not-configured,
 .health-resource.not_configured .health-resource-icon {
   color: #b45309;
+}
+
+.health-resource-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 .health-degraded-list {
@@ -3310,6 +3337,32 @@ select {
 .configuration-card-grid > .help-text,
 .configuration-card-grid > .warning-text {
   grid-column: 1 / -1;
+}
+
+.configuration-subsection-heading {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  color: #2563eb;
+}
+
+.configuration-subsection-heading > span {
+  display: grid;
+  gap: 2px;
+}
+
+.configuration-subsection-heading strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.configuration-subsection-heading small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .scaling-control-heading {

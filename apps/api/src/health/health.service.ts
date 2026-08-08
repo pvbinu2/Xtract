@@ -26,7 +26,10 @@ export class HealthService {
   async checkAll() {
     const configuration = await this.configurationService.get();
     const storageConnection = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
-    const qdrantUrl = (process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
+    const vectorDatabaseUrl = (configuration.vectorDatabaseEndpoint || process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
+    const vectorDatabaseHeaders = configuration.vectorDatabaseApiKey
+      ? { 'api-key': configuration.vectorDatabaseApiKey }
+      : undefined;
     const realtimeUrl = process.env.REALTIME_HEALTH_URL
       || this.healthUrlFromEndpoint(process.env.REALTIME_BROADCAST_URL, '/health');
     const processorUrl = process.env.PROCESSOR_HEALTH_URL || 'http://127.0.0.1:7071/admin/host/status';
@@ -47,7 +50,13 @@ export class HealthService {
         await this.connection.db?.admin().ping();
         return 'Database connection is ready.';
       }),
-      this.httpCheck('qdrant', 'Qdrant vector database', 'Data', `${qdrantUrl}/healthz`),
+      this.httpCheck(
+        'qdrant',
+        `${configuration.vectorDatabaseProvider || 'Qdrant'} vector database`,
+        'Data',
+        `${vectorDatabaseUrl}/healthz`,
+        vectorDatabaseHeaders,
+      ),
       this.httpCheck('processor', 'Document processor Functions', 'Services', processorUrl),
       this.httpCheck('realtime', 'Self-hosted SignalR', 'Services', realtimeUrl),
       this.httpCheck('docling', 'Docling markdown service', 'Services', doclingUrl),
