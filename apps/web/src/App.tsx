@@ -4,6 +4,7 @@ import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
   Activity,
+  AlertTriangle,
   BarChart3,
   Building2,
   BrainCircuit,
@@ -646,13 +647,14 @@ function OperationsApp() {
     llmClassificationConcurrency: 1,
     extractionConcurrency: 1,
   });
+  const [persistedConfig, setPersistedConfig] = useState<AppConfig | null>(null);
   const isAdmin = currentUser?.role === 'admin';
   const canManageDocuments = currentUser?.role === 'admin' || currentUser?.role === 'validator';
 
   async function loadConfiguration() {
     try {
       const saved = await api.getConfiguration();
-      setConfig({
+      const loadedConfig: AppConfig = {
         storageEncryptionEnabled: Boolean(saved.storageEncryptionEnabled),
         databaseEncryptionEnabled: Boolean(saved.databaseEncryptionEnabled),
         storageEncryptionKeyConfigured: Boolean(saved.storageEncryptionKeyConfigured),
@@ -694,13 +696,15 @@ function OperationsApp() {
         vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.vectorClassificationConcurrency) || 4)),
         llmClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.llmClassificationConcurrency) || 1)),
         extractionConcurrency: Math.min(16, Math.max(1, Number(saved.extractionConcurrency) || 1)),
-      });
+      };
+      setConfig(loadedConfig);
+      setPersistedConfig(loadedConfig);
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
       if (storedConfig) {
         try {
           const parsed = JSON.parse(storedConfig);
-          setConfig({
+          const loadedConfig: AppConfig = {
             storageEncryptionEnabled: Boolean(parsed.storageEncryptionEnabled),
             databaseEncryptionEnabled: Boolean(parsed.databaseEncryptionEnabled),
             storageEncryptionKeyConfigured: Boolean(parsed.storageEncryptionKeyConfigured),
@@ -740,7 +744,9 @@ function OperationsApp() {
             vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.vectorClassificationConcurrency) || 4)),
             llmClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.llmClassificationConcurrency) || 1)),
             extractionConcurrency: Math.min(16, Math.max(1, Number(parsed.extractionConcurrency) || 1)),
-          });
+          };
+          setConfig(loadedConfig);
+          setPersistedConfig(loadedConfig);
         } catch {
           // ignore invalid saved config
         }
@@ -753,6 +759,7 @@ function OperationsApp() {
   async function saveConfiguration(newConfig: AppConfig): Promise<AppConfig> {
     const saved = await api.saveConfiguration(newConfig);
     setConfig(saved);
+    setPersistedConfig(saved);
     showToast('Configuration saved successfully', 'info');
     return saved;
   }
@@ -1393,6 +1400,7 @@ function OperationsApp() {
         {!selectedPageLoading && isAdmin && view === 'configuration' && (
           <ConfigurationScreen
             config={config}
+            persistedConfig={persistedConfig ?? config}
             onConfigChange={setConfig}
             onSave={saveConfiguration}
             onRefresh={loadConfiguration}
@@ -3093,13 +3101,56 @@ function ClassificationModeControls({
   );
 }
 
+const pendingConfigurationFields: Array<{
+  key: keyof AppConfig;
+  label: string;
+  secret?: boolean;
+}> = [
+  { key: 'aiProvider', label: 'AI provider' },
+  { key: 'openAiApiKey', label: 'OpenAI API key', secret: true },
+  { key: 'customApiKey', label: 'Custom API key', secret: true },
+  { key: 'llmEndpoint', label: 'Custom endpoint' },
+  { key: 'ollamaBaseUrl', label: 'Ollama URL' },
+  { key: 'ollamaModel', label: 'Ollama model' },
+  { key: 'embeddingProvider', label: 'Embedding provider' },
+  { key: 'embeddingModel', label: 'OpenAI embedding model' },
+  { key: 'ollamaEmbeddingModel', label: 'Ollama embedding model' },
+  { key: 'classificationModel', label: 'Classification model' },
+  { key: 'classificationReasoningEffort', label: 'Reasoning effort' },
+  { key: 'classificationMode', label: 'Classification mode' },
+  { key: 'classificationRagTopK', label: 'RAG results' },
+  { key: 'preprocessingConcurrency', label: 'Preprocessing concurrency' },
+  { key: 'vectorClassificationConcurrency', label: 'Vector classification concurrency' },
+  { key: 'llmClassificationConcurrency', label: 'LLM classification concurrency' },
+  { key: 'extractionConcurrency', label: 'Extraction concurrency' },
+  { key: 'cachingEnabled', label: 'Configuration caching' },
+  { key: 'configurationCacheTtlSeconds', label: 'Cache TTL' },
+  { key: 'storageEncryptionEnabled', label: 'Storage encryption' },
+  { key: 'databaseEncryptionEnabled', label: 'Database encryption' },
+  { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
+  { key: 'documentTextMode', label: 'Document text mode' },
+  { key: 'markdownServiceUrl', label: 'Markdown service URL' },
+  { key: 'downstreamUrl', label: 'Downstream API URL' },
+  { key: 'deleteAfterDownstream', label: 'Delete after delivery' },
+  { key: 'sendKeyValuePairs', label: 'Send key-value pairs' },
+];
+
+function configurationChangeValue(value: AppConfig[keyof AppConfig], secret = false) {
+  if (secret) return value ? 'New value entered' : 'Not set';
+  if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
+  if (value === '') return 'Not set';
+  return String(value);
+}
+
 function ConfigurationScreen({
   config,
+  persistedConfig,
   onConfigChange,
   onSave,
   onRefresh,
 }: {
   config: AppConfig;
+  persistedConfig: AppConfig;
   onConfigChange: (config: AppConfig) => void;
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
@@ -3115,6 +3166,16 @@ function ConfigurationScreen({
     { id: 'processing', label: 'Processing', icon: ScanText },
     { id: 'downstream', label: 'Downstream', icon: Network },
   ] as const;
+  const pendingChanges = useMemo(() => pendingConfigurationFields.flatMap((field) => {
+    const previous = persistedConfig[field.key];
+    const current = config[field.key];
+    if (previous === current) return [];
+    return [{
+      ...field,
+      previous: configurationChangeValue(previous, field.secret),
+      current: configurationChangeValue(current, field.secret),
+    }];
+  }), [config, persistedConfig]);
   async function refreshConfig() {
     await onRefresh();
   }
@@ -3137,6 +3198,27 @@ function ConfigurationScreen({
           <span>Changes take effect after saving</span>
         </div>
       </div>
+      {pendingChanges.length > 0 && (
+        <section className="configuration-pending" aria-live="polite" aria-label="Unsaved configuration changes">
+          <div className="configuration-pending-heading">
+            <AlertTriangle size={18} />
+            <div>
+              <strong>{pendingChanges.length} unsaved {pendingChanges.length === 1 ? 'change' : 'changes'}</strong>
+              <span>Review the updates below before saving.</span>
+            </div>
+          </div>
+          <ul>
+            {pendingChanges.map((change) => (
+              <li key={change.key}>
+                <strong>{change.label}</strong>
+                <span>{change.previous}</span>
+                <ChevronRight size={14} aria-hidden="true" />
+                <span>{change.current}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <div className="configuration-tabs" role="tablist" aria-label="Configuration sections">
         {configurationTabs.map(({ id, label, icon: Icon }) => (
           <button
@@ -3178,10 +3260,10 @@ function ConfigurationScreen({
             <div className="configuration-summary-group">
               <strong><TrendingUp size={15} /> Scaling</strong>
               <dl>
-                <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}</dd></div>
-                <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}</dd></div>
-                <div><dt>LLM classification</dt><dd>{config.llmClassificationConcurrency}</dd></div>
-                <div><dt>Extraction</dt><dd>{config.extractionConcurrency}</dd></div>
+                <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}/16</dd></div>
+                <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}/16</dd></div>
+                <div><dt>LLM classification</dt><dd>{config.llmClassificationConcurrency}/16</dd></div>
+                <div><dt>Extraction</dt><dd>{config.extractionConcurrency}/16</dd></div>
               </dl>
             </div>
             <div className="configuration-summary-group">
@@ -4953,6 +5035,10 @@ function DocumentList({
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyTarget, setReclassifyTarget] = useState<IncomingDocument | null>(null);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkReprocessOpen, setBulkReprocessOpen] = useState(false);
+  const [bulkReclassifyOpen, setBulkReclassifyOpen] = useState(false);
   const [justificationTarget, setJustificationTarget] = useState<IncomingDocument | null>(null);
   const [flowTarget, setFlowTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
@@ -4960,6 +5046,12 @@ function DocumentList({
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
 
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
+  const selectedDocuments = documents.filter((document) => selectedDocumentIds.has(document._id));
+  const selectedUnlockedDocuments = selectedDocuments.filter(
+    (document) => document.status !== 'validated' && document.status !== 'rejected',
+  );
+  const allDocumentsSelected = documents.length > 0
+    && documents.every((document) => selectedDocumentIds.has(document._id));
 
   async function loadPage(page: number) {
     const params = new URLSearchParams({
@@ -4971,6 +5063,7 @@ function DocumentList({
     if (category) params.set('category', category);
     if (nameFilter) params.set('name', nameFilter);
     onPage(await api.listDocuments(params));
+    setSelectedDocumentIds(new Set());
   }
 
   async function applyFilters() {
@@ -5018,6 +5111,44 @@ function DocumentList({
     setReclassifyTarget(null);
     setReclassifyDocumentType('');
     await loadPage(pagination.page);
+  }
+
+  async function deleteSelectedDocuments() {
+    await Promise.all(selectedDocuments.map((document) => api.deleteDocument(document._id)));
+    const remainingOnPage = documents.length - selectedDocuments.length;
+    const nextPage = remainingOnPage === 0 && pagination.page > 1 ? pagination.page - 1 : pagination.page;
+    setBulkDeleteOpen(false);
+    setSelectedDocumentIds(new Set());
+    await loadPage(nextPage);
+  }
+
+  async function reprocessSelectedDocuments(payload: ReprocessDocumentPayload) {
+    await Promise.all(selectedUnlockedDocuments.map((document) => api.reprocessDocument(document._id, payload)));
+    setBulkReprocessOpen(false);
+    setSelectedDocumentIds(new Set());
+    await loadPage(pagination.page);
+  }
+
+  async function reclassifySelectedDocuments(documentTypeId: string) {
+    if (!documentTypeId) return;
+    await Promise.all(selectedUnlockedDocuments.map((document) => api.reclassifyDocument(document._id, documentTypeId)));
+    setBulkReclassifyOpen(false);
+    setReclassifyDocumentType('');
+    setSelectedDocumentIds(new Set());
+    await loadPage(pagination.page);
+  }
+
+  function toggleDocumentSelection(documentId: string) {
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
+    });
+  }
+
+  function toggleAllDocuments() {
+    setSelectedDocumentIds(allDocumentsSelected ? new Set() : new Set(documents.map((document) => document._id)));
   }
 
   async function resetFilters() {
@@ -5117,9 +5248,63 @@ function DocumentList({
         </div>
       </div>
 
+      {canManage && documents.length > 0 && (
+        <div className="document-bulk-toolbar">
+          <label className="document-select-all">
+            <input
+              type="checkbox"
+              checked={allDocumentsSelected}
+              onChange={toggleAllDocuments}
+            />
+            <span>{allDocumentsSelected ? 'Clear page' : 'Select page'}</span>
+          </label>
+          <span className="document-selection-count">
+            <strong>{selectedDocuments.length}</strong> selected
+            {selectedDocuments.length > selectedUnlockedDocuments.length && (
+              <small>{selectedDocuments.length - selectedUnlockedDocuments.length} locked</small>
+            )}
+          </span>
+          <div className="document-bulk-actions">
+            <button
+              className="secondary-button compact"
+              disabled={!selectedDocuments.length || selectedUnlockedDocuments.length !== selectedDocuments.length}
+              title={selectedDocuments.length > selectedUnlockedDocuments.length ? 'Validated or rejected documents can only be deleted' : 'Reclassify selected documents'}
+              onClick={() => setBulkReclassifyOpen(true)}
+            >
+              <BrainCircuit size={15} /> Reclassify
+            </button>
+            <button
+              className="secondary-button compact"
+              disabled={!selectedDocuments.length || selectedUnlockedDocuments.length !== selectedDocuments.length}
+              title={selectedDocuments.length > selectedUnlockedDocuments.length ? 'Validated or rejected documents can only be deleted' : 'Reprocess selected documents'}
+              onClick={() => setBulkReprocessOpen(true)}
+            >
+              <RotateCcw size={15} /> Reprocess
+            </button>
+            <button
+              className="secondary-button compact document-bulk-delete"
+              disabled={!selectedDocuments.length}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 size={15} /> Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="document-table">
         {documents.map((doc) => (
-          <div className="document-row" key={doc._id}>
+          <div className={`document-row${canManage ? ' selectable' : ''}${selectedDocumentIds.has(doc._id) ? ' selected' : ''}`} key={doc._id}>
+            {canManage && (
+              <label className="document-select" title={`Select ${doc.originalName}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedDocumentIds.has(doc._id)}
+                  onChange={() => toggleDocumentSelection(doc._id)}
+                  aria-label={`Select ${doc.originalName}`}
+                />
+              </label>
+            )}
             <button className="document-open" onClick={() => onOpen(doc._id)}>
               <span className="document-primary-info">
                 <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
@@ -5228,6 +5413,16 @@ function DocumentList({
         />
       )}
 
+      {bulkDeleteOpen && (
+        <ConfirmDialog
+          title="Delete Selected Documents"
+          body={`Delete ${selectedDocuments.length} selected document${selectedDocuments.length === 1 ? '' : 's'} and their uploaded files?`}
+          confirmLabel={`Delete ${selectedDocuments.length}`}
+          onCancel={() => setBulkDeleteOpen(false)}
+          onConfirm={deleteSelectedDocuments}
+        />
+      )}
+
       {justificationTarget && (
         <ClassificationJustificationDialog document={justificationTarget} onClose={() => setJustificationTarget(null)} />
       )}
@@ -5241,6 +5436,17 @@ function DocumentList({
           config={config}
           onCancel={() => setReprocessTarget(null)}
           onConfirm={(payload) => reprocessDocument(reprocessTarget, payload)}
+        />
+      )}
+
+      {bulkReprocessOpen && selectedUnlockedDocuments[0] && (
+        <ReprocessDialog
+          document={selectedUnlockedDocuments[0]}
+          documentType={documentTypes.find((type) => type._id === selectedUnlockedDocuments[0].documentTypeId)}
+          documentCount={selectedUnlockedDocuments.length}
+          config={config}
+          onCancel={() => setBulkReprocessOpen(false)}
+          onConfirm={reprocessSelectedDocuments}
         />
       )}
 
@@ -5290,6 +5496,45 @@ function DocumentList({
               >
                 <BrainCircuit size={16} />
                 Reclassify
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {bulkReclassifyOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setBulkReclassifyOpen(false)}>
+          <section className="confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading">
+              <div>
+                <h2>Reclassify Selected Documents</h2>
+                <p>{selectedUnlockedDocuments.length} unlocked document{selectedUnlockedDocuments.length === 1 ? '' : 's'} selected</p>
+              </div>
+              <button className="icon-button" title="Close" onClick={() => setBulkReclassifyOpen(false)}>
+                <X size={17} />
+              </button>
+            </div>
+            <label>
+              Category
+              <select value={reclassifyCategory} onChange={(event) => {
+                setReclassifyCategory(event.target.value);
+                setReclassifyDocumentType('');
+              }}>
+                <option value="">Choose a category...</option>
+                {categories.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Document Type
+              <select value={reclassifyDocumentType} onChange={(event) => setReclassifyDocumentType(event.target.value)} disabled={!reclassifyCategory}>
+                <option value="">Choose a document type...</option>
+                {reclassifyAvailableTypes.map((type) => <option key={type._id} value={type._id}>{type.name}</option>)}
+              </select>
+            </label>
+            <div className="modal-footer">
+              <button className="secondary-button" onClick={() => setBulkReclassifyOpen(false)}>Cancel</button>
+              <button className="primary-button" disabled={!reclassifyDocumentType} onClick={() => reclassifySelectedDocuments(reclassifyDocumentType)}>
+                <BrainCircuit size={16} /> Reclassify {selectedUnlockedDocuments.length}
               </button>
             </div>
           </section>
@@ -5530,12 +5775,14 @@ function DocumentFlowDialog({
 function ReprocessDialog({
   document,
   documentType,
+  documentCount = 1,
   config,
   onCancel,
   onConfirm,
 }: {
   document: IncomingDocument;
   documentType?: DocumentType;
+  documentCount?: number;
   config: AppConfig;
   onCancel: () => void;
   onConfirm: (payload: ReprocessDocumentPayload) => Promise<void> | void;
@@ -5572,8 +5819,8 @@ function ReprocessDialog({
       <section className="confirm-modal reprocess-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-heading">
           <div>
-            <h2>Reprocess Document</h2>
-            <p>{document.originalName}</p>
+            <h2>{documentCount > 1 ? 'Reprocess Selected Documents' : 'Reprocess Document'}</h2>
+            <p>{documentCount > 1 ? `${documentCount} documents selected` : document.originalName}</p>
           </div>
           <button className="icon-button" title="Close" onClick={onCancel}>
             <X size={17} />
@@ -5610,7 +5857,7 @@ function ReprocessDialog({
           </button>
           <button className="primary-button" type="button" disabled={submitting} onClick={confirm}>
             {submitting ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
-            Reprocess
+            Reprocess{documentCount > 1 ? ` ${documentCount}` : ''}
           </button>
         </div>
       </section>
