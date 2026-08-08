@@ -3105,6 +3105,16 @@ function ConfigurationScreen({
   onRefresh: () => Promise<void>;
 }) {
   const [aiServiceTab, setAiServiceTab] = useState<AiProvider>('openai');
+  const [configurationTab, setConfigurationTab] = useState<'summary' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
+  const configurationTabs = [
+    { id: 'summary', label: 'Summary', icon: Gauge },
+    { id: 'ai', label: 'AI Services', icon: Sparkles },
+    { id: 'scaling', label: 'Scaling', icon: TrendingUp },
+    { id: 'caching', label: 'Caching', icon: Database },
+    { id: 'encryption', label: 'Encryption', icon: ShieldCheck },
+    { id: 'processing', label: 'Processing', icon: ScanText },
+    { id: 'downstream', label: 'Downstream', icon: Network },
+  ] as const;
   async function refreshConfig() {
     await onRefresh();
   }
@@ -3127,8 +3137,88 @@ function ConfigurationScreen({
           <span>Changes take effect after saving</span>
         </div>
       </div>
+      <div className="configuration-tabs" role="tablist" aria-label="Configuration sections">
+        {configurationTabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={configurationTab === id}
+            className={configurationTab === id ? 'active' : ''}
+            onClick={() => setConfigurationTab(id)}
+          >
+            <Icon size={17} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
       <div className="configuration-form">
-        <div className="configuration-section ai expanded">
+        <div className={`configuration-section summary expanded${configurationTab === 'summary' ? ' active-tab' : ''}`}>
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Gauge size={20} /></span>
+              <span>
+                <strong>Configuration Summary</strong>
+                <small>Read-only overview of the active application settings</small>
+              </span>
+            </span>
+          </div>
+          <div className="configuration-section-body configuration-summary-grid">
+            <div className="configuration-summary-group">
+              <strong><Sparkles size={15} /> AI Services</strong>
+              <dl>
+                <div><dt>OpenAI key</dt><dd className={config.openAiApiKeyConfigured ? 'ready' : ''}>{config.openAiApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+                <div><dt>Custom key</dt><dd className={config.customApiKeyConfigured ? 'ready' : ''}>{config.customApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+                <div><dt>Custom endpoint</dt><dd title={config.llmEndpoint || 'Not configured'}>{config.llmEndpoint || 'Not configured'}</dd></div>
+                <div><dt>Ollama endpoint</dt><dd title={config.ollamaBaseUrl}>{config.ollamaBaseUrl}</dd></div>
+                <div><dt>Classification</dt><dd>{config.classificationMode.toUpperCase()} · {config.classificationModel}</dd></div>
+                <div><dt>Embeddings</dt><dd>{config.embeddingProvider} · {config.embeddingProvider === 'ollama' ? config.ollamaEmbeddingModel : config.embeddingModel}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><TrendingUp size={15} /> Scaling</strong>
+              <dl>
+                <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}</dd></div>
+                <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}</dd></div>
+                <div><dt>LLM classification</dt><dd>{config.llmClassificationConcurrency}</dd></div>
+                <div><dt>Extraction</dt><dd>{config.extractionConcurrency}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><Database size={15} /> Caching</strong>
+              <dl>
+                <div><dt>In-memory cache</dt><dd className={config.cachingEnabled ? 'ready' : ''}>{config.cachingEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>TTL</dt><dd>{config.cachingEnabled ? `${config.configurationCacheTtlSeconds} seconds` : 'Not applicable'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><ShieldCheck size={15} /> Encryption</strong>
+              <dl>
+                <div><dt>Processing storage</dt><dd className={config.storageEncryptionEnabled ? 'ready' : ''}>{config.storageEncryptionEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>Storage key</dt><dd className={config.storageEncryptionKeyConfigured ? 'ready' : ''}>{config.storageEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+                <div><dt>Database extracted data</dt><dd className={config.databaseEncryptionEnabled ? 'ready' : ''}>{config.databaseEncryptionEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>Database key</dt><dd className={config.databaseEncryptionKeyConfigured ? 'ready' : ''}>{config.databaseEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><ScanText size={15} /> Processing</strong>
+              <dl>
+                <div><dt>Prepared text</dt><dd className={config.useOcrForDocumentProcessing ? 'ready' : ''}>{config.useOcrForDocumentProcessing ? 'On' : 'Off'}</dd></div>
+                <div><dt>Text engine</dt><dd>{config.useOcrForDocumentProcessing ? (config.documentTextMode === 'markdown' ? 'Docling markdown' : 'Built in') : 'Direct PDF'}</dd></div>
+                {config.documentTextMode === 'markdown' && <div><dt>Docling endpoint</dt><dd title={config.markdownServiceUrl}>{config.markdownServiceUrl || 'Not configured'}</dd></div>}
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><Network size={15} /> Downstream</strong>
+              <dl>
+                <div><dt>Endpoint</dt><dd title={config.downstreamUrl || 'Not configured'}>{config.downstreamUrl || 'Not configured'}</dd></div>
+                <div><dt>Delete after delivery</dt><dd>{config.deleteAfterDownstream ? 'On' : 'Off'}</dd></div>
+                <div><dt>Key-value payload</dt><dd>{config.sendKeyValuePairs ? 'On' : 'Off'}</dd></div>
+              </dl>
+            </div>
+          </div>
+        </div>
+        <div className={`configuration-section ai expanded${configurationTab === 'ai' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Sparkles size={20} /></span>
@@ -3226,7 +3316,7 @@ function ConfigurationScreen({
             </p>
           </div>
         </div>
-        <div className="configuration-section scaling expanded">
+        <div className={`configuration-section scaling expanded${configurationTab === 'scaling' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><TrendingUp size={20} /></span>
@@ -3328,7 +3418,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section caching expanded">
+        <div className={`configuration-section caching expanded${configurationTab === 'caching' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Database size={20} /></span>
@@ -3382,7 +3472,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section processing expanded">
+        <div className={`configuration-section processing expanded${configurationTab === 'encryption' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><ShieldCheck size={20} /></span>
@@ -3414,7 +3504,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section processing expanded">
+        <div className={`configuration-section processing expanded${configurationTab === 'processing' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><ScanText size={20} /></span>
@@ -3471,7 +3561,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section downstream expanded">
+        <div className={`configuration-section downstream expanded${configurationTab === 'downstream' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Network size={20} /></span>
