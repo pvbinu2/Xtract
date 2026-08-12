@@ -6399,6 +6399,11 @@ textarea {
   display: block;
   width: 100%;
   height: 100%;
+  transition: filter 160ms ease;
+}
+
+.pdf-pages.selecting-text .pdf-page img {
+  filter: blur(2px) brightness(0.48) saturate(0.65);
 }
 
 .pdf-highlight {
@@ -6427,17 +6432,23 @@ textarea {
   position: absolute;
   display: block;
   overflow: visible;
-  color: transparent;
+  color: #fff;
   font-family: sans-serif;
+  font-weight: 700;
   line-height: 1;
   white-space: pre;
+  text-shadow:
+    -1px -1px 0 rgb(15 23 42 / 0.95),
+    1px -1px 0 rgb(15 23 42 / 0.95),
+    -1px 1px 0 rgb(15 23 42 / 0.95),
+    1px 1px 0 rgb(15 23 42 / 0.95);
   transform-origin: left top;
   cursor: text;
 }
 
 .pdf-text-layer > span::selection {
-  background: rgb(37 99 235 / 0.45);
-  color: transparent;
+  background: rgb(250 204 21 / 0.78);
+  color: #fff;
 }
 
 .pdf-selection-actions {
