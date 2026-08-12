@@ -57,6 +57,7 @@ export type IncomingDocument = {
   mimeType?: string;
   textArtifactBlobName?: string;
   textArtifactMode?: 'ocr' | 'markdown';
+  spatialTextArtifactBlobName?: string;
   stageTimings?: Array<{
     status: IncomingDocument['status'];
     startTime: string;

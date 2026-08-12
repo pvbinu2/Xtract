@@ -54,6 +54,20 @@ export type ReprocessDocumentPayload = {
   forceClassification?: boolean;
 };
 
+export type SpatialTextPage = {
+  version: 1;
+  page: number;
+  items: Array<{
+    text: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    lineKey?: string;
+    order: number;
+  }>;
+};
+
 export type HealthCheckResult = {
   status: 'ready' | 'degraded';
   checkedAt: string;
@@ -204,6 +218,7 @@ export const api = {
     return new Uint8Array(await response.arrayBuffer());
   },
   documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
+  documentPageText: (id: string, pageNumber: number) => request<SpatialTextPage>(`/documents/${id}/pages/${pageNumber}/text`),
   documentFile: (id: string) => requestFile(`/documents/${id}/file`),
   documentTextArtifact: (id: string) => requestFile(`/documents/${id}/text-artifact`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),

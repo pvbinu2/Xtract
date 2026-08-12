@@ -246,6 +246,11 @@ export class DocumentsService {
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
     const settings = await this.encryptionSettings();
+    if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
+      await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
+      document.spatialTextArtifactContainer = undefined;
+      document.spatialTextArtifactBlobName = undefined;
+    }
     document.validatedBy = undefined;
     document.validatedAt = undefined;
     document.rejectedBy = undefined;
@@ -262,7 +267,15 @@ export class DocumentsService {
     };
     await document.save();
     await this.documentModel.updateOne({ _id: document._id }, this.extractedDataUpdate(document, [], settings));
-    await this.publishDocumentChanged(document, ['status', 'extractedData', 'validatedBy', 'validatedAt', 'rejectedBy', 'rejectedAt']);
+    await this.publishDocumentChanged(document, [
+      'status',
+      'extractedData',
+      'validatedBy',
+      'validatedAt',
+      'rejectedBy',
+      'rejectedAt',
+      'spatialTextArtifactBlobName',
+    ]);
 
     await this.enqueueProcessing(document.id);
 
@@ -312,6 +325,50 @@ export class DocumentsService {
         : 'text/plain; charset=utf-8',
       fileName: document.textArtifactBlobName.split('/').at(-1) || `document.${document.textArtifactMode === 'markdown' ? 'md' : 'ocr'}`,
     };
+  }
+
+  async getSpatialTextPage(id: string, pageNumberInput: string) {
+    const pageNumber = Number(pageNumberInput);
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      throw new BadRequestException('Page number must be a positive integer');
+    }
+    const document = await this.documentModel.findById(id).lean();
+    if (!document) throw new NotFoundException('Document not found');
+    if (!document.spatialTextArtifactContainer || !document.spatialTextArtifactBlobName) {
+      throw new NotFoundException('Selectable text is unavailable. Reprocess this document to generate it.');
+    }
+
+    const buffer = await this.blobStorage.downloadBuffer(
+      document.spatialTextArtifactContainer,
+      document.spatialTextArtifactBlobName,
+      await this.storageReadKeys(),
+    );
+    let artifact: { version?: unknown; items?: unknown };
+    try {
+      artifact = JSON.parse(buffer.toString('utf8'));
+    } catch {
+      throw new BadRequestException('The selectable text artifact is invalid.');
+    }
+    if (artifact.version !== 1 || !Array.isArray(artifact.items)) {
+      throw new BadRequestException('The selectable text artifact version is unsupported.');
+    }
+    const pageIndex = pageNumber - 1;
+    const items = artifact.items.flatMap((candidate: any) => {
+      if (
+        candidate?.page !== pageIndex || typeof candidate.text !== 'string' || !candidate.text.trim() ||
+        ![candidate.x, candidate.y, candidate.width, candidate.height].every(Number.isFinite)
+      ) return [];
+      return [{
+        text: candidate.text,
+        x: candidate.x,
+        y: candidate.y,
+        width: candidate.width,
+        height: candidate.height,
+        lineKey: typeof candidate.lineKey === 'string' ? candidate.lineKey : undefined,
+        order: Number.isFinite(candidate.order) ? candidate.order : 0,
+      }];
+    }).sort((a, b) => a.order - b.order);
+    return { version: 1 as const, page: pageNumber, items };
   }
 
   async getPdfPageCount(id: string) {
@@ -671,6 +728,9 @@ export class DocumentsService {
           throw error;
         }
       }
+    }
+    if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
+      await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
     }
 
     await this.documentModel.deleteOne({ _id: document._id });

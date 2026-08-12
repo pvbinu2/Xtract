@@ -177,6 +177,12 @@ export class IncomingDocument {
   @Prop()
   textArtifactMode?: 'ocr' | 'markdown';
 
+  @Prop()
+  spatialTextArtifactContainer?: string;
+
+  @Prop()
+  spatialTextArtifactBlobName?: string;
+
   @Prop({ type: [DocumentStageTimingSchema], default: [] })
   stageTimings!: DocumentStageTiming[];
 

@@ -14,6 +14,7 @@ import {
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
+  Copy,
   Calculator,
   CircleDollarSign,
   Clock3,
@@ -28,6 +29,7 @@ import {
   ListOrdered,
   Radio,
   ScanText,
+  TextSelect,
   Network,
   Loader2,
   Pencil,
@@ -6001,7 +6003,9 @@ function ValidationScreen({
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
   const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
   const [editingValueDraft, setEditingValueDraft] = useState('');
+  const [editingValueBoundingBoxes, setEditingValueBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
+  const [copyFromDocumentKey, setCopyFromDocumentKey] = useState<string | null>(null);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [showClassificationJustification, setShowClassificationJustification] = useState(false);
   const [showDocumentFlow, setShowDocumentFlow] = useState(false);
@@ -6065,7 +6069,9 @@ function ValidationScreen({
     setActiveFieldKey(null);
     setEditingValueKey(null);
     setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
     setSavingValueKey(null);
+    setCopyFromDocumentKey(null);
     api.getDocument(documentId).then((doc) => {
       if (cancelled) return;
       applyDocumentState(doc);
@@ -6097,14 +6103,18 @@ function ValidationScreen({
   }
 
   function startValueEdit(item: ExtractedValue) {
+    setCopyFromDocumentKey(null);
     setActiveFieldKey(item.key);
     setEditingValueKey(item.key);
     setEditingValueDraft(coerceValue(item.value));
+    setEditingValueBoundingBoxes(item.boundingBoxes || []);
   }
 
   function cancelValueEdit() {
+    setCopyFromDocumentKey(null);
     setEditingValueKey(null);
     setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
   }
 
   async function persistExtractedData(nextValues: ExtractedValue[]) {
@@ -6121,7 +6131,7 @@ function ValidationScreen({
     if (!current) return;
 
     const next = [...values];
-    next[index] = { ...current, value: editingValueDraft };
+    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes };
 
     setSavingValueKey(current.key);
     try {
@@ -6137,7 +6147,7 @@ function ValidationScreen({
 
   async function updateTableValue(index: number, value: Record<string, unknown>[]) {
     const next = [...values];
-    next[index] = { ...next[index], value };
+    next[index] = { ...next[index], value, confidence: 1 };
     await persistExtractedData(next);
   }
 
@@ -6248,6 +6258,19 @@ function ValidationScreen({
           documentId={document._id}
           highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
+          selectionMode={copyFromDocumentKey !== null}
+          onReplaceSelection={({ text, boundingBoxes }) => {
+            setEditingValueDraft(text);
+            setEditingValueBoundingBoxes(boundingBoxes);
+          }}
+          onAppendSelection={({ text, boundingBoxes }) => {
+            setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+            setEditingValueBoundingBoxes((current) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
+              boxes.findIndex((candidate) => candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
+                candidate.width === box.width && candidate.height === box.height) === index
+            )));
+          }}
+          onNotify={onNotify}
         />
       </section>
       <section className="panel extraction-pane">
@@ -6403,6 +6426,22 @@ function ValidationScreen({
                     <div className="value-editor-actions">
                       {isEditingValue ? (
                         <>
+                          <button
+                            className={`icon-button${copyFromDocumentKey === item.key ? ' active' : ''}`}
+                            type="button"
+                            title={copyFromDocumentKey === item.key ? 'Stop copying from document' : 'Copy from document'}
+                            aria-label={copyFromDocumentKey === item.key ? 'Stop copying from document' : 'Copy from document'}
+                            aria-pressed={copyFromDocumentKey === item.key}
+                            onClick={() => {
+                              if (!document.spatialTextArtifactBlobName) {
+                                onNotify('Selectable text is unavailable. Reprocess this document to generate it.', 'info');
+                                return;
+                              }
+                              setCopyFromDocumentKey((key) => key === item.key ? null : item.key);
+                            }}
+                          >
+                            <TextSelect size={15} />
+                          </button>
                           <button
                             className="icon-button"
                             type="button"
@@ -6610,6 +6649,10 @@ function PdfViewer({
   documentId,
   highlights,
   activeFieldKey,
+  selectionMode,
+  onReplaceSelection,
+  onAppendSelection,
+  onNotify,
 }: {
   documentId: string;
   highlights: Array<{
@@ -6623,6 +6666,10 @@ function PdfViewer({
     activeFill: string;
   }>;
   activeFieldKey: string | null;
+  selectionMode: boolean;
+  onReplaceSelection: (selection: { text: string; boundingBoxes: NonNullable<ExtractedValue['boundingBoxes']> }) => void;
+  onAppendSelection: (selection: { text: string; boundingBoxes: NonNullable<ExtractedValue['boundingBoxes']> }) => void;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
 }) {
   const [selectedPage, setSelectedPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
@@ -6631,7 +6678,20 @@ function PdfViewer({
   const [pageError, setPageError] = useState('');
   const [zoom, setZoom] = useState(100);
   const [isPanning, setIsPanning] = useState(false);
+  const [pageTextItems, setPageTextItems] = useState<Awaited<ReturnType<typeof api.documentPageText>>['items']>([]);
+  const [loadingPageText, setLoadingPageText] = useState(false);
+  const [pageTextError, setPageTextError] = useState('');
+  const [textSelection, setTextSelection] = useState<{
+    text: string;
+    left: number;
+    top: number;
+    boundingBoxes: NonNullable<ExtractedValue['boundingBoxes']>;
+  } | null>(null);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
+  const pageTextCacheRef = useRef(new Map<string, Awaited<ReturnType<typeof api.documentPageText>>['items']>());
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
   const panStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -6665,6 +6725,7 @@ function PdfViewer({
   }
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (selectionMode) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const pagesContainer = pdfContainerRef.current;
     if (!pagesContainer) return;
@@ -6707,6 +6768,10 @@ function PdfViewer({
     setPageCount(0);
     setPageImage(null);
     setPageError('');
+    setPageTextItems([]);
+    setPageTextError('');
+    setTextSelection(null);
+    pageTextCacheRef.current.clear();
 
     api.documentPageCount(documentId)
       .then(({ pageCount: count }) => {
@@ -6720,6 +6785,108 @@ function PdfViewer({
       cancelled = true;
     };
   }, [documentId]);
+
+  useEffect(() => {
+    setTextSelection(null);
+    window.getSelection()?.removeAllRanges();
+    if (!selectionMode) {
+      setPageTextItems([]);
+      setPageTextError('');
+      setLoadingPageText(false);
+      return;
+    }
+    const cacheKey = `${documentId}:${selectedPage}`;
+    const cached = pageTextCacheRef.current.get(cacheKey);
+    if (cached) {
+      setPageTextItems(cached);
+      setPageTextError('');
+      setLoadingPageText(false);
+      return;
+    }
+    let cancelled = false;
+    setPageTextItems([]);
+    setLoadingPageText(true);
+    setPageTextError('');
+    api.documentPageText(documentId, selectedPage).then((result) => {
+      if (cancelled) return;
+      pageTextCacheRef.current.set(cacheKey, result.items);
+      setPageTextItems(result.items);
+    }).catch((error) => {
+      if (cancelled) return;
+      const message = error instanceof Error ? error.message : 'Selectable text could not be loaded.';
+      setPageTextError(message);
+      onNotifyRef.current(message, 'error');
+    }).finally(() => {
+      if (!cancelled) setLoadingPageText(false);
+    });
+    return () => { cancelled = true; };
+  }, [documentId, selectedPage, selectionMode]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    function dismissSelection(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setTextSelection(null);
+      window.getSelection()?.removeAllRanges();
+    }
+    window.addEventListener('keydown', dismissSelection);
+    return () => window.removeEventListener('keydown', dismissSelection);
+  }, [selectionMode]);
+
+  function captureTextSelection() {
+    if (!selectionMode || !textLayerRef.current) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+      setTextSelection(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const ancestor = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentElement
+      : range.commonAncestorContainer as HTMLElement;
+    if (!ancestor || !textLayerRef.current.contains(ancestor)) return;
+    const text = selection.toString().replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const selectedIndexes = Array.from(textLayerRef.current.querySelectorAll<HTMLElement>('[data-text-index]'))
+      .filter((element) => range.intersectsNode(element))
+      .map((element) => Number(element.dataset.textIndex))
+      .filter(Number.isInteger);
+    const boundingBoxes = selectedIndexes.flatMap((index) => {
+      const item = pageTextItems[index];
+      return item ? [{
+        page: selectedPage - 1,
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+      }] : [];
+    });
+    if (!boundingBoxes.length) return;
+    const rangeRect = range.getBoundingClientRect();
+    const layerRect = textLayerRef.current.getBoundingClientRect();
+    setTextSelection({
+      text,
+      boundingBoxes,
+      left: Math.min(92, Math.max(2, ((rangeRect.left - layerRect.left) / layerRect.width) * 100)),
+      top: Math.min(94, Math.max(2, ((rangeRect.bottom - layerRect.top) / layerRect.height) * 100)),
+    });
+  }
+
+  function clearTextSelection() {
+    setTextSelection(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  async function copySelectedText() {
+    if (!textSelection) return;
+    try {
+      await navigator.clipboard.writeText(textSelection.text);
+      onNotify('Selected document text copied', 'success');
+      clearTextSelection();
+    } catch {
+      onNotify('Clipboard access failed. You can still Replace or Append the selected text.', 'error');
+    }
+  }
 
   useEffect(() => {
     if (!pageCount) return;
@@ -6846,7 +7013,7 @@ function PdfViewer({
         </button>
       </div>
       <div
-        className={`pdf-pages${isPanning ? ' panning' : ''}`}
+        className={`pdf-pages${isPanning ? ' panning' : ''}${selectionMode ? ' selecting-text' : ''}`}
         ref={pdfContainerRef}
         onPointerDown={startPan}
         onPointerMove={movePan}
@@ -6881,6 +7048,37 @@ function PdfViewer({
                 />
               );
             })}
+            {selectionMode && (
+              <div
+                className="pdf-text-layer"
+                ref={textLayerRef}
+                aria-label={`Selectable text for PDF page ${selectedPage}`}
+                onPointerUp={() => setTimeout(captureTextSelection, 0)}
+              >
+                {pageTextItems.map((item, index) => (
+                  <span
+                    key={`${item.order}-${index}`}
+                    data-text-index={index}
+                    style={{
+                      left: `${item.x * 100}%`,
+                      top: `${item.y * 100}%`,
+                      width: `${item.width * 100}%`,
+                      height: `${item.height * 100}%`,
+                      fontSize: `${item.height * 100}cqh`,
+                    }}
+                  >{item.text} </span>
+                ))}
+                {textSelection && (
+                  <div className="pdf-selection-actions" style={{ left: `${textSelection.left}%`, top: `${textSelection.top}%` }}>
+                    <button type="button" onClick={copySelectedText}><Copy size={13} /> Copy</button>
+                    <button type="button" onClick={() => { onReplaceSelection(textSelection); clearTextSelection(); }}>Replace</button>
+                    <button type="button" onClick={() => { onAppendSelection(textSelection); clearTextSelection(); }}>Append</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {selectionMode && loadingPageText && <div className="pdf-text-layer-status">Loading selectable text…</div>}
+            {selectionMode && pageTextError && <div className="pdf-text-layer-status error">{pageTextError}</div>}
           </div>
         )}
       </div>

@@ -6380,8 +6380,14 @@ textarea {
   cursor: grabbing;
 }
 
+.pdf-pages.selecting-text {
+  cursor: text;
+  user-select: text;
+}
+
 .pdf-page {
   position: relative;
+  container-type: size;
   width: 100%;
   background: var(--surface-muted);
   border: 1px solid var(--border);
@@ -6407,6 +6413,93 @@ textarea {
   border-color: rgba(37, 99, 235, 0.85);
   background: rgba(37, 99, 235, 0.12);
   box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.18);
+}
+
+.pdf-text-layer {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: visible;
+  user-select: text;
+}
+
+.pdf-text-layer > span {
+  position: absolute;
+  display: block;
+  overflow: visible;
+  color: transparent;
+  font-family: sans-serif;
+  line-height: 1;
+  white-space: pre;
+  transform-origin: left top;
+  cursor: text;
+}
+
+.pdf-text-layer > span::selection {
+  background: rgb(37 99 235 / 0.45);
+  color: transparent;
+}
+
+.pdf-selection-actions {
+  position: absolute;
+  z-index: 5;
+  display: inline-flex;
+  gap: 3px;
+  width: max-content;
+  max-width: calc(100% - 12px);
+  border: 1px solid rgb(15 23 42 / 0.2);
+  border-radius: 8px;
+  background: #0f172a;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 0.28);
+  padding: 4px;
+  transform: translate(-8%, 6px);
+  user-select: none;
+}
+
+.pdf-selection-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #fff;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pdf-selection-actions button:hover,
+.pdf-selection-actions button:focus-visible {
+  background: rgb(255 255 255 / 0.16);
+  outline: none;
+}
+
+.pdf-text-layer-status {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  left: 50%;
+  border-radius: 999px;
+  background: rgb(15 23 42 / 0.82);
+  color: #fff;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.pdf-text-layer-status.error {
+  background: rgb(185 28 28 / 0.9);
+}
+
+.value-editor-actions .icon-button.active {
+  border-color: rgb(37 99 235 / 0.45);
+  background: rgb(37 99 235 / 0.12);
+  color: #1d4ed8;
 }
 
 .extraction-pane {
