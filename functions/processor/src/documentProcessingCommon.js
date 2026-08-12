@@ -6,6 +6,7 @@ const database = new MongoDatabase();
 const getClient = () => database.connect();
 
 function resolveMessage(message) {
+  if (Buffer.isBuffer(message)) return resolveMessage(message.toString('utf8'));
   if (typeof message === 'string') {
     try {
       return JSON.parse(message);

@@ -188,11 +188,13 @@ For a minimal UI/API run with local persistence:
 docker compose up -d mongo
 ```
 
-For end-to-end queue processing, classification, storage, and Docling markdown extraction:
+For end-to-end Service Bus processing, classification, storage, and Docling markdown extraction, first copy `.env.example` to `.env`, set `ACCEPT_EULA=Y`, and choose a strong `MSSQL_SA_PASSWORD`. Then run:
 
 ```bash
-docker compose up -d mongo azurite qdrant docling-markdown
+docker compose up -d mongo azurite servicebus-sql servicebus-emulator qdrant docling-markdown
 ```
+
+The Service Bus emulator exposes AMQP on port `5672` and its health endpoint at `http://127.0.0.1:5300/health`. Its queues are declared in `servicebus-emulator-config.json`; emulator data is intentionally non-persistent.
 
 Docling is exposed to the host at:
 
@@ -219,6 +221,7 @@ Set the required values:
 ```bash
 OPENAI_MODEL=gpt-4o-mini
 AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=...;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;
+SERVICE_BUS_CONNECTION_STRING=Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
 QDRANT_URL=http://127.0.0.1:6333
 DOCLING_MARKDOWN_SERVICE_URL=http://127.0.0.1:7072/api/extract-markdown
 ```
@@ -245,11 +248,33 @@ The API runs on:
 http://localhost:3000
 ```
 
-Document processing always runs through the Azure Function worker. A document progresses through the persisted statuses **Received**, **Preprocessed**, **Classified**, and **Extracted**. The API enqueues work on `document-processing`; the text-preparation function creates the stored OCR/markdown artifact and enqueues `document-classification`; classification then enqueues `document-extraction`. The Configuration screen's **Scaling** section controls independent preprocessing, vector-classification, LLM/RAG-classification, and extraction concurrency limits from 1 to 16. Saved limits apply to subsequent queue invocations without restarting the Function App. Environment fallbacks are `PREPROCESSING_CONCURRENCY`, `VECTOR_CLASSIFICATION_CONCURRENCY`, `LLM_CLASSIFICATION_CONCURRENCY`, and `EXTRACTION_CONCURRENCY`. Make sure `AZURE_STORAGE_CONNECTION_STRING` or `AzureWebJobsStorage` is set for the API and function app, then start:
+Document processing always runs through the Azure Function worker and Service Bus. A document progresses through the persisted statuses **Received**, **Preprocessed**, **Classified**, and **Extracted**. The API enqueues work on `document-processing`; text preparation enqueues `document-classification`; classification then enqueues `document-extraction`. Classifier training and realtime events also use Service Bus. The Configuration screen's **Scaling** section controls independent preprocessing, vector-classification, LLM/RAG-classification, and extraction concurrency limits from 1 to 16. Saved limits apply to subsequent queue invocations without restarting the Function App. Environment fallbacks are `PREPROCESSING_CONCURRENCY`, `VECTOR_CLASSIFICATION_CONCURRENCY`, `LLM_CLASSIFICATION_CONCURRENCY`, and `EXTRACTION_CONCURRENCY`.
+
+Copy the tracked Function settings template before starting the worker:
+
+```bash
+cp functions/processor/local.settings.example.json functions/processor/local.settings.json
+```
+
+Then start the Function host:
 
 ```bash
 npm run dev:function
 ```
+
+Azurite does not emit Event Grid events. To exercise the production-equivalent ingestion path locally, upload a file and publish its BlobCreated event with:
+
+```bash
+npm run event:upload -- /absolute/path/to/document.pdf
+```
+
+An optional second argument sets the blob name. Uploading directly through Storage Explorer does not emit the local event.
+
+### Production messaging infrastructure
+
+Deploy `infra/messaging.bicep` into the resource group containing the existing storage account. Supply the storage account name, globally unique Service Bus namespace name, and the API and Function App managed-identity principal IDs. The module creates a Premium namespace, six queues, managed-identity RBAC, an Event Grid system topic filtered to committed blobs in the `trigger` container, and dead-letter storage.
+
+Set `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE=<namespace>.servicebus.windows.net` on the API and `ServiceBusConnection__fullyQualifiedNamespace=<namespace>.servicebus.windows.net` on the Function App. Keep `AzureWebJobsStorage` configured for the Functions host and blob operations.
 
 ### Run the Mock Downstream API
 

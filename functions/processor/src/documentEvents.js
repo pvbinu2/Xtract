@@ -1,20 +1,8 @@
 const { randomUUID } = require('crypto');
-const { QueueServiceClient } = require('@azure/storage-queue');
-
-let queueClient;
+const { sendServiceBusMessage } = require('./serviceBus');
 
 function signalREnabled() {
   return process.env.SIGNALR_ENABLED !== 'false' && Boolean(process.env.REALTIME_BROADCAST_URL);
-}
-
-async function documentEventsQueue() {
-  if (!queueClient) {
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING || process.env.AzureWebJobsStorage;
-    if (!connectionString) throw new Error('Azure storage connection string is required for document events.');
-    queueClient = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('document-events');
-    await queueClient.createIfNotExists();
-  }
-  return queueClient;
 }
 
 async function publishDocumentChanged(documents, documentId, changedFields, context) {
@@ -33,8 +21,7 @@ async function publishDocumentChanged(documents, documentId, changedFields, cont
       changedFields,
       updatedAt: (document.updatedAt || new Date()).toISOString(),
     };
-    const queue = await documentEventsQueue();
-    await queue.sendMessage(Buffer.from(JSON.stringify(event)).toString('base64'));
+    await sendServiceBusMessage('document-events', event, event.eventId);
   } catch (error) {
     context?.warn?.(`Document real-time event could not be queued: ${error?.message || String(error)}`);
   }

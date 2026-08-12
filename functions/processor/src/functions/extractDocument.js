@@ -609,8 +609,8 @@ async function extractQueuedDocument(message, context) {
   }
 }
 
-app.storageQueue('extractDocument', {
+app.serviceBusQueue('extractDocument', {
   queueName: 'document-extraction',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
   handler: withExtractionConcurrency(extractQueuedDocument),
 });

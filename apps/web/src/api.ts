@@ -17,6 +17,7 @@ export type AppConfigPayload = {
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
   useOcrForDocumentProcessing: boolean;
+  documentIngestionTrigger: 'event-grid' | 'blob';
   documentTextMode: 'ocr' | 'markdown';
   markdownServiceUrl: string;
   aiProvider: 'openai' | 'custom' | 'ollama';

@@ -26,9 +26,9 @@ const {
   uploadBuffer,
 } = require('../blobStorage');
 
-const classificationQueueOutput = output.storageQueue({
+const classificationQueueOutput = output.serviceBusQueue({
   queueName: 'document-classification',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
 });
 
 function sourceBlobName(document) {
@@ -194,9 +194,9 @@ async function prepareDocumentText(message, context) {
   }
 }
 
-app.storageQueue('prepareDocumentText', {
+app.serviceBusQueue('prepareDocumentText', {
   queueName: 'document-processing',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
   extraOutputs: [classificationQueueOutput],
   handler: withPreprocessingConcurrency(prepareDocumentText),
 });

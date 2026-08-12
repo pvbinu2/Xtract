@@ -39,6 +39,7 @@ export class ConfigurationService {
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
       useOcrForDocumentProcessing: false,
+      documentIngestionTrigger: 'event-grid',
       documentTextMode: 'ocr',
       markdownServiceUrl: process.env.DOCLING_MARKDOWN_SERVICE_URL || '',
       aiProvider: 'openai',
@@ -71,6 +72,7 @@ export class ConfigurationService {
       turnstileExpectedHostname: config?.turnstileExpectedHostname?.trim().toLowerCase() || '',
       turnstileExpectedAction: config?.turnstileExpectedAction?.trim() || 'request-demo',
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+      documentIngestionTrigger: config?.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
       markdownServiceUrl: config?.markdownServiceUrl || '',
       aiProvider: ['openai', 'custom', 'ollama'].includes(config?.aiProvider) ? config.aiProvider : 'openai',
       llmEndpoint: config?.llmEndpoint || '',
@@ -167,6 +169,7 @@ export class ConfigurationService {
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
     useOcrForDocumentProcessing?: boolean;
+    documentIngestionTrigger?: 'event-grid' | 'blob';
     documentTextMode?: 'ocr' | 'markdown';
     markdownServiceUrl?: string;
     aiProvider?: 'openai' | 'custom' | 'ollama';
@@ -198,6 +201,7 @@ export class ConfigurationService {
     const turnstileExpectedHostname = config.turnstileExpectedHostname?.trim().toLowerCase() || '';
     const turnstileExpectedAction = config.turnstileExpectedAction?.trim() || 'request-demo';
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
+    const documentIngestionTrigger = config.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid';
     const aiProvider = ['openai', 'custom', 'ollama'].includes(config.aiProvider || '')
       ? config.aiProvider
       : 'openai';
@@ -284,6 +288,7 @@ export class ConfigurationService {
           databaseEncryptionKeyVersion: Number(existing?.databaseEncryptionKeyVersion) || 1,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
+          documentIngestionTrigger,
           documentTextMode,
           markdownServiceUrl: config.markdownServiceUrl || '',
           aiProvider,

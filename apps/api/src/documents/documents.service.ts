@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { QueueServiceClient } from '@azure/storage-queue';
 import { randomUUID } from 'crypto';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
@@ -23,11 +22,10 @@ import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
 import type { AuthenticatedUser } from '../auth/auth.guard';
 import { decryptJson, encryptJson, resolveDataEncryptionSettings } from '@xtract/common';
+import { hasServiceBusConfiguration, sendServiceBusMessage } from '../service-bus';
 
 @Injectable()
 export class DocumentsService {
-  private documentEventsQueue?: ReturnType<QueueServiceClient['getQueueClient']>;
-
   constructor(
     @InjectModel(IncomingDocument.name) private readonly documentModel: Model<IncomingDocumentDocument>,
     @InjectModel(DocumentType.name) private readonly documentTypeModel: Model<DocumentTypeDocument>,
@@ -48,6 +46,12 @@ export class DocumentsService {
   private async storageReadKeys() {
     const settings = await this.encryptionSettings();
     return { keys: settings.storage.key ? { [String(settings.storage.keyVersion)]: settings.storage.key } : {} };
+  }
+
+  private requireServiceBus() {
+    if (!hasServiceBusConfiguration()) {
+      throw new BadRequestException('Document processing requires Service Bus configuration.');
+    }
   }
 
   private policyFor(settings: any) {
@@ -139,7 +143,7 @@ export class DocumentsService {
     category?: string;
     documentTypeId?: string;
   }[]): Promise<any> {
-    this.queueConnectionString();
+    this.requireServiceBus();
     const documents = [] as IncomingDocumentDocument[];
     const settings = await this.encryptionSettings();
 
@@ -190,19 +194,12 @@ export class DocumentsService {
     return Promise.all(documents.map((document) => this.findById(document.id)));
   }
 
-  private queueConnectionString() {
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
-    if (!connectionString) {
-      throw new BadRequestException('Document processing requires AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage for the function queue.');
-    }
-    return connectionString;
-  }
-
   private async enqueueProcessing(documentId: string) {
-    const connectionString = this.queueConnectionString();
-    const queue = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('document-processing');
-    await queue.createIfNotExists();
-    await queue.sendMessage(Buffer.from(JSON.stringify({ documentId })).toString('base64'));
+    try {
+      await sendServiceBusMessage('document-processing', { documentId });
+    } catch (error) {
+      throw new BadRequestException((error as Error)?.message || 'Document processing could not be queued.');
+    }
   }
 
   private async publishDocumentChanged(
@@ -211,21 +208,15 @@ export class DocumentsService {
   ) {
     if (process.env.SIGNALR_ENABLED === 'false' || !process.env.REALTIME_BROADCAST_URL) return;
     try {
-      if (!this.documentEventsQueue) {
-        const connectionString = this.queueConnectionString();
-        this.documentEventsQueue = QueueServiceClient
-          .fromConnectionString(connectionString)
-          .getQueueClient('document-events');
-        await this.documentEventsQueue.createIfNotExists();
-      }
-      await this.documentEventsQueue.sendMessage(Buffer.from(JSON.stringify({
-        eventId: randomUUID(),
+      const eventId = randomUUID();
+      await sendServiceBusMessage('document-events', {
+        eventId,
         documentId: document.id || String(document._id),
         revision: Number(document.revision || 0),
         status: document.status,
         changedFields,
         updatedAt: new Date(document.updatedAt || Date.now()).toISOString(),
-      })).toString('base64'));
+      }, eventId);
     } catch (error) {
       console.warn(`Document real-time event could not be queued: ${(error as Error)?.message || String(error)}`);
     }
@@ -251,7 +242,7 @@ export class DocumentsService {
       document.category = newDocType.category;
     }
 
-    this.queueConnectionString();
+    this.requireServiceBus();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
     const settings = await this.encryptionSettings();

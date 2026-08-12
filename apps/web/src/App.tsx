@@ -630,6 +630,7 @@ function OperationsApp() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    documentIngestionTrigger: 'event-grid',
     documentTextMode: 'ocr',
     markdownServiceUrl: '',
     aiProvider: 'openai',
@@ -682,6 +683,7 @@ function OperationsApp() {
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        documentIngestionTrigger: saved.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
         markdownServiceUrl: saved.markdownServiceUrl || '',
         aiProvider: saved.aiProvider === 'custom' || saved.aiProvider === 'ollama'
@@ -736,6 +738,7 @@ function OperationsApp() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            documentIngestionTrigger: parsed.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
             markdownServiceUrl: parsed.markdownServiceUrl || '',
             aiProvider: ['openai', 'custom', 'ollama'].includes(parsed.aiProvider) ? parsed.aiProvider : 'openai',
@@ -3161,6 +3164,7 @@ const pendingConfigurationFields: Array<{
   { key: 'storageEncryptionEnabled', label: 'Storage encryption' },
   { key: 'databaseEncryptionEnabled', label: 'Database encryption' },
   { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
+  { key: 'documentIngestionTrigger', label: 'Document ingestion trigger' },
   { key: 'documentTextMode', label: 'Document text mode' },
   { key: 'markdownServiceUrl', label: 'Markdown service URL' },
   { key: 'downstreamUrl', label: 'Downstream API URL' },
@@ -3319,6 +3323,7 @@ function ConfigurationScreen({
             <div className="configuration-summary-group">
               <strong><ScanText size={15} /> Processing</strong>
               <dl>
+                <div><dt>Ingestion trigger</dt><dd>{config.documentIngestionTrigger === 'blob' ? 'Blob trigger' : 'Event Grid'}</dd></div>
                 <div><dt>Prepared text</dt><dd className={config.useOcrForDocumentProcessing ? 'ready' : ''}>{config.useOcrForDocumentProcessing ? 'On' : 'Off'}</dd></div>
                 <div><dt>Text engine</dt><dd>{config.useOcrForDocumentProcessing ? (config.documentTextMode === 'markdown' ? 'Docling markdown' : 'Built in') : 'Direct PDF'}</dd></div>
                 {config.documentTextMode === 'markdown' && <div><dt>Docling endpoint</dt><dd title={config.markdownServiceUrl}>{config.markdownServiceUrl || 'Not configured'}</dd></div>}
@@ -3678,6 +3683,27 @@ function ConfigurationScreen({
             <ChevronUp size={18} />
           </div>
           <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+              <div className="document-processing-option-card">
+                <strong>Document ingestion trigger</strong>
+                <label className="document-processing-field">
+                  Trigger mode
+                  <select
+                    value={config.documentIngestionTrigger}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      documentIngestionTrigger: event.target.value as AppConfig['documentIngestionTrigger'],
+                    })}
+                  >
+                    <option value="event-grid">Event Grid via Service Bus</option>
+                    <option value="blob">Blob trigger</option>
+                  </select>
+                </label>
+                <p className="help-text">
+                  {config.documentIngestionTrigger === 'event-grid'
+                    ? 'BlobCreated events are delivered through Event Grid and the blob-ingestion Service Bus queue. Recommended for reliable high-volume processing.'
+                    : 'Azure Functions polls the trigger container directly. Useful for simpler deployments and local development.'}
+                </p>
+              </div>
               <div className="document-processing-option-card">
                 <strong>Text preparation</strong>
                 <label className="checkbox-row">

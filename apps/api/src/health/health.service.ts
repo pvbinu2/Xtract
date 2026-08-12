@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { BlobServiceClient } from '@azure/storage-blob';
-import { QueueServiceClient } from '@azure/storage-queue';
+import { DefaultAzureCredential } from '@azure/identity';
+import { ServiceBusAdministrationClient, ServiceBusClient } from '@azure/service-bus';
 import { Connection } from 'mongoose';
 import { ConfigurationService } from '../configuration/configuration.service';
 
@@ -70,10 +71,6 @@ export class HealthService {
           await BlobServiceClient.fromConnectionString(storageConnection).getProperties();
           return 'Blob service is reachable.';
         }),
-        this.timed('queue-storage', 'Queue storage', 'Storage', async () => {
-          await QueueServiceClient.fromConnectionString(storageConnection).getProperties();
-          return 'Queue service is reachable.';
-        }),
       );
       for (const containerName of ['processing', 'train', 'trigger']) {
         checks.push(this.timed(`container-${containerName}`, `${containerName} container`, 'Storage', async () => {
@@ -84,26 +81,11 @@ export class HealthService {
           return 'Blob container is ready.';
         }));
       }
-      for (const queueName of [
-        'document-processing',
-        'document-classification',
-        'document-extraction',
-        'classifier-training',
-        'document-events',
-      ]) {
-        checks.push(this.timed(`queue-${queueName}`, queueName, 'Queues', async () => {
-          const queue = QueueServiceClient.fromConnectionString(storageConnection).getQueueClient(queueName);
-          if (!(await queue.exists())) throw new Error('Queue does not exist.');
-          const properties = await queue.getProperties();
-          return `${properties.approximateMessagesCount || 0} message(s) waiting.`;
-        }));
-      }
     } else {
-      checks.push(
-        Promise.resolve(this.notConfigured('blob-storage', 'Blob storage', 'Storage')),
-        Promise.resolve(this.notConfigured('queue-storage', 'Queue storage', 'Storage')),
-      );
+      checks.push(Promise.resolve(this.notConfigured('blob-storage', 'Blob storage', 'Storage')));
     }
+
+    checks.push(...this.serviceBusChecks());
 
     const results = await Promise.all(checks);
     const ready = results.filter((check) => check.status === 'ready').length;
@@ -115,6 +97,65 @@ export class HealthService {
       summary: { total: results.length, ready, unavailable, notConfigured },
       checks: results,
     };
+  }
+
+  private serviceBusChecks(): Array<Promise<HealthCheck>> {
+    const queueNames = [
+      'blob-ingestion',
+      'document-processing',
+      'document-classification',
+      'document-extraction',
+      'classifier-training',
+      'document-events',
+    ];
+    const connectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
+    const namespace = process.env.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE;
+    if (!connectionString && !namespace) {
+      return [
+        Promise.resolve(this.notConfigured('service-bus', 'Service Bus', 'Services')),
+        ...queueNames.map((name) => Promise.resolve(this.notConfigured(`queue-${name}`, name, 'Queues'))),
+      ];
+    }
+    if (connectionString?.includes('UseDevelopmentEmulator=true')) {
+      const client = new ServiceBusClient(connectionString);
+      const queueChecks = queueNames.map((name) => this.timed(`queue-${name}`, name, 'Queues', async () => {
+        const receiver = client.createReceiver(name, { receiveMode: 'peekLock' });
+        try {
+          await receiver.peekMessages(1);
+          return 'Queue exists and is reachable.';
+        } finally {
+          await receiver.close().catch(() => undefined);
+        }
+      }));
+      const serviceCheck = this.timed('service-bus', 'Service Bus', 'Services', async () => {
+        try {
+          const results = await Promise.all(queueChecks);
+          const missing = results.filter((check) => check.status !== 'ready').map((check) => check.name);
+          if (missing.length) throw new Error(`Missing or unreachable queue(s): ${missing.join(', ')}.`);
+          return `Service Bus is ready. All ${queueNames.length} required queues exist.`;
+        } finally {
+          await client.close().catch(() => undefined);
+        }
+      });
+      return [serviceCheck, ...queueChecks];
+    }
+    const admin = connectionString
+      ? new ServiceBusAdministrationClient(connectionString)
+      : new ServiceBusAdministrationClient(namespace!, new DefaultAzureCredential());
+    const queueChecks = queueNames.map((name) => this.timed(`queue-${name}`, name, 'Queues', async () => {
+      const properties = await admin.getQueueRuntimeProperties(name);
+      return `${properties.activeMessageCount} active message(s).`;
+    }));
+    const serviceCheck = this.timed('service-bus', 'Service Bus', 'Services', async () => {
+      const results = await Promise.all(queueChecks);
+      const missing = results.filter((check) => check.status !== 'ready').map((check) => check.name);
+      if (missing.length) throw new Error(`Missing or unreachable queue(s): ${missing.join(', ')}.`);
+      const activeMessages = results.reduce((total, result) => (
+        total + (Number.parseInt(result.detail, 10) || 0)
+      ), 0);
+      return `Service Bus is ready. All ${queueNames.length} required queues exist; ${activeMessages} active message(s).`;
+    });
+    return [serviceCheck, ...queueChecks];
   }
 
   private aiCheck(configuration: Awaited<ReturnType<ConfigurationService['get']>>) {

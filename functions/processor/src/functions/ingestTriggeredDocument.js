@@ -1,9 +1,11 @@
 const path = require('path');
+const { createHash } = require('crypto');
 const { app, output } = require('@azure/functions');
 const { ObjectId, encryptionPolicyFor, extractedDataUpdate, getClient } = require('../documentProcessingCommon');
 const { getConfiguration } = require('../configurationCache');
 const { resolveDataEncryptionSettings } = require('@xtract/common');
 const { publishDocumentChanged } = require('../documentEvents');
+const { blobEventDetails } = require('../blobCreatedEvent');
 const {
   PROCESSING_CONTAINER,
   TRIGGER_CONTAINER,
@@ -11,9 +13,9 @@ const {
   moveBlob,
 } = require('../blobStorage');
 
-const processingQueueOutput = output.storageQueue({
+const processingQueueOutput = output.serviceBusQueue({
   queueName: 'document-processing',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
 });
 
 const IMAGE_MIME_TYPES = {
@@ -30,41 +32,46 @@ const IMAGE_MIME_TYPES = {
   '.tiff': 'image/tiff',
   '.webp': 'image/webp',
 };
+let triggerEventIndexReady;
+
+function ensureTriggerEventIndex(documents) {
+  if (!triggerEventIndexReady) {
+    triggerEventIndexReady = documents.createIndex(
+      { triggerEventId: 1 },
+      { unique: true, sparse: true, name: 'triggerEventId_1' },
+    );
+  }
+  return triggerEventIndexReady;
+}
 
 function mimeTypeForFileName(fileName) {
   const extension = path.extname(fileName).toLowerCase();
   return extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension];
 }
 
-function resolveBlobName(context) {
-  const metadata = context.triggerMetadata || {};
-  const name = metadata.name || metadata.Name;
-  if (name) return String(name);
-
-  const blobTrigger = metadata.blobTrigger || metadata.BlobTrigger;
-  if (blobTrigger) {
-    const value = String(blobTrigger);
-    return value.startsWith(`${TRIGGER_CONTAINER}/`) ? value.slice(TRIGGER_CONTAINER.length + 1) : value;
-  }
-
-  return '';
+function documentIdForEvent(eventId) {
+  return new ObjectId(createHash('sha256').update(String(eventId)).digest('hex').slice(0, 24));
 }
 
-async function ingestTriggeredDocument(_blob, context) {
-  const triggerBlobName = resolveBlobName(context);
-  if (!triggerBlobName) {
-    context.warn('Skipping trigger blob ingestion because the blob name could not be resolved.');
+async function ingestTriggeredDocument(message, context) {
+  const configuration = await getConfiguration();
+  if (configuration.documentIngestionTrigger === 'blob') {
+    context.info('Ignoring Event Grid ingestion because Blob trigger mode is active.');
     return;
   }
+  const details = blobEventDetails(message);
+  return ingestBlob(details, context, configuration);
+}
+
+async function ingestBlob(details, context, configuration) {
+  const triggerBlobName = details.blobName;
 
   const client = await getClient();
   const db = client.db();
   const documents = db.collection('incomingdocuments');
+  await ensureTriggerEventIndex(documents);
 
-  const existingDocument = await documents.findOne({
-    triggerContainer: TRIGGER_CONTAINER,
-    triggerBlobName,
-  });
+  const existingDocument = await documents.findOne({ triggerEventId: details.event.id });
   if (existingDocument) {
     context.info(`Trigger blob ${triggerBlobName} was already ingested as document ${existingDocument._id}.`);
     if (['received', 'preprocessed', 'classified', 'uploaded', 'processing'].includes(existingDocument.status)) {
@@ -74,8 +81,7 @@ async function ingestTriggeredDocument(_blob, context) {
   }
 
   const originalName = path.basename(triggerBlobName);
-  const documentId = new ObjectId();
-  const configuration = await getConfiguration();
+  const documentId = documentIdForEvent(details.event.id);
   const settings = resolveDataEncryptionSettings(configuration);
   const encryptionPolicy = encryptionPolicyFor(configuration);
   const processingBlobName = createBlobName(originalName, String(documentId));
@@ -94,6 +100,9 @@ async function ingestTriggeredDocument(_blob, context) {
     storageBlobName: processingBlobName,
     triggerContainer: TRIGGER_CONTAINER,
     triggerBlobName,
+    triggerEventId: details.event.id,
+    triggerEventEtag: details.etag,
+    triggerEventSequencer: details.sequencer,
     category: 'Unclassified',
     documentTypeName: 'Pending classification',
     classificationMethod: 'vector',
@@ -113,9 +122,39 @@ async function ingestTriggeredDocument(_blob, context) {
   context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(result.insertedId) }));
 }
 
-app.storageBlob('ingestTriggeredDocument', {
-  path: `${TRIGGER_CONTAINER}/{name}`,
-  connection: 'AzureWebJobsStorage',
+async function ingestTriggeredBlob(blob, context) {
+  const configuration = await getConfiguration();
+  if (configuration.documentIngestionTrigger !== 'blob') {
+    context.info('Ignoring Blob trigger invocation because Event Grid mode is active.');
+    return;
+  }
+  const metadata = context.triggerMetadata || {};
+  const blobName = String(metadata.name || metadata.blobName || '').replace(/^trigger\//, '');
+  if (!blobName) throw new Error('Blob trigger metadata does not contain the blob name.');
+  const etag = String(metadata.eTag || metadata.etag || '');
+  const identity = `${TRIGGER_CONTAINER}/${blobName}/${etag || Buffer.byteLength(blob || '')}`;
+  const eventId = `blob-trigger:${createHash('sha256').update(identity).digest('hex')}`;
+  return ingestBlob({
+    blobName,
+    etag,
+    sequencer: '',
+    event: { id: eventId },
+  }, context, configuration);
+}
+
+app.serviceBusQueue('ingestTriggeredDocument', {
+  queueName: 'blob-ingestion',
+  connection: 'ServiceBusConnection',
   extraOutputs: [processingQueueOutput],
   handler: ingestTriggeredDocument,
 });
+
+app.storageBlob('ingestTriggeredBlob', {
+  path: `${TRIGGER_CONTAINER}/{name}`,
+  connection: 'AzureWebJobsStorage',
+  source: 'LogsAndContainerScan',
+  extraOutputs: [processingQueueOutput],
+  handler: ingestTriggeredBlob,
+});
+
+module.exports = { documentIdForEvent, ingestBlob, ingestTriggeredBlob, ingestTriggeredDocument, mimeTypeForFileName };

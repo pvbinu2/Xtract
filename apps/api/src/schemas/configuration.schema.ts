@@ -4,6 +4,7 @@ import { Document } from 'mongoose';
 export type ConfigurationDocument = Configuration & Document;
 export type AiProvider = 'openai' | 'custom' | 'ollama';
 export type ClassificationMode = 'vector' | 'llm' | 'rag';
+export type DocumentIngestionTrigger = 'event-grid' | 'blob';
 
 @Schema({ collection: 'configuration' })
 export class Configuration {
@@ -56,6 +57,9 @@ export class Configuration {
 
   @Prop({ default: false })
   useOcrForDocumentProcessing!: boolean;
+
+  @Prop({ default: 'event-grid', enum: ['event-grid', 'blob'] })
+  documentIngestionTrigger!: DocumentIngestionTrigger;
 
   @Prop({ default: 'ocr' })
   documentTextMode!: 'ocr' | 'markdown';

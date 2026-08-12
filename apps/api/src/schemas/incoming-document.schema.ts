@@ -154,6 +154,21 @@ export class IncomingDocument {
   storageBlobName?: string;
 
   @Prop()
+  triggerContainer?: string;
+
+  @Prop()
+  triggerBlobName?: string;
+
+  @Prop()
+  triggerEventId?: string;
+
+  @Prop()
+  triggerEventEtag?: string;
+
+  @Prop()
+  triggerEventSequencer?: string;
+
+  @Prop()
   textArtifactContainer?: string;
 
   @Prop()
@@ -241,5 +256,6 @@ export class IncomingDocument {
 }
 
 export const IncomingDocumentSchema = SchemaFactory.createForClass(IncomingDocument);
+IncomingDocumentSchema.index({ triggerEventId: 1 }, { unique: true, sparse: true });
 IncomingDocumentSchema.index({ createdAt: -1 });
 IncomingDocumentSchema.index({ status: 1, category: 1, documentTypeId: 1 });

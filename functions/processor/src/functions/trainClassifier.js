@@ -156,8 +156,8 @@ async function trainClassifier(message, context) {
   }
 }
 
-app.storageQueue('trainClassifier', {
+app.serviceBusQueue('trainClassifier', {
   queueName: 'classifier-training',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
   handler: trainClassifier,
 });
