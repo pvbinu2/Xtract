@@ -1,8 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { ConfigurationCache, decryptSecret, encryptSecret, generateDataEncryptionKey } from '@xtract/common';
-import { Configuration, ConfigurationDocument } from '../schemas/configuration.schema';
+import { ConfigurationCache, DEFAULT_INGESTION_FILE_TYPES, decryptSecret, encryptSecret, generateDataEncryptionKey, normalizeIngestionFileTypes } from '@xtract/common';
+import { Configuration, ConfigurationDocument, IngestionFileType } from '../schemas/configuration.schema';
 
 @Injectable()
 export class ConfigurationService {
@@ -40,6 +40,7 @@ export class ConfigurationService {
       sendKeyValuePairs: false,
       useOcrForDocumentProcessing: false,
       documentIngestionTrigger: 'event-grid',
+      ingestionFileTypes: DEFAULT_INGESTION_FILE_TYPES,
       documentTextMode: 'ocr',
       markdownServiceUrl: process.env.DOCLING_MARKDOWN_SERVICE_URL || '',
       aiProvider: 'openai',
@@ -73,6 +74,7 @@ export class ConfigurationService {
       turnstileExpectedAction: config?.turnstileExpectedAction?.trim() || 'request-demo',
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
       documentIngestionTrigger: config?.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
+      ingestionFileTypes: normalizeIngestionFileTypes(config?.ingestionFileTypes),
       markdownServiceUrl: config?.markdownServiceUrl || '',
       aiProvider: ['openai', 'custom', 'ollama'].includes(config?.aiProvider) ? config.aiProvider : 'openai',
       llmEndpoint: config?.llmEndpoint || '',
@@ -170,6 +172,7 @@ export class ConfigurationService {
     sendKeyValuePairs?: boolean;
     useOcrForDocumentProcessing?: boolean;
     documentIngestionTrigger?: 'event-grid' | 'blob';
+    ingestionFileTypes?: IngestionFileType[];
     documentTextMode?: 'ocr' | 'markdown';
     markdownServiceUrl?: string;
     aiProvider?: 'openai' | 'custom' | 'ollama';
@@ -202,6 +205,7 @@ export class ConfigurationService {
     const turnstileExpectedAction = config.turnstileExpectedAction?.trim() || 'request-demo';
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
     const documentIngestionTrigger = config.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid';
+    const ingestionFileTypes = normalizeIngestionFileTypes(config.ingestionFileTypes);
     const aiProvider = ['openai', 'custom', 'ollama'].includes(config.aiProvider || '')
       ? config.aiProvider
       : 'openai';
@@ -289,6 +293,7 @@ export class ConfigurationService {
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           documentIngestionTrigger,
+          ingestionFileTypes,
           documentTextMode,
           markdownServiceUrl: config.markdownServiceUrl || '',
           aiProvider,
@@ -333,4 +338,5 @@ export class ConfigurationService {
       turnstileAction: config.turnstileExpectedAction || 'request-demo',
     };
   }
+
 }

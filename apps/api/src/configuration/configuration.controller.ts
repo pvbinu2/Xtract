@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { ConfigurationService } from './configuration.service';
 import { Configuration } from '../schemas/configuration.schema';
+import type { IngestionFileType } from '../schemas/configuration.schema';
 import { Roles } from '../auth/auth.decorators';
 
 @Controller('configuration')
@@ -31,6 +32,7 @@ export class ConfigurationController {
       sendKeyValuePairs?: boolean;
       useOcrForDocumentProcessing?: boolean;
       documentIngestionTrigger?: 'event-grid' | 'blob';
+      ingestionFileTypes?: IngestionFileType[];
       documentTextMode?: 'ocr' | 'markdown';
       markdownServiceUrl?: string;
       aiProvider?: 'openai' | 'custom' | 'ollama';

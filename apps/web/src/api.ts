@@ -18,6 +18,12 @@ export type AppConfigPayload = {
   sendKeyValuePairs: boolean;
   useOcrForDocumentProcessing: boolean;
   documentIngestionTrigger: 'event-grid' | 'blob';
+  ingestionFileTypes: Array<{
+    extensions: string[];
+    label: string;
+    mimeTypes: string[];
+    enabled: boolean;
+  }>;
   documentTextMode: 'ocr' | 'markdown';
   markdownServiceUrl: string;
   aiProvider: 'openai' | 'custom' | 'ollama';

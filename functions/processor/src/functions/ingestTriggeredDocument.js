@@ -3,7 +3,7 @@ const { createHash } = require('crypto');
 const { app, output } = require('@azure/functions');
 const { ObjectId, encryptionPolicyFor, extractedDataUpdate, getClient } = require('../documentProcessingCommon');
 const { getConfiguration } = require('../configurationCache');
-const { resolveDataEncryptionSettings } = require('@xtract/common');
+const { ingestionFileSupport, resolveDataEncryptionSettings } = require('@xtract/common');
 const { publishDocumentChanged } = require('../documentEvents');
 const { blobEventDetails } = require('../blobCreatedEvent');
 const {
@@ -81,6 +81,8 @@ async function ingestBlob(details, context, configuration) {
   }
 
   const originalName = path.basename(triggerBlobName);
+  const mimeType = mimeTypeForFileName(originalName);
+  const support = ingestionFileSupport(originalName, mimeType, configuration.ingestionFileTypes);
   const documentId = documentIdForEvent(details.event.id);
   const settings = resolveDataEncryptionSettings(configuration);
   const encryptionPolicy = encryptionPolicyFor(configuration);
@@ -94,7 +96,7 @@ async function ingestBlob(details, context, configuration) {
     _id: documentId,
     fileName: processingBlobName,
     originalName,
-    mimeType: mimeTypeForFileName(originalName),
+    mimeType,
     filePath: `azure://${PROCESSING_CONTAINER}/${processingBlobName}`,
     storageContainer: PROCESSING_CONTAINER,
     storageBlobName: processingBlobName,
@@ -107,8 +109,9 @@ async function ingestBlob(details, context, configuration) {
     category: 'Unclassified',
     documentTypeName: 'Pending classification',
     classificationMethod: 'vector',
-    status: 'received',
-    stageTimings: [{ status: 'received', startTime: now, endTime: now }],
+    status: support.supported ? 'received' : 'unsupported_format',
+    stageTimings: [{ status: support.supported ? 'received' : 'unsupported_format', startTime: now, endTime: now }],
+    error: support.supported ? undefined : support.message,
     revision: 1,
     encryptionPolicy,
     createdAt: now,
@@ -120,7 +123,11 @@ async function ingestBlob(details, context, configuration) {
 
   context.info(`Ingested trigger blob ${triggerBlobName} as document ${result.insertedId}.`);
   await publishDocumentChanged(documents, result.insertedId, ['status'], context);
-  context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(result.insertedId) }));
+  if (support.supported) {
+    context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(result.insertedId) }));
+  } else {
+    context.warn(`Document ${result.insertedId} was stored but not queued: ${support.message}`);
+  }
 }
 
 async function ingestTriggeredBlob(blob, context) {

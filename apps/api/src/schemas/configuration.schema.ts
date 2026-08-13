@@ -1,11 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { DEFAULT_INGESTION_FILE_TYPES, type IngestionFileType } from '@xtract/common';
+
+export type { IngestionFileType } from '@xtract/common';
 
 export type ConfigurationDocument = Configuration & Document;
 export type AiProvider = 'openai' | 'custom' | 'ollama';
 export type ClassificationMode = 'vector' | 'llm' | 'rag';
 export type DocumentIngestionTrigger = 'event-grid' | 'blob';
-
 @Schema({ collection: 'configuration' })
 export class Configuration {
   @Prop({ default: false })
@@ -60,6 +62,9 @@ export class Configuration {
 
   @Prop({ default: 'event-grid', enum: ['event-grid', 'blob'] })
   documentIngestionTrigger!: DocumentIngestionTrigger;
+
+  @Prop({ type: [Object], default: DEFAULT_INGESTION_FILE_TYPES })
+  ingestionFileTypes!: IngestionFileType[];
 
   @Prop({ default: 'ocr' })
   documentTextMode!: 'ocr' | 'markdown';

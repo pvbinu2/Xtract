@@ -11,7 +11,8 @@ export type DocumentStatus =
   | 'rejected'
   | 'failed'
   | 'uploaded'
-  | 'processing';
+  | 'processing'
+  | 'unsupported_format';
 
 @Schema({ _id: false })
 export class DocumentStageTiming {

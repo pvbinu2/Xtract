@@ -4163,6 +4163,45 @@ select {
   font-weight: 800;
 }
 
+.ingestion-file-types-card {
+  grid-column: 1 / -1;
+}
+
+.ingestion-file-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 7px;
+}
+
+.ingestion-file-type-grid .checkbox-row {
+  min-height: 48px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 7px 9px;
+}
+
+.ingestion-file-type-grid .checkbox-row span {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 5px;
+  align-items: baseline;
+}
+
+.ingestion-file-type-grid .checkbox-row strong {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+.ingestion-file-type-grid .checkbox-row small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .document-processing-field {
   display: grid;
   gap: 6px;
@@ -6000,7 +6039,8 @@ textarea {
 }
 
 .document-row:has(.pill.failed)::before,
-.document-row:has(.pill.rejected)::before {
+.document-row:has(.pill.rejected)::before,
+.document-row:has(.pill.unsupported_format)::before {
   background: #ef4444;
 }
 
@@ -6013,6 +6053,14 @@ textarea {
   border-color: rgb(37 99 235 / 0.32);
   box-shadow: 0 10px 28px rgb(15 23 42 / 0.09);
   transform: translateY(-1px);
+}
+
+.document-open.unsupported {
+  cursor: not-allowed;
+}
+
+.document-open.unsupported .clickable-status {
+  cursor: pointer;
 }
 
 .document-row:has(.pill.extracted):hover {
@@ -6284,6 +6332,11 @@ textarea {
 .pill.failed {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.pill.unsupported_format {
+  background: #fff1e6;
+  color: #9a3412;
 }
 
 .validation-layout {

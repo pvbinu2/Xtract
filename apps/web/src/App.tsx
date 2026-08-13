@@ -633,6 +633,7 @@ function OperationsApp() {
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
     documentIngestionTrigger: 'event-grid',
+    ingestionFileTypes: [],
     documentTextMode: 'ocr',
     markdownServiceUrl: '',
     aiProvider: 'openai',
@@ -686,6 +687,7 @@ function OperationsApp() {
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
         documentIngestionTrigger: saved.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
+        ingestionFileTypes: saved.ingestionFileTypes || [],
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
         markdownServiceUrl: saved.markdownServiceUrl || '',
         aiProvider: saved.aiProvider === 'custom' || saved.aiProvider === 'ollama'
@@ -741,6 +743,7 @@ function OperationsApp() {
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
             documentIngestionTrigger: parsed.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
+            ingestionFileTypes: parsed.ingestionFileTypes || [],
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
             markdownServiceUrl: parsed.markdownServiceUrl || '',
             aiProvider: ['openai', 'custom', 'ollama'].includes(parsed.aiProvider) ? parsed.aiProvider : 'openai',
@@ -3168,6 +3171,7 @@ const pendingConfigurationFields: Array<{
   { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
   { key: 'documentIngestionTrigger', label: 'Document ingestion trigger' },
   { key: 'documentTextMode', label: 'Document text mode' },
+  { key: 'ingestionFileTypes', label: 'API ingestion file types' },
   { key: 'markdownServiceUrl', label: 'Markdown service URL' },
   { key: 'downstreamUrl', label: 'Downstream API URL' },
   { key: 'deleteAfterDownstream', label: 'Delete after delivery' },
@@ -3178,6 +3182,7 @@ function configurationChangeValue(value: AppConfig[keyof AppConfig], secret = fa
   if (secret) return value ? 'New value entered' : 'Not set';
   if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
   if (value === '') return 'Not set';
+  if (Array.isArray(value)) return `${value.filter((item) => item && typeof item === 'object' && 'enabled' in item && item.enabled).length} enabled`;
   return String(value);
 }
 
@@ -3205,6 +3210,8 @@ function ConfigurationScreen({
     { id: 'processing', label: 'Processing', icon: ScanText },
     { id: 'downstream', label: 'Downstream', icon: Network },
   ] as const;
+  const pdfIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.includes('application/pdf'));
+  const imageIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.startsWith('image/')));
   const pendingChanges = useMemo(() => pendingConfigurationFields.flatMap((field) => {
     const previous = persistedConfig[field.key];
     const current = config[field.key];
@@ -3746,6 +3753,49 @@ function ConfigurationScreen({
                   <p className="warning-text">
                     Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
                   </p>
+                )}
+              </div>
+              <div className="document-processing-option-card ingestion-file-types-card">
+                <strong>API ingestion file types</strong>
+                <p className="help-text">Choose which file types the external document ingestion endpoint accepts.</p>
+                <div className="ingestion-file-type-grid">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={pdfIngestionTypes.length > 0 && pdfIngestionTypes.every((fileType) => fileType.enabled)}
+                      onChange={(event) => onConfigChange({
+                        ...config,
+                        ingestionFileTypes: config.ingestionFileTypes.map((candidate) => (
+                          candidate.mimeTypes.includes('application/pdf') ? { ...candidate, enabled: event.target.checked } : candidate
+                        )),
+                      })}
+                    />
+                    <span>
+                      PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                      <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                    </span>
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={imageIngestionTypes.length > 0 && imageIngestionTypes.every((fileType) => fileType.enabled)}
+                      onChange={(event) => onConfigChange({
+                        ...config,
+                        ingestionFileTypes: config.ingestionFileTypes.map((candidate) => (
+                          candidate.mimeTypes.some((mimeType) => mimeType.startsWith('image/'))
+                            ? { ...candidate, enabled: event.target.checked }
+                            : candidate
+                        )),
+                      })}
+                    />
+                    <span>
+                      Images <strong>{imageIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                      <small>{imageIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                    </span>
+                  </label>
+                </div>
+                {!config.ingestionFileTypes.some((fileType) => fileType.enabled) && (
+                  <p className="warning-text">All external API ingestion file types are disabled.</p>
                 )}
               </div>
           </div>
@@ -5053,9 +5103,7 @@ function UploadScreen({
           onDrop={(event) => {
             event.preventDefault();
             setDraggingFiles(false);
-            setFiles(Array.from(event.dataTransfer.files).filter((file) =>
-              file.type === 'application/pdf' || file.type.startsWith('image/'),
-            ));
+            setFiles(Array.from(event.dataTransfer.files));
           }}
         >
           <span className="file-drop-icon"><Upload size={30} /></span>
@@ -5065,10 +5113,9 @@ function UploadScreen({
               : 'Drop your documents here'}
           </strong>
           <span>{files.length ? `${formatFileSize(totalFileSize)} ready to upload` : 'or click to browse your computer'}</span>
-          <small>PDF, PNG, JPG, TIFF · Multiple files supported</small>
+          <small>All files are accepted; unsupported formats are recorded without processing</small>
           <input
             type="file"
-            accept="application/pdf,image/*,.tif,.tiff"
             multiple
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
@@ -5156,7 +5203,7 @@ function DocumentList({
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
   const selectedDocuments = documents.filter((document) => selectedDocumentIds.has(document._id));
   const selectedUnlockedDocuments = selectedDocuments.filter(
-    (document) => document.status !== 'validated' && document.status !== 'rejected',
+    (document) => !['validated', 'rejected', 'unsupported_format'].includes(document.status),
   );
   const allDocumentsSelected = documents.length > 0
     && documents.every((document) => selectedDocumentIds.has(document._id));
@@ -5311,6 +5358,7 @@ function DocumentList({
             <option value="validated">Validated</option>
             <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
+            <option value="unsupported_format">Unsupported</option>
           </select>
         </label>
         <label>
@@ -5413,7 +5461,14 @@ function DocumentList({
                 />
               </label>
             )}
-            <button className="document-open" onClick={() => onOpen(doc._id)}>
+            <button
+              className={`document-open${doc.status === 'unsupported_format' ? ' unsupported' : ''}`}
+              aria-disabled={doc.status === 'unsupported_format'}
+              title={doc.status === 'unsupported_format' ? 'Unsupported files cannot be opened' : `Open ${doc.originalName}`}
+              onClick={() => {
+                if (doc.status !== 'unsupported_format') onOpen(doc._id);
+              }}
+            >
               <span className="document-primary-info">
                 <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
                 <span>
@@ -5431,9 +5486,15 @@ function DocumentList({
                 </span>
               </span>
               <span className="document-type-capsule">
-                <span>{doc.category}</span>
-                <i>/</i>
-                <strong>{doc.documentTypeName}</strong>
+                {doc.status === 'unsupported_format' ? (
+                  <strong>NA</strong>
+                ) : (
+                  <>
+                    <span>{doc.category}</span>
+                    <i>/</i>
+                    <strong>{doc.documentTypeName}</strong>
+                  </>
+                )}
               </span>
               <span
                 className={`pill ${doc.status} clickable-status`}
@@ -5451,7 +5512,7 @@ function DocumentList({
                   setFlowTarget(doc);
                 }}
               >
-                {doc.status}
+                {doc.status === 'unsupported_format' ? 'Unsupported' : doc.status.replace(/_/g, ' ')}
               </span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
@@ -5470,8 +5531,8 @@ function DocumentList({
               <div className="row-actions">
                 <button
                   className="icon-button locked-action"
-                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
-                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
+                  title={['validated', 'rejected', 'unsupported_format'].includes(doc.status) ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
+                  disabled={['validated', 'rejected', 'unsupported_format'].includes(doc.status)}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReclassifyTarget(doc);
@@ -5481,19 +5542,19 @@ function DocumentList({
                   }}
                 >
                   <BrainCircuit size={16} />
-                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
+                  {['validated', 'rejected', 'unsupported_format'].includes(doc.status) && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
                   className="icon-button locked-action"
-                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
-                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
+                  title={['validated', 'rejected', 'unsupported_format'].includes(doc.status) ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
+                  disabled={['validated', 'rejected', 'unsupported_format'].includes(doc.status)}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReprocessTarget(doc);
                   }}
                 >
                   <RotateCcw size={16} />
-                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
+                  {['validated', 'rejected', 'unsupported_format'].includes(doc.status) && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
                   className="icon-button danger"
@@ -5756,9 +5817,10 @@ function DocumentFlowDialog({
   onClose: () => void;
 }) {
   const baseStatuses: IncomingDocument['status'][] = ['received', 'preprocessed', 'classified', 'extracted'];
+  const isUnsupported = document.status === 'unsupported_format';
   const recordedTimings = document.stageTimings || [];
-  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed'];
-  const statuses = [
+  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed', 'unsupported_format'];
+  const statuses = isUnsupported ? ['unsupported_format'] as IncomingDocument['status'][] : [
     ...baseStatuses,
     ...optionalStatuses.filter((status) =>
       status === document.status || recordedTimings.some((timing) => timing.status === status)),
@@ -5807,13 +5869,15 @@ function DocumentFlowDialog({
           <div>
             <span>Processing time</span>
             <strong>{formatDurationMilliseconds(processingTimeExcludingQueue)}</strong>
-            <small>Function execution only</small>
+            <small>{isUnsupported ? 'Processing was not started' : 'Function execution only'}</small>
           </div>
-          <div>
-            <span>Total elapsed time</span>
-            <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
-            <small>Including queue wait</small>
-          </div>
+          {!isUnsupported && (
+            <div>
+              <span>Total elapsed time</span>
+              <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
+              <small>Including queue wait</small>
+            </div>
+          )}
         </div>
         <div className="document-flow">
           {statuses.map((status, index) => {
@@ -5822,10 +5886,10 @@ function DocumentFlowDialog({
             const nextTiming = nextStatus
               ? [...recordedTimings].reverse().find((item) => item.status === nextStatus)
               : undefined;
-            const showQueueWait = index < baseStatuses.length - 1
+            const showQueueWait = !isUnsupported && Boolean(nextStatus) && index < baseStatuses.length - 1
               && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
             const isCurrent = status === document.status;
-            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed';
+            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed' || status === 'unsupported_format';
             const completed = Boolean(timing?.endTime) || (isCurrent && isTerminalStatus);
             return (
               <Fragment key={status}>
@@ -5836,7 +5900,7 @@ function DocumentFlowDialog({
                   </div>
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
-                      <strong>{status}</strong>
+                      <strong>{status === 'unsupported_format' ? 'Unsupported' : status}</strong>
                       <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
                     </div>
                     <dl>
@@ -6283,7 +6347,7 @@ function ValidationScreen({
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
-  const isLocked = document.status === 'validated' || document.status === 'rejected';
+  const isLocked = ['validated', 'rejected', 'unsupported_format'].includes(document.status);
 
   return (
     <div className="validation-layout">
@@ -6313,14 +6377,20 @@ function ValidationScreen({
             <div>
               <h2>{document.originalName}</h2>
               <span className="document-type-capsule validation-document-type-capsule">
-                <span>{document.category}</span>
-                <i>/</i>
-                <strong>{document.documentTypeName}</strong>
+                {document.status === 'unsupported_format' ? (
+                  <strong>NA</strong>
+                ) : (
+                  <>
+                    <span>{document.category}</span>
+                    <i>/</i>
+                    <strong>{document.documentTypeName}</strong>
+                  </>
+                )}
               </span>
               <div className="classification-score-line">
                 <span>Classification score</span>
-                <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
-                  {formatScore(document.classificationScore)}
+                <strong className={document.status === 'unsupported_format' ? undefined : scoreToneClass(document.classificationScore).trim() || undefined}>
+                  {document.status === 'unsupported_format' ? 'NA' : formatScore(document.classificationScore)}
                 </strong>
                 <ClassificationMethodIcon
                   method={document.classificationMethod}
@@ -6354,7 +6424,7 @@ function ValidationScreen({
                   title="View document processing flow"
                   onClick={() => setShowDocumentFlow(true)}
                 >
-                  {document.status}
+                  {document.status === 'unsupported_format' ? 'Unsupported' : document.status.replace(/_/g, ' ')}
                 </button>
                 <span className="processing-mode-badge">
                   <ProcessingModeIcon mode={document.processingMode} />
@@ -6557,7 +6627,9 @@ function ValidationScreen({
           {isLocked && (
             <div className={`locked-state ${document.status}`}>
               {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}
-              {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
+              {document.status === 'unsupported_format'
+                ? 'This file format is not enabled for processing.'
+                : `${document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.`}
             </div>
           )}
         </div>

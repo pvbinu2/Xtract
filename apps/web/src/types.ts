@@ -91,7 +91,8 @@ export type IncomingDocument = {
     | 'rejected'
     | 'failed'
     | 'uploaded'
-    | 'processing';
+    | 'processing'
+    | 'unsupported_format';
   revision?: number;
   extractedData: ExtractedValue[];
   validatedBy?: {

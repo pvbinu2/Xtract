@@ -21,7 +21,7 @@ import {
 import { ConfigurationService } from '../configuration/configuration.service';
 import { BlobStorageService, PROCESSING_CONTAINER } from '../storage/blob-storage.service';
 import type { AuthenticatedUser } from '../auth/auth.guard';
-import { decryptJson, encryptJson, resolveDataEncryptionSettings } from '@xtract/common';
+import { decryptJson, encryptJson, ingestionFileSupport, resolveDataEncryptionSettings } from '@xtract/common';
 import { hasServiceBusConfiguration, sendServiceBusMessage } from '../service-bus';
 
 @Injectable()
@@ -143,14 +143,16 @@ export class DocumentsService {
     category?: string;
     documentTypeId?: string;
   }[]): Promise<any> {
-    this.requireServiceBus();
     const documents = [] as IncomingDocumentDocument[];
     const settings = await this.encryptionSettings();
+    const configuration = await this.configurationService.get();
 
     for (const item of payload) {
       const docType = item.documentTypeId ? await this.documentTypeModel.findById(item.documentTypeId) : undefined;
       if (item.documentTypeId && !docType) throw new NotFoundException('Document type not found');
-      const result = await this.createIngestedDocument(item, docType, settings, { ingestionSource: 'ui' });
+      const support = ingestionFileSupport(item.originalName, item.mimeType, configuration.ingestionFileTypes);
+      if (support.supported) this.requireServiceBus();
+      const result = await this.createIngestedDocument(item, docType, settings, { ingestionSource: 'ui' }, support);
       documents.push(result.document);
     }
 
@@ -167,7 +169,9 @@ export class DocumentsService {
     metadata?: Record<string, unknown>;
     idempotencyKey: string;
   }) {
-    this.requireServiceBus();
+    const configuration = await this.configurationService.get();
+    const support = ingestionFileSupport(item.originalName, item.mimeType, configuration.ingestionFileTypes);
+    if (support.supported) this.requireServiceBus();
     const hasCategory = Boolean(item.category);
     const hasType = Boolean(item.type);
     if (hasCategory !== hasType) {
@@ -192,7 +196,7 @@ export class DocumentsService {
       ingestionSource: 'api',
       ingestionMetadata: item.metadata,
       ingestionIdempotencyKeyHash: idempotencyHash,
-    });
+    }, support);
     return this.ingestionReceipt(result.document, result.deduplicated);
   }
 
@@ -205,6 +209,7 @@ export class DocumentsService {
       ingestionMetadata?: Record<string, unknown>;
       ingestionIdempotencyKeyHash?: string;
     },
+    support: { supported: boolean; message: string } = { supported: true, message: '' },
   ): Promise<{ document: IncomingDocumentDocument; deduplicated: boolean }> {
     const documentId = new Types.ObjectId();
     const blobName = this.blobStorage.createBlobName(item.originalName, documentId.toString());
@@ -235,8 +240,9 @@ export class DocumentsService {
         classificationScore: docType ? 1 : undefined,
         classificationMethod: docType ? 'manual' : 'vector',
         classificationModel: docType ? 'manual' : undefined,
-        status: 'received',
-        stageTimings: [{ status: 'received', startTime: new Date(), endTime: new Date() }],
+        status: support.supported ? 'received' : 'unsupported_format',
+        stageTimings: [{ status: support.supported ? 'received' : 'unsupported_format', startTime: new Date(), endTime: new Date() }],
+        error: support.supported ? undefined : support.message,
         revision: 1,
         encryptionPolicy: this.policyFor(settings),
         ...ingestion,
@@ -254,6 +260,7 @@ export class DocumentsService {
     }
 
     await this.publishDocumentChanged(document, ['status']);
+    if (!support.supported) return { document, deduplicated: false };
     try {
       await this.enqueueProcessing(document.id);
     } catch (error) {
