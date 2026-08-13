@@ -14,7 +14,7 @@ const {
   resolveDocumentFile,
   resolveDocumentId,
 } = require('../documentProcessingCommon');
-const { extractDocumentContent } = require('../documentText');
+const { extractDocumentContent, extractDocumentSpatialItems } = require('../documentText');
 const { publishDocumentChanged } = require('../documentEvents');
 const { getConfiguration } = require('../configurationCache');
 const { imageBufferToPdf, isImageDocument } = require('../imageToPdf');
@@ -26,9 +26,9 @@ const {
   uploadBuffer,
 } = require('../blobStorage');
 
-const classificationQueueOutput = output.storageQueue({
+const classificationQueueOutput = output.serviceBusQueue({
   queueName: 'document-classification',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
 });
 
 function sourceBlobName(document) {
@@ -46,6 +46,12 @@ function textArtifactBlobName(document, mode) {
   const sourceName = path.posix.basename(document.storageBlobName || document.originalName || document.fileName);
   const stem = sourceName.slice(0, sourceName.length - path.posix.extname(sourceName).length) || 'document';
   return `${document._id}/${stem}${mode === 'markdown' ? '.md' : '.ocr'}`;
+}
+
+function spatialTextArtifactBlobName(document) {
+  const sourceName = path.posix.basename(document.storageBlobName || document.originalName || document.fileName);
+  const stem = sourceName.slice(0, sourceName.length - path.posix.extname(sourceName).length) || 'document';
+  return `${document._id}/${stem}.spatial-text.json`;
 }
 
 async function prepareDocumentText(message, context) {
@@ -151,11 +157,20 @@ async function prepareDocumentText(message, context) {
         : document.originalName || document.fileName,
     });
     const artifactBlobName = textArtifactBlobName(document, documentTextMode);
+    const spatialItems = await extractDocumentSpatialItems(localFilePath, { forceOcr: documentTextMode === 'markdown' });
+    const spatialArtifactBlobName = spatialTextArtifactBlobName(document);
     await uploadBuffer(
       PROCESSING_CONTAINER,
       artifactBlobName,
       Buffer.from(content.text, 'utf8'),
       documentTextMode === 'markdown' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8',
+      storageEncryption,
+    );
+    await uploadBuffer(
+      PROCESSING_CONTAINER,
+      spatialArtifactBlobName,
+      Buffer.from(JSON.stringify({ version: 1, items: spatialItems.map((item, order) => ({ ...item, order })) }), 'utf8'),
+      'application/json; charset=utf-8',
       storageEncryption,
     );
     if (
@@ -165,6 +180,13 @@ async function prepareDocumentText(message, context) {
     ) {
       await deleteBlob(document.textArtifactContainer, document.textArtifactBlobName);
     }
+    if (
+      document.spatialTextArtifactContainer &&
+      document.spatialTextArtifactBlobName &&
+      document.spatialTextArtifactBlobName !== spatialArtifactBlobName
+    ) {
+      await deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
+    }
     await completeDocumentStage(
       documents,
       document._id,
@@ -173,12 +195,14 @@ async function prepareDocumentText(message, context) {
         textArtifactContainer: PROCESSING_CONTAINER,
         textArtifactBlobName: artifactBlobName,
         textArtifactMode: documentTextMode,
+        spatialTextArtifactContainer: PROCESSING_CONTAINER,
+        spatialTextArtifactBlobName: spatialArtifactBlobName,
       },
     );
     await publishDocumentChanged(
       documents,
       document._id,
-      ['status', 'textArtifactBlobName', 'textArtifactMode'],
+      ['status', 'textArtifactBlobName', 'textArtifactMode', 'spatialTextArtifactBlobName'],
       context,
     );
 
@@ -194,11 +218,11 @@ async function prepareDocumentText(message, context) {
   }
 }
 
-app.storageQueue('prepareDocumentText', {
+app.serviceBusQueue('prepareDocumentText', {
   queueName: 'document-processing',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
   extraOutputs: [classificationQueueOutput],
   handler: withPreprocessingConcurrency(prepareDocumentText),
 });
 
-module.exports = { convertedPdfBlobName, prepareDocumentText, sourceBlobName, textArtifactBlobName };
+module.exports = { convertedPdfBlobName, prepareDocumentText, sourceBlobName, spatialTextArtifactBlobName, textArtifactBlobName };

@@ -12,7 +12,8 @@
     "dev": "concurrently \"npm run dev --workspace apps/api\" \"npm run dev --workspace apps/web\"",
     "dev:api": "npm run dev --workspace apps/api",
     "dev:web": "npm run dev --workspace apps/web",
-    "dev:function": "npm run start --workspace functions/processor"
+    "dev:function": "npm run start --workspace functions/processor",
+    "event:upload": "npm run event:upload --workspace @xtract/processor --"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

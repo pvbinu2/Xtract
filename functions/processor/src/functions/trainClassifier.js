@@ -30,6 +30,7 @@ async function trainClassifier(message, context) {
     configuration?.encryptedCustomApiKey
       || (configuration?.aiProvider === 'custom' ? configuration?.encryptedApiKey : ''),
   );
+  const vectorDatabaseApiKey = decryptSecret(configuration?.encryptedVectorDatabaseApiKey);
   const selectedProvider = ['openai', 'custom', 'ollama'].includes(configuration?.aiProvider)
     ? configuration.aiProvider
     : 'openai';
@@ -42,6 +43,8 @@ async function trainClassifier(message, context) {
     embeddingProvider: configuration?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
     embeddingModel: configuration?.embeddingModel,
     ollamaEmbeddingModel: configuration?.ollamaEmbeddingModel,
+    vectorDatabaseEndpoint: configuration?.vectorDatabaseEndpoint || process.env.QDRANT_URL || 'http://127.0.0.1:6333',
+    vectorDatabaseApiKey: vectorDatabaseApiKey || process.env.QDRANT_API_KEY || '',
   };
 
   if (payload.trainAll) {
@@ -59,7 +62,7 @@ async function trainClassifier(message, context) {
     }
 
     try {
-      await resetClassifierVectors();
+      await resetClassifierVectors(aiOptions);
     } catch (error) {
       const errorMessage = `Classifier vector reset failed: ${error?.message || String(error)}`;
       context.error(errorMessage);
@@ -153,8 +156,8 @@ async function trainClassifier(message, context) {
   }
 }
 
-app.storageQueue('trainClassifier', {
+app.serviceBusQueue('trainClassifier', {
   queueName: 'classifier-training',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
   handler: trainClassifier,
 });

@@ -5,3 +5,5 @@ dist
 apps/api/uploads/*
 !apps/api/uploads/.gitkeep
 local.settings.json
+services/realtime/obj/Debug/net9.0/Xtract.Realtime.AssemblyInfo.cs
+services/realtime/obj/Debug/net9.0/Xtract.Realtime.AssemblyInfoInputs.cache

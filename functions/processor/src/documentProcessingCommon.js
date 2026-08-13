@@ -6,6 +6,7 @@ const database = new MongoDatabase();
 const getClient = () => database.connect();
 
 function resolveMessage(message) {
+  if (Buffer.isBuffer(message)) return resolveMessage(message.toString('utf8'));
   if (typeof message === 'string') {
     try {
       return JSON.parse(message);
@@ -100,6 +101,7 @@ function processingOptionsFor(document, configuration = {}) {
     configuration?.encryptedCustomApiKey
       || (configuration?.aiProvider === 'custom' ? configuration?.encryptedApiKey : ''),
   );
+  const vectorDatabaseApiKey = decryptSecret(configuration?.encryptedVectorDatabaseApiKey);
   const aiProvider = ['openai', 'custom', 'ollama'].includes(configuration?.aiProvider)
     ? configuration.aiProvider
     : 'openai';
@@ -120,6 +122,8 @@ function processingOptionsFor(document, configuration = {}) {
       embeddingProvider: configuration?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
       embeddingModel: configuration?.embeddingModel || 'text-embedding-3-small',
       ollamaEmbeddingModel: configuration?.ollamaEmbeddingModel || 'qwen3-embedding:4b',
+      vectorDatabaseEndpoint: configuration?.vectorDatabaseEndpoint || process.env.QDRANT_URL || 'http://127.0.0.1:6333',
+      vectorDatabaseApiKey: vectorDatabaseApiKey || process.env.QDRANT_API_KEY || '',
     },
     textOptions: {
       mode: documentTextMode,

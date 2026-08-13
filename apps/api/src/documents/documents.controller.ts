@@ -100,6 +100,12 @@ export class DocumentsController {
     return response.send(file.buffer);
   }
 
+  @Get(':id/pages/:pageNumber/text')
+  @Roles('admin', 'validator')
+  pageText(@Param('id') id: string, @Param('pageNumber') pageNumber: string) {
+    return this.service.getSpatialTextPage(id, pageNumber);
+  }
+
   @Post(':id/extracted-data')
   @Roles('admin', 'validator')
   updateExtractedData(

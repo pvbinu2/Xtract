@@ -17,6 +17,13 @@ export type AppConfigPayload = {
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
   useOcrForDocumentProcessing: boolean;
+  documentIngestionTrigger: 'event-grid' | 'blob';
+  ingestionFileTypes: Array<{
+    extensions: string[];
+    label: string;
+    mimeTypes: string[];
+    enabled: boolean;
+  }>;
   documentTextMode: 'ocr' | 'markdown';
   markdownServiceUrl: string;
   aiProvider: 'openai' | 'custom' | 'ollama';
@@ -32,6 +39,10 @@ export type AppConfigPayload = {
   embeddingProvider: 'openai' | 'ollama';
   embeddingModel: string;
   ollamaEmbeddingModel: string;
+  vectorDatabaseProvider: string;
+  vectorDatabaseEndpoint: string;
+  vectorDatabaseApiKey: string;
+  vectorDatabaseApiKeyConfigured?: boolean;
   classificationModel: string;
   classificationReasoningEffort: ReasoningEffort;
   classificationMode: 'vector' | 'llm' | 'rag';
@@ -47,6 +58,20 @@ export type ReprocessDocumentPayload = {
   useOcrForDocumentProcessing?: boolean;
   documentTextMode?: 'ocr' | 'markdown';
   forceClassification?: boolean;
+};
+
+export type SpatialTextPage = {
+  version: 1;
+  page: number;
+  items: Array<{
+    text: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    lineKey?: string;
+    order: number;
+  }>;
 };
 
 export type HealthCheckResult = {
@@ -199,6 +224,7 @@ export const api = {
     return new Uint8Array(await response.arrayBuffer());
   },
   documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
+  documentPageText: (id: string, pageNumber: number) => request<SpatialTextPage>(`/documents/${id}/pages/${pageNumber}/text`),
   documentFile: (id: string) => requestFile(`/documents/${id}/file`),
   documentTextArtifact: (id: string) => requestFile(`/documents/${id}/text-artifact`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),

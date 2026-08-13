@@ -1,8 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { ConfigurationCache, decryptSecret, encryptSecret, generateDataEncryptionKey } from '@xtract/common';
-import { Configuration, ConfigurationDocument } from '../schemas/configuration.schema';
+import { ConfigurationCache, DEFAULT_INGESTION_FILE_TYPES, decryptSecret, encryptSecret, generateDataEncryptionKey, normalizeIngestionFileTypes } from '@xtract/common';
+import { Configuration, ConfigurationDocument, IngestionFileType } from '../schemas/configuration.schema';
 
 @Injectable()
 export class ConfigurationService {
@@ -17,7 +17,7 @@ export class ConfigurationService {
   private loadRaw() {
     return this.configModel
       .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedVectorDatabaseApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
       .lean()
       .exec()
       .then((config) => config || {});
@@ -39,6 +39,8 @@ export class ConfigurationService {
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
       useOcrForDocumentProcessing: false,
+      documentIngestionTrigger: 'event-grid',
+      ingestionFileTypes: DEFAULT_INGESTION_FILE_TYPES,
       documentTextMode: 'ocr',
       markdownServiceUrl: process.env.DOCLING_MARKDOWN_SERVICE_URL || '',
       aiProvider: 'openai',
@@ -48,6 +50,8 @@ export class ConfigurationService {
       embeddingProvider: 'openai',
       embeddingModel: 'text-embedding-3-small',
       ollamaEmbeddingModel: 'qwen3-embedding:4b',
+      vectorDatabaseProvider: 'qdrant',
+      vectorDatabaseEndpoint: process.env.QDRANT_URL || 'http://127.0.0.1:6333',
       classificationModel: 'gpt-5-nano',
       classificationReasoningEffort: 'low',
       classificationMode: 'vector',
@@ -69,6 +73,8 @@ export class ConfigurationService {
       turnstileExpectedHostname: config?.turnstileExpectedHostname?.trim().toLowerCase() || '',
       turnstileExpectedAction: config?.turnstileExpectedAction?.trim() || 'request-demo',
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+      documentIngestionTrigger: config?.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
+      ingestionFileTypes: normalizeIngestionFileTypes(config?.ingestionFileTypes),
       markdownServiceUrl: config?.markdownServiceUrl || '',
       aiProvider: ['openai', 'custom', 'ollama'].includes(config?.aiProvider) ? config.aiProvider : 'openai',
       llmEndpoint: config?.llmEndpoint || '',
@@ -77,6 +83,8 @@ export class ConfigurationService {
       embeddingProvider: config?.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
       embeddingModel: config?.embeddingModel || defaults.embeddingModel,
       ollamaEmbeddingModel: config?.ollamaEmbeddingModel || defaults.ollamaEmbeddingModel,
+      vectorDatabaseProvider: config?.vectorDatabaseProvider?.trim() || defaults.vectorDatabaseProvider,
+      vectorDatabaseEndpoint: config?.vectorDatabaseEndpoint?.trim() || defaults.vectorDatabaseEndpoint,
       classificationModel: config?.classificationModel || defaults.classificationModel,
       classificationReasoningEffort: config?.classificationReasoningEffort || defaults.classificationReasoningEffort,
       classificationMode: ['vector', 'llm', 'rag'].includes(config?.classificationMode || '')
@@ -100,6 +108,9 @@ export class ConfigurationService {
     const customApiKey = config?.encryptedCustomApiKey
       ? decryptSecret(config.encryptedCustomApiKey)
       : config?.aiProvider === 'custom' ? legacyKey : '';
+    const vectorDatabaseApiKey = config?.encryptedVectorDatabaseApiKey
+      ? decryptSecret(config.encryptedVectorDatabaseApiKey)
+      : process.env.QDRANT_API_KEY || '';
     const turnstileSecretKey = config?.encryptedTurnstileSecretKey
       ? decryptSecret(config.encryptedTurnstileSecretKey)
       : '';
@@ -109,6 +120,8 @@ export class ConfigurationService {
       ...normalized,
       openAiApiKey,
       customApiKey,
+      vectorDatabaseApiKey,
+      vectorDatabaseApiKeyConfigured: Boolean(vectorDatabaseApiKey),
       turnstileSecretKey,
       turnstileSecretKeyConfigured: Boolean(turnstileSecretKey),
       storageDataEncryptionKey,
@@ -121,6 +134,7 @@ export class ConfigurationService {
       encryptedApiKey: undefined,
       encryptedOpenAiApiKey: undefined,
       encryptedCustomApiKey: undefined,
+      encryptedVectorDatabaseApiKey: undefined,
       encryptedTurnstileSecretKey: undefined,
       encryptedStorageDataKey: undefined,
       encryptedDatabaseDataKey: undefined,
@@ -129,12 +143,13 @@ export class ConfigurationService {
 
   async getPublic(): Promise<Configuration> {
     const runtime: any = await this.get();
-    const { apiKey, openAiApiKey, customApiKey, turnstileSecretKey, storageDataEncryptionKey, databaseDataEncryptionKey, ...publicConfig } = runtime;
+    const { apiKey, openAiApiKey, customApiKey, vectorDatabaseApiKey, turnstileSecretKey, storageDataEncryptionKey, databaseDataEncryptionKey, ...publicConfig } = runtime;
     return {
       ...publicConfig,
       apiKey: '',
       openAiApiKey: '',
       customApiKey: '',
+      vectorDatabaseApiKey: '',
       turnstileSecretKey: '',
       apiKeyConfigured: runtime.aiProvider === 'custom'
         ? Boolean(runtime.customApiKeyConfigured)
@@ -156,6 +171,8 @@ export class ConfigurationService {
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
     useOcrForDocumentProcessing?: boolean;
+    documentIngestionTrigger?: 'event-grid' | 'blob';
+    ingestionFileTypes?: IngestionFileType[];
     documentTextMode?: 'ocr' | 'markdown';
     markdownServiceUrl?: string;
     aiProvider?: 'openai' | 'custom' | 'ollama';
@@ -168,6 +185,9 @@ export class ConfigurationService {
     embeddingProvider?: 'openai' | 'ollama';
     embeddingModel?: string;
     ollamaEmbeddingModel?: string;
+    vectorDatabaseProvider?: string;
+    vectorDatabaseEndpoint?: string;
+    vectorDatabaseApiKey?: string;
     classificationModel?: string;
     classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     classificationMode?: 'vector' | 'llm' | 'rag';
@@ -184,6 +204,8 @@ export class ConfigurationService {
     const turnstileExpectedHostname = config.turnstileExpectedHostname?.trim().toLowerCase() || '';
     const turnstileExpectedAction = config.turnstileExpectedAction?.trim() || 'request-demo';
     const documentTextMode = config.documentTextMode === 'markdown' ? 'markdown' : 'ocr';
+    const documentIngestionTrigger = config.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid';
+    const ingestionFileTypes = normalizeIngestionFileTypes(config.ingestionFileTypes);
     const aiProvider = ['openai', 'custom', 'ollama'].includes(config.aiProvider || '')
       ? config.aiProvider
       : 'openai';
@@ -196,9 +218,11 @@ export class ConfigurationService {
     const vectorClassificationConcurrency = Math.min(16, Math.max(1, Number(config.vectorClassificationConcurrency) || 4));
     const llmClassificationConcurrency = Math.min(16, Math.max(1, Number(config.llmClassificationConcurrency) || 1));
     const extractionConcurrency = Math.min(16, Math.max(1, Number(config.extractionConcurrency) || 1));
+    const vectorDatabaseProvider = config.vectorDatabaseProvider?.trim() || 'qdrant';
+    const vectorDatabaseEndpoint = (config.vectorDatabaseEndpoint?.trim() || process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
     const existing: any = await this.configModel
       .findOne()
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedVectorDatabaseApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
       .lean()
       .exec();
     const encryptedOpenAiApiKey = config.openAiApiKey?.trim()
@@ -212,6 +236,9 @@ export class ConfigurationService {
     const encryptedTurnstileSecretKey = config.turnstileSecretKey?.trim()
       ? encryptSecret(config.turnstileSecretKey.trim())
       : existing?.encryptedTurnstileSecretKey || '';
+    const encryptedVectorDatabaseApiKey = config.vectorDatabaseApiKey?.trim()
+      ? encryptSecret(config.vectorDatabaseApiKey.trim())
+      : existing?.encryptedVectorDatabaseApiKey || '';
     let encryptedStorageDataKey = existing?.encryptedStorageDataKey || '';
     let encryptedDatabaseDataKey = existing?.encryptedDatabaseDataKey || '';
     try {
@@ -241,6 +268,7 @@ export class ConfigurationService {
       apiKey: _plainTextApiKey,
       openAiApiKey: _plainTextOpenAiApiKey,
       customApiKey: _plainTextCustomApiKey,
+      vectorDatabaseApiKey: _plainTextVectorDatabaseApiKey,
       turnstileSecretKey: _plainTextTurnstileSecretKey,
       ...safeConfig
     } = config;
@@ -264,12 +292,17 @@ export class ConfigurationService {
           databaseEncryptionKeyVersion: Number(existing?.databaseEncryptionKeyVersion) || 1,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
+          documentIngestionTrigger,
+          ingestionFileTypes,
           documentTextMode,
           markdownServiceUrl: config.markdownServiceUrl || '',
           aiProvider,
           llmEndpoint: config.llmEndpoint?.trim() || '',
           encryptedOpenAiApiKey,
           encryptedCustomApiKey,
+          vectorDatabaseProvider,
+          vectorDatabaseEndpoint,
+          encryptedVectorDatabaseApiKey,
           ollamaBaseUrl: config.ollamaBaseUrl || 'http://127.0.0.1:11434',
           ollamaModel: config.ollamaModel || 'llama3.2',
           embeddingProvider,
@@ -290,7 +323,7 @@ export class ConfigurationService {
           setDefaultsOnInsert: true,
         },
       )
-      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
+      .select('+encryptedApiKey +encryptedOpenAiApiKey +encryptedCustomApiKey +encryptedVectorDatabaseApiKey +encryptedTurnstileSecretKey +encryptedStorageDataKey +encryptedDatabaseDataKey')
       .lean()
       .exec();
     this.cache.replace(updated || {});
@@ -305,4 +338,5 @@ export class ConfigurationService {
       turnstileAction: config.turnstileExpectedAction || 'request-demo',
     };
   }
+
 }

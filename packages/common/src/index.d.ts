@@ -17,6 +17,12 @@ export function resolveDataEncryptionSettings(config: Record<string, any>): {
   storage: { enabled: boolean; keyVersion: number; key: string };
   database: { enabled: boolean; keyVersion: number; key: string };
 };
+export type IngestionFileType = { extensions: string[]; label: string; mimeTypes: string[]; enabled: boolean };
+export const DEFAULT_INGESTION_FILE_TYPES: IngestionFileType[];
+export function normalizeIngestionFileTypes(value?: unknown): IngestionFileType[];
+export function ingestionFileSupport(fileName: string, mimeType: string | undefined, configuredTypes?: unknown): {
+  supported: boolean; extension: string; mimeType: string; message: string;
+};
 
 export class ConfigurationCache<T = Record<string, unknown>> {
   constructor(options: {
@@ -57,7 +63,7 @@ export class AzureBlobStorage {
 }
 
 export class QdrantVectorDatabase {
-  constructor(options?: { baseUrl?: string; collectionName?: string; fetch?: typeof fetch });
+  constructor(options?: { baseUrl?: string; collectionName?: string; apiKey?: string; fetch?: typeof fetch });
   ensureCollection(size: number): Promise<void>;
   resetCollection(): Promise<void>;
   deleteByFilter(filter: object): Promise<void>;

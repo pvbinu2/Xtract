@@ -1,9 +1,11 @@
-import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import Chart from 'chart.js/auto';
 import {
   CheckCircle2,
   Activity,
+  Archive,
+  AlertTriangle,
   BarChart3,
   Building2,
   BrainCircuit,
@@ -12,14 +14,22 @@ import {
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
+  Copy,
+  Calculator,
+  CircleDollarSign,
   Clock3,
+  Coins,
   Moon,
   PlusCircle,
   FilePlus2,
   FileSearch,
   Files,
   Gauge,
+  HardDrive,
+  ListOrdered,
+  Radio,
   ScanText,
+  TextSelect,
   Network,
   Loader2,
   Pencil,
@@ -622,6 +632,8 @@ function OperationsApp() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    documentIngestionTrigger: 'event-grid',
+    ingestionFileTypes: [],
     documentTextMode: 'ocr',
     markdownServiceUrl: '',
     aiProvider: 'openai',
@@ -637,6 +649,10 @@ function OperationsApp() {
     embeddingProvider: 'openai',
     embeddingModel: defaultOpenAIEmbeddingModel,
     ollamaEmbeddingModel: defaultOllamaEmbeddingModel,
+    vectorDatabaseProvider: 'qdrant',
+    vectorDatabaseEndpoint: 'http://127.0.0.1:6333',
+    vectorDatabaseApiKey: '',
+    vectorDatabaseApiKeyConfigured: false,
     classificationModel: lowCostOpenAIModel,
     classificationReasoningEffort: 'low',
     classificationMode: 'vector',
@@ -646,13 +662,14 @@ function OperationsApp() {
     llmClassificationConcurrency: 1,
     extractionConcurrency: 1,
   });
+  const [persistedConfig, setPersistedConfig] = useState<AppConfig | null>(null);
   const isAdmin = currentUser?.role === 'admin';
   const canManageDocuments = currentUser?.role === 'admin' || currentUser?.role === 'validator';
 
   async function loadConfiguration() {
     try {
       const saved = await api.getConfiguration();
-      setConfig({
+      const loadedConfig: AppConfig = {
         storageEncryptionEnabled: Boolean(saved.storageEncryptionEnabled),
         databaseEncryptionEnabled: Boolean(saved.databaseEncryptionEnabled),
         storageEncryptionKeyConfigured: Boolean(saved.storageEncryptionKeyConfigured),
@@ -669,6 +686,8 @@ function OperationsApp() {
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        documentIngestionTrigger: saved.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
+        ingestionFileTypes: saved.ingestionFileTypes || [],
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
         markdownServiceUrl: saved.markdownServiceUrl || '',
         aiProvider: saved.aiProvider === 'custom' || saved.aiProvider === 'ollama'
@@ -686,6 +705,10 @@ function OperationsApp() {
         embeddingProvider: saved.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
         embeddingModel: saved.embeddingModel || defaultOpenAIEmbeddingModel,
         ollamaEmbeddingModel: saved.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
+        vectorDatabaseProvider: saved.vectorDatabaseProvider || 'qdrant',
+        vectorDatabaseEndpoint: saved.vectorDatabaseEndpoint || 'http://127.0.0.1:6333',
+        vectorDatabaseApiKey: '',
+        vectorDatabaseApiKeyConfigured: Boolean(saved.vectorDatabaseApiKeyConfigured),
         classificationModel: saved.classificationModel || lowCostOpenAIModel,
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
         classificationMode: saved.classificationMode === 'llm' || saved.classificationMode === 'rag' ? saved.classificationMode : 'vector',
@@ -694,13 +717,15 @@ function OperationsApp() {
         vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.vectorClassificationConcurrency) || 4)),
         llmClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.llmClassificationConcurrency) || 1)),
         extractionConcurrency: Math.min(16, Math.max(1, Number(saved.extractionConcurrency) || 1)),
-      });
+      };
+      setConfig(loadedConfig);
+      setPersistedConfig(loadedConfig);
     } catch {
       const storedConfig = localStorage.getItem('xtract-config');
       if (storedConfig) {
         try {
           const parsed = JSON.parse(storedConfig);
-          setConfig({
+          const loadedConfig: AppConfig = {
             storageEncryptionEnabled: Boolean(parsed.storageEncryptionEnabled),
             databaseEncryptionEnabled: Boolean(parsed.databaseEncryptionEnabled),
             storageEncryptionKeyConfigured: Boolean(parsed.storageEncryptionKeyConfigured),
@@ -717,6 +742,8 @@ function OperationsApp() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            documentIngestionTrigger: parsed.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
+            ingestionFileTypes: parsed.ingestionFileTypes || [],
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
             markdownServiceUrl: parsed.markdownServiceUrl || '',
             aiProvider: ['openai', 'custom', 'ollama'].includes(parsed.aiProvider) ? parsed.aiProvider : 'openai',
@@ -732,6 +759,10 @@ function OperationsApp() {
             embeddingProvider: parsed.embeddingProvider === 'ollama' ? 'ollama' : 'openai',
             embeddingModel: parsed.embeddingModel || defaultOpenAIEmbeddingModel,
             ollamaEmbeddingModel: parsed.ollamaEmbeddingModel || defaultOllamaEmbeddingModel,
+            vectorDatabaseProvider: parsed.vectorDatabaseProvider || 'qdrant',
+            vectorDatabaseEndpoint: parsed.vectorDatabaseEndpoint || 'http://127.0.0.1:6333',
+            vectorDatabaseApiKey: '',
+            vectorDatabaseApiKeyConfigured: Boolean(parsed.vectorDatabaseApiKeyConfigured),
             classificationModel: parsed.classificationModel || lowCostOpenAIModel,
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
             classificationMode: parsed.classificationMode === 'llm' || parsed.classificationMode === 'rag' ? parsed.classificationMode : 'vector',
@@ -740,7 +771,9 @@ function OperationsApp() {
             vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.vectorClassificationConcurrency) || 4)),
             llmClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.llmClassificationConcurrency) || 1)),
             extractionConcurrency: Math.min(16, Math.max(1, Number(parsed.extractionConcurrency) || 1)),
-          });
+          };
+          setConfig(loadedConfig);
+          setPersistedConfig(loadedConfig);
         } catch {
           // ignore invalid saved config
         }
@@ -753,6 +786,7 @@ function OperationsApp() {
   async function saveConfiguration(newConfig: AppConfig): Promise<AppConfig> {
     const saved = await api.saveConfiguration(newConfig);
     setConfig(saved);
+    setPersistedConfig(saved);
     showToast('Configuration saved successfully', 'info');
     return saved;
   }
@@ -1393,6 +1427,7 @@ function OperationsApp() {
         {!selectedPageLoading && isAdmin && view === 'configuration' && (
           <ConfigurationScreen
             config={config}
+            persistedConfig={persistedConfig ?? config}
             onConfigChange={setConfig}
             onSave={saveConfiguration}
             onRefresh={loadConfiguration}
@@ -2414,6 +2449,20 @@ function HealthDashboard({
     'AI',
   ];
 
+  function resourceIcon(check: HealthCheckResult['checks'][number]) {
+    if (check.id === 'api') return <Activity size={20} />;
+    if (check.id === 'mongodb' || check.id === 'qdrant') return <Database size={20} />;
+    if (check.id === 'blob-storage') return <HardDrive size={20} />;
+    if (check.id === 'queue-storage' || check.id.startsWith('queue-')) return <ListOrdered size={20} />;
+    if (check.id.startsWith('container-')) return <Archive size={20} />;
+    if (check.id === 'processor') return <FileSearch size={20} />;
+    if (check.id === 'realtime') return <Radio size={20} />;
+    if (check.id === 'docling') return <FileText size={20} />;
+    if (check.id === 'ai-provider') return <BrainCircuit size={20} />;
+    if (check.id === 'embedding-provider') return <Network size={20} />;
+    return <Activity size={20} />;
+  }
+
   async function refresh() {
     setChecking(true);
     try {
@@ -2509,13 +2558,7 @@ function HealthDashboard({
             <div className="health-resource-grid">
               {checks.map((check) => (
                 <article className={`health-resource ${check.status}`} key={check.id}>
-                  <div className="health-resource-icon">
-                    {check.status === 'ready'
-                      ? <CheckCircle2 size={20} />
-                      : check.status === 'unavailable'
-                        ? <CircleX size={20} />
-                        : <CircleHelp size={20} />}
-                  </div>
+                  <div className="health-resource-icon" aria-hidden="true">{resourceIcon(check)}</div>
                   <div>
                     <div className="health-resource-heading">
                       <strong>{check.name}</strong>
@@ -2737,10 +2780,13 @@ function DemoRequestsScreen({
   );
 }
 
-function ReviewMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
+function ReviewMetric({ label, value, helper, icon }: { label: string; value: string; helper?: string; icon: ReactNode }) {
   return (
     <div className="review-metric">
-      <span>{label}</span>
+      <div className="review-metric-heading">
+        <span className="review-metric-icon" aria-hidden="true">{icon}</span>
+        <span>{label}</span>
+      </div>
       <strong>{value}</strong>
       {helper && <small>{helper}</small>}
     </div>
@@ -2978,12 +3024,12 @@ function BusinessReviewScreen({
           </div>
         </div>
         <div className="review-metric-grid">
-          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} />
-          <ReviewMetric label="Estimated cost" value={formatReviewCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" />
-          <ReviewMetric label="Avg cost / document" value={formatReviewCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} />
-          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} />
-          <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} />
-          <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} />
+          <ReviewMetric label="Files processed" value={formatNumber(summary.filesProcessed)} icon={<Files size={18} />} />
+          <ReviewMetric label="Estimated cost" value={formatReviewCurrency(summary.estimatedCostUsd)} helper="Extraction + classification + embeddings" icon={<CircleDollarSign size={18} />} />
+          <ReviewMetric label="Avg cost / document" value={formatReviewCurrency(averageCostPerDocument)} helper={`${formatNumber(summary.filesProcessed)} processed files`} icon={<Calculator size={18} />} />
+          <ReviewMetric label="Total tokens" value={formatNumber(summary.tokens.total)} icon={<Coins size={18} />} />
+          <ReviewMetric label="Input tokens" value={formatNumber(summary.tokens.input)} icon={<Download size={18} />} />
+          <ReviewMetric label="Output tokens" value={formatNumber(summary.tokens.output)} icon={<Upload size={18} />} />
         </div>
         <MonthlyCostProjectionChart
           averageCostPerDocument={averageCostPerDocument}
@@ -3093,18 +3139,89 @@ function ClassificationModeControls({
   );
 }
 
+const pendingConfigurationFields: Array<{
+  key: keyof AppConfig;
+  label: string;
+  secret?: boolean;
+}> = [
+  { key: 'aiProvider', label: 'AI provider' },
+  { key: 'openAiApiKey', label: 'OpenAI API key', secret: true },
+  { key: 'customApiKey', label: 'Custom API key', secret: true },
+  { key: 'llmEndpoint', label: 'Custom endpoint' },
+  { key: 'ollamaBaseUrl', label: 'Ollama URL' },
+  { key: 'ollamaModel', label: 'Ollama model' },
+  { key: 'embeddingProvider', label: 'Embedding provider' },
+  { key: 'embeddingModel', label: 'OpenAI embedding model' },
+  { key: 'ollamaEmbeddingModel', label: 'Ollama embedding model' },
+  { key: 'vectorDatabaseProvider', label: 'Vector database provider' },
+  { key: 'vectorDatabaseEndpoint', label: 'Vector database endpoint' },
+  { key: 'vectorDatabaseApiKey', label: 'Vector database authentication key', secret: true },
+  { key: 'classificationModel', label: 'Classification model' },
+  { key: 'classificationReasoningEffort', label: 'Reasoning effort' },
+  { key: 'classificationMode', label: 'Classification mode' },
+  { key: 'classificationRagTopK', label: 'RAG results' },
+  { key: 'preprocessingConcurrency', label: 'Preprocessing concurrency' },
+  { key: 'vectorClassificationConcurrency', label: 'Vector classification concurrency' },
+  { key: 'llmClassificationConcurrency', label: 'LLM classification concurrency' },
+  { key: 'extractionConcurrency', label: 'Extraction concurrency' },
+  { key: 'cachingEnabled', label: 'Configuration caching' },
+  { key: 'configurationCacheTtlSeconds', label: 'Cache TTL' },
+  { key: 'storageEncryptionEnabled', label: 'Storage encryption' },
+  { key: 'databaseEncryptionEnabled', label: 'Database encryption' },
+  { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
+  { key: 'documentIngestionTrigger', label: 'Document ingestion trigger' },
+  { key: 'documentTextMode', label: 'Document text mode' },
+  { key: 'ingestionFileTypes', label: 'API ingestion file types' },
+  { key: 'markdownServiceUrl', label: 'Markdown service URL' },
+  { key: 'downstreamUrl', label: 'Downstream API URL' },
+  { key: 'deleteAfterDownstream', label: 'Delete after delivery' },
+  { key: 'sendKeyValuePairs', label: 'Send key-value pairs' },
+];
+
+function configurationChangeValue(value: AppConfig[keyof AppConfig], secret = false) {
+  if (secret) return value ? 'New value entered' : 'Not set';
+  if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
+  if (value === '') return 'Not set';
+  if (Array.isArray(value)) return `${value.filter((item) => item && typeof item === 'object' && 'enabled' in item && item.enabled).length} enabled`;
+  return String(value);
+}
+
 function ConfigurationScreen({
   config,
+  persistedConfig,
   onConfigChange,
   onSave,
   onRefresh,
 }: {
   config: AppConfig;
+  persistedConfig: AppConfig;
   onConfigChange: (config: AppConfig) => void;
   onSave: (config: AppConfig) => Promise<AppConfig>;
   onRefresh: () => Promise<void>;
 }) {
   const [aiServiceTab, setAiServiceTab] = useState<AiProvider>('openai');
+  const [configurationTab, setConfigurationTab] = useState<'summary' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
+  const configurationTabs = [
+    { id: 'summary', label: 'Summary', icon: Gauge },
+    { id: 'ai', label: 'AI Services', icon: Sparkles },
+    { id: 'scaling', label: 'Scaling', icon: TrendingUp },
+    { id: 'caching', label: 'Caching', icon: Database },
+    { id: 'encryption', label: 'Encryption', icon: ShieldCheck },
+    { id: 'processing', label: 'Processing', icon: ScanText },
+    { id: 'downstream', label: 'Downstream', icon: Network },
+  ] as const;
+  const pdfIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.includes('application/pdf'));
+  const imageIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.startsWith('image/')));
+  const pendingChanges = useMemo(() => pendingConfigurationFields.flatMap((field) => {
+    const previous = persistedConfig[field.key];
+    const current = config[field.key];
+    if (previous === current) return [];
+    return [{
+      ...field,
+      previous: configurationChangeValue(previous, field.secret),
+      current: configurationChangeValue(current, field.secret),
+    }];
+  }), [config, persistedConfig]);
   async function refreshConfig() {
     await onRefresh();
   }
@@ -3127,8 +3244,111 @@ function ConfigurationScreen({
           <span>Changes take effect after saving</span>
         </div>
       </div>
+      {pendingChanges.length > 0 && (
+        <section className="configuration-pending" aria-live="polite" aria-label="Unsaved configuration changes">
+          <div className="configuration-pending-heading">
+            <AlertTriangle size={18} />
+            <div>
+              <strong>{pendingChanges.length} unsaved {pendingChanges.length === 1 ? 'change' : 'changes'}</strong>
+              <span>Review the updates below before saving.</span>
+            </div>
+          </div>
+          <ul>
+            {pendingChanges.map((change) => (
+              <li key={change.key}>
+                <strong>{change.label}</strong>
+                <span>{change.previous}</span>
+                <ChevronRight size={14} aria-hidden="true" />
+                <span>{change.current}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <div className="configuration-tabs" role="tablist" aria-label="Configuration sections">
+        {configurationTabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={configurationTab === id}
+            className={configurationTab === id ? 'active' : ''}
+            onClick={() => setConfigurationTab(id)}
+          >
+            <Icon size={17} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
       <div className="configuration-form">
-        <div className="configuration-section ai expanded">
+        <div className={`configuration-section summary expanded${configurationTab === 'summary' ? ' active-tab' : ''}`}>
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Gauge size={20} /></span>
+              <span>
+                <strong>Configuration Summary</strong>
+                <small>Read-only overview of the active application settings</small>
+              </span>
+            </span>
+          </div>
+          <div className="configuration-section-body configuration-summary-grid">
+            <div className="configuration-summary-group">
+              <strong><Sparkles size={15} /> AI Services</strong>
+              <dl>
+                <div><dt>OpenAI key</dt><dd className={config.openAiApiKeyConfigured ? 'ready' : ''}>{config.openAiApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+                <div><dt>Custom key</dt><dd className={config.customApiKeyConfigured ? 'ready' : ''}>{config.customApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+                <div><dt>Custom endpoint</dt><dd title={config.llmEndpoint || 'Not configured'}>{config.llmEndpoint || 'Not configured'}</dd></div>
+                <div><dt>Ollama endpoint</dt><dd title={config.ollamaBaseUrl}>{config.ollamaBaseUrl}</dd></div>
+                <div><dt>Classification</dt><dd>{config.classificationMode.toUpperCase()} · {config.classificationModel}</dd></div>
+                <div><dt>Embeddings</dt><dd>{config.embeddingProvider} · {config.embeddingProvider === 'ollama' ? config.ollamaEmbeddingModel : config.embeddingModel}</dd></div>
+                <div><dt>Vector database</dt><dd>{config.vectorDatabaseProvider} · {config.vectorDatabaseApiKeyConfigured ? 'Authenticated' : 'No key'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><TrendingUp size={15} /> Scaling</strong>
+              <dl>
+                <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}/16</dd></div>
+                <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}/16</dd></div>
+                <div><dt>LLM classification</dt><dd>{config.llmClassificationConcurrency}/16</dd></div>
+                <div><dt>Extraction</dt><dd>{config.extractionConcurrency}/16</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><Database size={15} /> Caching</strong>
+              <dl>
+                <div><dt>In-memory cache</dt><dd className={config.cachingEnabled ? 'ready' : ''}>{config.cachingEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>TTL</dt><dd>{config.cachingEnabled ? `${config.configurationCacheTtlSeconds} seconds` : 'Not applicable'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><ShieldCheck size={15} /> Encryption</strong>
+              <dl>
+                <div><dt>Processing storage</dt><dd className={config.storageEncryptionEnabled ? 'ready' : ''}>{config.storageEncryptionEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>Storage key</dt><dd className={config.storageEncryptionKeyConfigured ? 'ready' : ''}>{config.storageEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+                <div><dt>Database extracted data</dt><dd className={config.databaseEncryptionEnabled ? 'ready' : ''}>{config.databaseEncryptionEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>Database key</dt><dd className={config.databaseEncryptionKeyConfigured ? 'ready' : ''}>{config.databaseEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><ScanText size={15} /> Processing</strong>
+              <dl>
+                <div><dt>Ingestion trigger</dt><dd>{config.documentIngestionTrigger === 'blob' ? 'Blob trigger' : 'Event Grid'}</dd></div>
+                <div><dt>Prepared text</dt><dd className={config.useOcrForDocumentProcessing ? 'ready' : ''}>{config.useOcrForDocumentProcessing ? 'On' : 'Off'}</dd></div>
+                <div><dt>Text engine</dt><dd>{config.useOcrForDocumentProcessing ? (config.documentTextMode === 'markdown' ? 'Docling markdown' : 'Built in') : 'Direct PDF'}</dd></div>
+                {config.documentTextMode === 'markdown' && <div><dt>Docling endpoint</dt><dd title={config.markdownServiceUrl}>{config.markdownServiceUrl || 'Not configured'}</dd></div>}
+              </dl>
+            </div>
+            <div className="configuration-summary-group">
+              <strong><Network size={15} /> Downstream</strong>
+              <dl>
+                <div><dt>Endpoint</dt><dd title={config.downstreamUrl || 'Not configured'}>{config.downstreamUrl || 'Not configured'}</dd></div>
+                <div><dt>Delete after delivery</dt><dd>{config.deleteAfterDownstream ? 'On' : 'Off'}</dd></div>
+                <div><dt>Key-value payload</dt><dd>{config.sendKeyValuePairs ? 'On' : 'Off'}</dd></div>
+              </dl>
+            </div>
+          </div>
+        </div>
+        <div className={`configuration-section ai expanded${configurationTab === 'ai' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Sparkles size={20} /></span>
@@ -3224,9 +3444,55 @@ function ConfigurationScreen({
             <p className="help-text">
               API keys are encrypted before storage and are never returned to the browser.
             </p>
+            <div className="configuration-subsection-heading">
+              <Database size={18} />
+              <span>
+                <strong>Vector Database</strong>
+                <small>Configure the vector store used for classifier training, search, and RAG</small>
+              </span>
+            </div>
+            <label>
+              Provider name
+              <input
+                value={config.vectorDatabaseProvider}
+                placeholder="Qdrant"
+                onChange={(event) => onConfigChange({ ...config, vectorDatabaseProvider: event.target.value })}
+              />
+            </label>
+            <label>
+              Endpoint
+              <input
+                type="url"
+                value={config.vectorDatabaseEndpoint}
+                placeholder="https://vector-db.example.com"
+                onChange={(event) => onConfigChange({ ...config, vectorDatabaseEndpoint: event.target.value })}
+              />
+            </label>
+            <label>
+              <span className="configuration-field-label">
+                Authentication key
+                {config.vectorDatabaseApiKeyConfigured && (
+                  <CheckCircle2
+                    className="configuration-configured-icon"
+                    size={17}
+                    aria-label="Vector database authentication key configured"
+                  />
+                )}
+              </span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={config.vectorDatabaseApiKeyConfigured ? 'Key configured — enter a new key to replace it' : 'Enter authentication key (optional)'}
+                value={config.vectorDatabaseApiKey}
+                onChange={(event) => onConfigChange({ ...config, vectorDatabaseApiKey: event.target.value })}
+              />
+            </label>
+            <p className="help-text">
+              Compatible with Qdrant and services exposing the Qdrant HTTP API. The authentication key is encrypted before storage.
+            </p>
           </div>
         </div>
-        <div className="configuration-section scaling expanded">
+        <div className={`configuration-section scaling expanded${configurationTab === 'scaling' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><TrendingUp size={20} /></span>
@@ -3328,7 +3594,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section caching expanded">
+        <div className={`configuration-section caching expanded${configurationTab === 'caching' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Database size={20} /></span>
@@ -3382,7 +3648,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section processing expanded">
+        <div className={`configuration-section processing expanded${configurationTab === 'encryption' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><ShieldCheck size={20} /></span>
@@ -3414,7 +3680,7 @@ function ConfigurationScreen({
           </div>
         </div>
 
-        <div className="configuration-section processing expanded">
+        <div className={`configuration-section processing expanded${configurationTab === 'processing' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><ScanText size={20} /></span>
@@ -3426,6 +3692,27 @@ function ConfigurationScreen({
             <ChevronUp size={18} />
           </div>
           <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
+              <div className="document-processing-option-card">
+                <strong>Document ingestion trigger</strong>
+                <label className="document-processing-field">
+                  Trigger mode
+                  <select
+                    value={config.documentIngestionTrigger}
+                    onChange={(event) => onConfigChange({
+                      ...config,
+                      documentIngestionTrigger: event.target.value as AppConfig['documentIngestionTrigger'],
+                    })}
+                  >
+                    <option value="event-grid">Event Grid via Service Bus</option>
+                    <option value="blob">Blob trigger</option>
+                  </select>
+                </label>
+                <p className="help-text">
+                  {config.documentIngestionTrigger === 'event-grid'
+                    ? 'BlobCreated events are delivered through Event Grid and the blob-ingestion Service Bus queue. Recommended for reliable high-volume processing.'
+                    : 'Azure Functions polls the trigger container directly. Useful for simpler deployments and local development.'}
+                </p>
+              </div>
               <div className="document-processing-option-card">
                 <strong>Text preparation</strong>
                 <label className="checkbox-row">
@@ -3468,10 +3755,53 @@ function ConfigurationScreen({
                   </p>
                 )}
               </div>
+              <div className="document-processing-option-card ingestion-file-types-card">
+                <strong>API ingestion file types</strong>
+                <p className="help-text">Choose which file types the external document ingestion endpoint accepts.</p>
+                <div className="ingestion-file-type-grid">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={pdfIngestionTypes.length > 0 && pdfIngestionTypes.every((fileType) => fileType.enabled)}
+                      onChange={(event) => onConfigChange({
+                        ...config,
+                        ingestionFileTypes: config.ingestionFileTypes.map((candidate) => (
+                          candidate.mimeTypes.includes('application/pdf') ? { ...candidate, enabled: event.target.checked } : candidate
+                        )),
+                      })}
+                    />
+                    <span>
+                      PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                      <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                    </span>
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={imageIngestionTypes.length > 0 && imageIngestionTypes.every((fileType) => fileType.enabled)}
+                      onChange={(event) => onConfigChange({
+                        ...config,
+                        ingestionFileTypes: config.ingestionFileTypes.map((candidate) => (
+                          candidate.mimeTypes.some((mimeType) => mimeType.startsWith('image/'))
+                            ? { ...candidate, enabled: event.target.checked }
+                            : candidate
+                        )),
+                      })}
+                    />
+                    <span>
+                      Images <strong>{imageIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                      <small>{imageIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                    </span>
+                  </label>
+                </div>
+                {!config.ingestionFileTypes.some((fileType) => fileType.enabled) && (
+                  <p className="warning-text">All external API ingestion file types are disabled.</p>
+                )}
+              </div>
           </div>
         </div>
 
-        <div className="configuration-section downstream expanded">
+        <div className={`configuration-section downstream expanded${configurationTab === 'downstream' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
               <span className="configuration-section-icon"><Network size={20} /></span>
@@ -4773,9 +5103,7 @@ function UploadScreen({
           onDrop={(event) => {
             event.preventDefault();
             setDraggingFiles(false);
-            setFiles(Array.from(event.dataTransfer.files).filter((file) =>
-              file.type === 'application/pdf' || file.type.startsWith('image/'),
-            ));
+            setFiles(Array.from(event.dataTransfer.files));
           }}
         >
           <span className="file-drop-icon"><Upload size={30} /></span>
@@ -4785,10 +5113,9 @@ function UploadScreen({
               : 'Drop your documents here'}
           </strong>
           <span>{files.length ? `${formatFileSize(totalFileSize)} ready to upload` : 'or click to browse your computer'}</span>
-          <small>PDF, PNG, JPG, TIFF · Multiple files supported</small>
+          <small>All files are accepted; unsupported formats are recorded without processing</small>
           <input
             type="file"
-            accept="application/pdf,image/*,.tif,.tiff"
             multiple
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
@@ -4863,6 +5190,10 @@ function DocumentList({
   const [deleteTarget, setDeleteTarget] = useState<IncomingDocument | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyTarget, setReclassifyTarget] = useState<IncomingDocument | null>(null);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkReprocessOpen, setBulkReprocessOpen] = useState(false);
+  const [bulkReclassifyOpen, setBulkReclassifyOpen] = useState(false);
   const [justificationTarget, setJustificationTarget] = useState<IncomingDocument | null>(null);
   const [flowTarget, setFlowTarget] = useState<IncomingDocument | null>(null);
   const [reclassifyCategory, setReclassifyCategory] = useState('');
@@ -4870,6 +5201,12 @@ function DocumentList({
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
 
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
+  const selectedDocuments = documents.filter((document) => selectedDocumentIds.has(document._id));
+  const selectedUnlockedDocuments = selectedDocuments.filter(
+    (document) => !['validated', 'rejected', 'unsupported_format'].includes(document.status),
+  );
+  const allDocumentsSelected = documents.length > 0
+    && documents.every((document) => selectedDocumentIds.has(document._id));
 
   async function loadPage(page: number) {
     const params = new URLSearchParams({
@@ -4881,6 +5218,7 @@ function DocumentList({
     if (category) params.set('category', category);
     if (nameFilter) params.set('name', nameFilter);
     onPage(await api.listDocuments(params));
+    setSelectedDocumentIds(new Set());
   }
 
   async function applyFilters() {
@@ -4928,6 +5266,44 @@ function DocumentList({
     setReclassifyTarget(null);
     setReclassifyDocumentType('');
     await loadPage(pagination.page);
+  }
+
+  async function deleteSelectedDocuments() {
+    await Promise.all(selectedDocuments.map((document) => api.deleteDocument(document._id)));
+    const remainingOnPage = documents.length - selectedDocuments.length;
+    const nextPage = remainingOnPage === 0 && pagination.page > 1 ? pagination.page - 1 : pagination.page;
+    setBulkDeleteOpen(false);
+    setSelectedDocumentIds(new Set());
+    await loadPage(nextPage);
+  }
+
+  async function reprocessSelectedDocuments(payload: ReprocessDocumentPayload) {
+    await Promise.all(selectedUnlockedDocuments.map((document) => api.reprocessDocument(document._id, payload)));
+    setBulkReprocessOpen(false);
+    setSelectedDocumentIds(new Set());
+    await loadPage(pagination.page);
+  }
+
+  async function reclassifySelectedDocuments(documentTypeId: string) {
+    if (!documentTypeId) return;
+    await Promise.all(selectedUnlockedDocuments.map((document) => api.reclassifyDocument(document._id, documentTypeId)));
+    setBulkReclassifyOpen(false);
+    setReclassifyDocumentType('');
+    setSelectedDocumentIds(new Set());
+    await loadPage(pagination.page);
+  }
+
+  function toggleDocumentSelection(documentId: string) {
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
+    });
+  }
+
+  function toggleAllDocuments() {
+    setSelectedDocumentIds(allDocumentsSelected ? new Set() : new Set(documents.map((document) => document._id)));
   }
 
   async function resetFilters() {
@@ -4982,6 +5358,7 @@ function DocumentList({
             <option value="validated">Validated</option>
             <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
+            <option value="unsupported_format">Unsupported</option>
           </select>
         </label>
         <label>
@@ -5027,10 +5404,71 @@ function DocumentList({
         </div>
       </div>
 
+      {canManage && documents.length > 0 && (
+        <div className="document-bulk-toolbar">
+          <label className="document-select-all">
+            <input
+              type="checkbox"
+              checked={allDocumentsSelected}
+              onChange={toggleAllDocuments}
+            />
+            <span>{allDocumentsSelected ? 'Clear page' : 'Select page'}</span>
+          </label>
+          <span className="document-selection-count">
+            <strong>{selectedDocuments.length}</strong> selected
+            {selectedDocuments.length > selectedUnlockedDocuments.length && (
+              <small>{selectedDocuments.length - selectedUnlockedDocuments.length} locked</small>
+            )}
+          </span>
+          <div className="document-bulk-actions">
+            <button
+              className="secondary-button compact"
+              disabled={!selectedDocuments.length || selectedUnlockedDocuments.length !== selectedDocuments.length}
+              title={selectedDocuments.length > selectedUnlockedDocuments.length ? 'Validated or rejected documents can only be deleted' : 'Reclassify selected documents'}
+              onClick={() => setBulkReclassifyOpen(true)}
+            >
+              <BrainCircuit size={15} /> Reclassify
+            </button>
+            <button
+              className="secondary-button compact"
+              disabled={!selectedDocuments.length || selectedUnlockedDocuments.length !== selectedDocuments.length}
+              title={selectedDocuments.length > selectedUnlockedDocuments.length ? 'Validated or rejected documents can only be deleted' : 'Reprocess selected documents'}
+              onClick={() => setBulkReprocessOpen(true)}
+            >
+              <RotateCcw size={15} /> Reprocess
+            </button>
+            <button
+              className="secondary-button compact document-bulk-delete"
+              disabled={!selectedDocuments.length}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 size={15} /> Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="document-table">
         {documents.map((doc) => (
-          <div className="document-row" key={doc._id}>
-            <button className="document-open" onClick={() => onOpen(doc._id)}>
+          <div className={`document-row${canManage ? ' selectable' : ''}${selectedDocumentIds.has(doc._id) ? ' selected' : ''}`} key={doc._id}>
+            {canManage && (
+              <label className="document-select" title={`Select ${doc.originalName}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedDocumentIds.has(doc._id)}
+                  onChange={() => toggleDocumentSelection(doc._id)}
+                  aria-label={`Select ${doc.originalName}`}
+                />
+              </label>
+            )}
+            <button
+              className={`document-open${doc.status === 'unsupported_format' ? ' unsupported' : ''}`}
+              aria-disabled={doc.status === 'unsupported_format'}
+              title={doc.status === 'unsupported_format' ? 'Unsupported files cannot be opened' : `Open ${doc.originalName}`}
+              onClick={() => {
+                if (doc.status !== 'unsupported_format') onOpen(doc._id);
+              }}
+            >
               <span className="document-primary-info">
                 <span className="document-file-icon"><DocumentFileTypeIcon document={doc} /></span>
                 <span>
@@ -5048,9 +5486,15 @@ function DocumentList({
                 </span>
               </span>
               <span className="document-type-capsule">
-                <span>{doc.category}</span>
-                <i>/</i>
-                <strong>{doc.documentTypeName}</strong>
+                {doc.status === 'unsupported_format' ? (
+                  <strong>NA</strong>
+                ) : (
+                  <>
+                    <span>{doc.category}</span>
+                    <i>/</i>
+                    <strong>{doc.documentTypeName}</strong>
+                  </>
+                )}
               </span>
               <span
                 className={`pill ${doc.status} clickable-status`}
@@ -5068,7 +5512,7 @@ function DocumentList({
                   setFlowTarget(doc);
                 }}
               >
-                {doc.status}
+                {doc.status === 'unsupported_format' ? 'Unsupported' : doc.status.replace(/_/g, ' ')}
               </span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
@@ -5087,8 +5531,8 @@ function DocumentList({
               <div className="row-actions">
                 <button
                   className="icon-button locked-action"
-                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
-                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
+                  title={['validated', 'rejected', 'unsupported_format'].includes(doc.status) ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
+                  disabled={['validated', 'rejected', 'unsupported_format'].includes(doc.status)}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReclassifyTarget(doc);
@@ -5098,19 +5542,19 @@ function DocumentList({
                   }}
                 >
                   <BrainCircuit size={16} />
-                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
+                  {['validated', 'rejected', 'unsupported_format'].includes(doc.status) && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
                   className="icon-button locked-action"
-                  title={doc.status === 'validated' || doc.status === 'rejected' ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
-                  disabled={doc.status === 'validated' || doc.status === 'rejected'}
+                  title={['validated', 'rejected', 'unsupported_format'].includes(doc.status) ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
+                  disabled={['validated', 'rejected', 'unsupported_format'].includes(doc.status)}
                   onClick={(event) => {
                     event.stopPropagation();
                     setReprocessTarget(doc);
                   }}
                 >
                   <RotateCcw size={16} />
-                  {(doc.status === 'validated' || doc.status === 'rejected') && <CircleX className="not-allowed-mark" size={12} />}
+                  {['validated', 'rejected', 'unsupported_format'].includes(doc.status) && <CircleX className="not-allowed-mark" size={12} />}
                 </button>
                 <button
                   className="icon-button danger"
@@ -5138,6 +5582,16 @@ function DocumentList({
         />
       )}
 
+      {bulkDeleteOpen && (
+        <ConfirmDialog
+          title="Delete Selected Documents"
+          body={`Delete ${selectedDocuments.length} selected document${selectedDocuments.length === 1 ? '' : 's'} and their uploaded files?`}
+          confirmLabel={`Delete ${selectedDocuments.length}`}
+          onCancel={() => setBulkDeleteOpen(false)}
+          onConfirm={deleteSelectedDocuments}
+        />
+      )}
+
       {justificationTarget && (
         <ClassificationJustificationDialog document={justificationTarget} onClose={() => setJustificationTarget(null)} />
       )}
@@ -5151,6 +5605,17 @@ function DocumentList({
           config={config}
           onCancel={() => setReprocessTarget(null)}
           onConfirm={(payload) => reprocessDocument(reprocessTarget, payload)}
+        />
+      )}
+
+      {bulkReprocessOpen && selectedUnlockedDocuments[0] && (
+        <ReprocessDialog
+          document={selectedUnlockedDocuments[0]}
+          documentType={documentTypes.find((type) => type._id === selectedUnlockedDocuments[0].documentTypeId)}
+          documentCount={selectedUnlockedDocuments.length}
+          config={config}
+          onCancel={() => setBulkReprocessOpen(false)}
+          onConfirm={reprocessSelectedDocuments}
         />
       )}
 
@@ -5200,6 +5665,45 @@ function DocumentList({
               >
                 <BrainCircuit size={16} />
                 Reclassify
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {bulkReclassifyOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setBulkReclassifyOpen(false)}>
+          <section className="confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading">
+              <div>
+                <h2>Reclassify Selected Documents</h2>
+                <p>{selectedUnlockedDocuments.length} unlocked document{selectedUnlockedDocuments.length === 1 ? '' : 's'} selected</p>
+              </div>
+              <button className="icon-button" title="Close" onClick={() => setBulkReclassifyOpen(false)}>
+                <X size={17} />
+              </button>
+            </div>
+            <label>
+              Category
+              <select value={reclassifyCategory} onChange={(event) => {
+                setReclassifyCategory(event.target.value);
+                setReclassifyDocumentType('');
+              }}>
+                <option value="">Choose a category...</option>
+                {categories.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Document Type
+              <select value={reclassifyDocumentType} onChange={(event) => setReclassifyDocumentType(event.target.value)} disabled={!reclassifyCategory}>
+                <option value="">Choose a document type...</option>
+                {reclassifyAvailableTypes.map((type) => <option key={type._id} value={type._id}>{type.name}</option>)}
+              </select>
+            </label>
+            <div className="modal-footer">
+              <button className="secondary-button" onClick={() => setBulkReclassifyOpen(false)}>Cancel</button>
+              <button className="primary-button" disabled={!reclassifyDocumentType} onClick={() => reclassifySelectedDocuments(reclassifyDocumentType)}>
+                <BrainCircuit size={16} /> Reclassify {selectedUnlockedDocuments.length}
               </button>
             </div>
           </section>
@@ -5313,9 +5817,10 @@ function DocumentFlowDialog({
   onClose: () => void;
 }) {
   const baseStatuses: IncomingDocument['status'][] = ['received', 'preprocessed', 'classified', 'extracted'];
+  const isUnsupported = document.status === 'unsupported_format';
   const recordedTimings = document.stageTimings || [];
-  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed'];
-  const statuses = [
+  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed', 'unsupported_format'];
+  const statuses = isUnsupported ? ['unsupported_format'] as IncomingDocument['status'][] : [
     ...baseStatuses,
     ...optionalStatuses.filter((status) =>
       status === document.status || recordedTimings.some((timing) => timing.status === status)),
@@ -5364,13 +5869,15 @@ function DocumentFlowDialog({
           <div>
             <span>Processing time</span>
             <strong>{formatDurationMilliseconds(processingTimeExcludingQueue)}</strong>
-            <small>Function execution only</small>
+            <small>{isUnsupported ? 'Processing was not started' : 'Function execution only'}</small>
           </div>
-          <div>
-            <span>Total elapsed time</span>
-            <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
-            <small>Including queue wait</small>
-          </div>
+          {!isUnsupported && (
+            <div>
+              <span>Total elapsed time</span>
+              <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
+              <small>Including queue wait</small>
+            </div>
+          )}
         </div>
         <div className="document-flow">
           {statuses.map((status, index) => {
@@ -5379,10 +5886,10 @@ function DocumentFlowDialog({
             const nextTiming = nextStatus
               ? [...recordedTimings].reverse().find((item) => item.status === nextStatus)
               : undefined;
-            const showQueueWait = index < baseStatuses.length - 1
+            const showQueueWait = !isUnsupported && Boolean(nextStatus) && index < baseStatuses.length - 1
               && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
             const isCurrent = status === document.status;
-            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed';
+            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed' || status === 'unsupported_format';
             const completed = Boolean(timing?.endTime) || (isCurrent && isTerminalStatus);
             return (
               <Fragment key={status}>
@@ -5393,7 +5900,7 @@ function DocumentFlowDialog({
                   </div>
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
-                      <strong>{status}</strong>
+                      <strong>{status === 'unsupported_format' ? 'Unsupported' : status}</strong>
                       <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
                     </div>
                     <dl>
@@ -5440,12 +5947,14 @@ function DocumentFlowDialog({
 function ReprocessDialog({
   document,
   documentType,
+  documentCount = 1,
   config,
   onCancel,
   onConfirm,
 }: {
   document: IncomingDocument;
   documentType?: DocumentType;
+  documentCount?: number;
   config: AppConfig;
   onCancel: () => void;
   onConfirm: (payload: ReprocessDocumentPayload) => Promise<void> | void;
@@ -5482,8 +5991,8 @@ function ReprocessDialog({
       <section className="confirm-modal reprocess-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-heading">
           <div>
-            <h2>Reprocess Document</h2>
-            <p>{document.originalName}</p>
+            <h2>{documentCount > 1 ? 'Reprocess Selected Documents' : 'Reprocess Document'}</h2>
+            <p>{documentCount > 1 ? `${documentCount} documents selected` : document.originalName}</p>
           </div>
           <button className="icon-button" title="Close" onClick={onCancel}>
             <X size={17} />
@@ -5520,7 +6029,7 @@ function ReprocessDialog({
           </button>
           <button className="primary-button" type="button" disabled={submitting} onClick={confirm}>
             {submitting ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
-            Reprocess
+            Reprocess{documentCount > 1 ? ` ${documentCount}` : ''}
           </button>
         </div>
       </section>
@@ -5558,7 +6067,12 @@ function ValidationScreen({
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
   const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
   const [editingValueDraft, setEditingValueDraft] = useState('');
+  const [editingValueBoundingBoxes, setEditingValueBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
+  const [copyFromDocumentKey, setCopyFromDocumentKey] = useState<string | null>(null);
+  const [showAddEntityDialog, setShowAddEntityDialog] = useState(false);
+  const [newEntityLabel, setNewEntityLabel] = useState('');
+  const [addingEntity, setAddingEntity] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [showClassificationJustification, setShowClassificationJustification] = useState(false);
   const [showDocumentFlow, setShowDocumentFlow] = useState(false);
@@ -5622,7 +6136,9 @@ function ValidationScreen({
     setActiveFieldKey(null);
     setEditingValueKey(null);
     setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
     setSavingValueKey(null);
+    setCopyFromDocumentKey(null);
     api.getDocument(documentId).then((doc) => {
       if (cancelled) return;
       applyDocumentState(doc);
@@ -5654,14 +6170,18 @@ function ValidationScreen({
   }
 
   function startValueEdit(item: ExtractedValue) {
+    setCopyFromDocumentKey(null);
     setActiveFieldKey(item.key);
     setEditingValueKey(item.key);
     setEditingValueDraft(coerceValue(item.value));
+    setEditingValueBoundingBoxes(item.boundingBoxes || []);
   }
 
   function cancelValueEdit() {
+    setCopyFromDocumentKey(null);
     setEditingValueKey(null);
     setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
   }
 
   async function persistExtractedData(nextValues: ExtractedValue[]) {
@@ -5678,7 +6198,7 @@ function ValidationScreen({
     if (!current) return;
 
     const next = [...values];
-    next[index] = { ...current, value: editingValueDraft };
+    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes };
 
     setSavingValueKey(current.key);
     try {
@@ -5694,8 +6214,38 @@ function ValidationScreen({
 
   async function updateTableValue(index: number, value: Record<string, unknown>[]) {
     const next = [...values];
-    next[index] = { ...next[index], value };
+    next[index] = { ...next[index], value, confidence: 1 };
     await persistExtractedData(next);
+  }
+
+  async function addInstanceEntity() {
+    const label = newEntityLabel.trim();
+    if (!label || addingEntity) return;
+    const baseKey = normalizedColumnName(label) || 'customfield';
+    const existingKeys = new Set(values.map((item) => item.key));
+    let key = baseKey;
+    let suffix = 2;
+    while (existingKeys.has(key)) key = `${baseKey}${suffix++}`;
+    const entity: ExtractedValue = {
+      key,
+      label,
+      type: 'string',
+      value: '',
+      boundingBoxes: [],
+    };
+    setAddingEntity(true);
+    try {
+      await persistExtractedData([...values, entity]);
+      setShowAddEntityDialog(false);
+      setNewEntityLabel('');
+      startValueEdit(entity);
+      if (document?.spatialTextArtifactBlobName) setCopyFromDocumentKey(entity.key);
+      onNotify(`${label} added to this document`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to add entity', 'error');
+    } finally {
+      setAddingEntity(false);
+    }
   }
 
   async function submit() {
@@ -5750,6 +6300,7 @@ function ValidationScreen({
       documentId: document._id,
       fileName: document.originalName,
       category: document.category,
+      metadata: document.ingestionMetadata,
       documentTypeId: document.documentTypeId,
       documentTypeName: document.documentTypeName,
       classificationScore: document.classificationScore,
@@ -5796,7 +6347,7 @@ function ValidationScreen({
   if (!documentId) return <EmptyState text="Select a document from the list." />;
   if (!document) return <EmptyState text="Loading document." />;
 
-  const isLocked = document.status === 'validated' || document.status === 'rejected';
+  const isLocked = ['validated', 'rejected', 'unsupported_format'].includes(document.status);
 
   return (
     <div className="validation-layout">
@@ -5805,6 +6356,19 @@ function ValidationScreen({
           documentId={document._id}
           highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
+          selectionMode={copyFromDocumentKey !== null}
+          onReplaceSelection={({ text, boundingBoxes }) => {
+            setEditingValueDraft(text);
+            setEditingValueBoundingBoxes(boundingBoxes);
+          }}
+          onAppendSelection={({ text, boundingBoxes }) => {
+            setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+            setEditingValueBoundingBoxes((current) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
+              boxes.findIndex((candidate) => candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
+                candidate.width === box.width && candidate.height === box.height) === index
+            )));
+          }}
+          onNotify={onNotify}
         />
       </section>
       <section className="panel extraction-pane">
@@ -5813,14 +6377,20 @@ function ValidationScreen({
             <div>
               <h2>{document.originalName}</h2>
               <span className="document-type-capsule validation-document-type-capsule">
-                <span>{document.category}</span>
-                <i>/</i>
-                <strong>{document.documentTypeName}</strong>
+                {document.status === 'unsupported_format' ? (
+                  <strong>NA</strong>
+                ) : (
+                  <>
+                    <span>{document.category}</span>
+                    <i>/</i>
+                    <strong>{document.documentTypeName}</strong>
+                  </>
+                )}
               </span>
               <div className="classification-score-line">
                 <span>Classification score</span>
-                <strong className={scoreToneClass(document.classificationScore).trim() || undefined}>
-                  {formatScore(document.classificationScore)}
+                <strong className={document.status === 'unsupported_format' ? undefined : scoreToneClass(document.classificationScore).trim() || undefined}>
+                  {document.status === 'unsupported_format' ? 'NA' : formatScore(document.classificationScore)}
                 </strong>
                 <ClassificationMethodIcon
                   method={document.classificationMethod}
@@ -5854,7 +6424,7 @@ function ValidationScreen({
                   title="View document processing flow"
                   onClick={() => setShowDocumentFlow(true)}
                 >
-                  {document.status}
+                  {document.status === 'unsupported_format' ? 'Unsupported' : document.status.replace(/_/g, ' ')}
                 </button>
                 <span className="processing-mode-badge">
                   <ProcessingModeIcon mode={document.processingMode} />
@@ -5883,6 +6453,17 @@ function ValidationScreen({
           {showDocumentFlow && (
             <DocumentFlowDialog document={document} onClose={() => setShowDocumentFlow(false)} />
           )}
+          <div className="instance-entity-toolbar">
+            <div>
+              <strong>Extracted entities</strong>
+              <small>Custom entities are saved only in this document instance.</small>
+            </div>
+            {!isLocked && (
+              <button className="secondary-button compact" type="button" onClick={() => setShowAddEntityDialog(true)}>
+                <Plus size={15} /> Add entity
+              </button>
+            )}
+          </div>
           <div className="extraction-form">
             {values.map((item, index) => {
               const styles = fieldStyles[item.key];
@@ -5890,6 +6471,7 @@ function ValidationScreen({
               const isMissingValue = !hasExtractedValue(item);
               const isLowConfidence = typeof item.confidence === 'number' && item.confidence < 0.8;
               const badge = confidenceBadge(item);
+              const isInstanceEntity = !documentTypeFor(document)?.fields.some((field) => field.key === item.key);
               const fieldClassName = [
                 'extraction-field',
                 isActive ? 'active' : '',
@@ -5918,10 +6500,15 @@ function ValidationScreen({
                     <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {badge && (
-                      <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
-                        {badge}
-                      </em>
+                    {(badge || isInstanceEntity) && (
+                      <span className="field-label-badges">
+                        {isInstanceEntity && <span className="instance-only-badge">Instance only</span>}
+                        {badge && (
+                          <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
+                            {badge}
+                          </em>
+                        )}
+                      </span>
                     )}
                   </div>
                   <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
@@ -5936,10 +6523,15 @@ function ValidationScreen({
                     <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {badge && (
-                      <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
-                        {badge}
-                      </em>
+                    {(badge || isInstanceEntity) && (
+                      <span className="field-label-badges">
+                        {isInstanceEntity && <span className="instance-only-badge">Instance only</span>}
+                        {badge && (
+                          <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
+                            {badge}
+                          </em>
+                        )}
+                      </span>
                     )}
                   </div>
                   <div className="value-editor">
@@ -5960,6 +6552,22 @@ function ValidationScreen({
                     <div className="value-editor-actions">
                       {isEditingValue ? (
                         <>
+                          <button
+                            className={`icon-button${copyFromDocumentKey === item.key ? ' active' : ''}`}
+                            type="button"
+                            title={copyFromDocumentKey === item.key ? 'Stop copying from document' : 'Copy from document'}
+                            aria-label={copyFromDocumentKey === item.key ? 'Stop copying from document' : 'Copy from document'}
+                            aria-pressed={copyFromDocumentKey === item.key}
+                            onClick={() => {
+                              if (!document.spatialTextArtifactBlobName) {
+                                onNotify('Selectable text is unavailable. Reprocess this document to generate it.', 'info');
+                                return;
+                              }
+                              setCopyFromDocumentKey((key) => key === item.key ? null : item.key);
+                            }}
+                          >
+                            <TextSelect size={15} />
+                          </button>
                           <button
                             className="icon-button"
                             type="button"
@@ -5986,10 +6594,42 @@ function ValidationScreen({
               );
             })}
           </div>
+          {showAddEntityDialog && (
+            <ConfirmDialog
+              title="Add entity"
+              body={(
+                <label className="instance-entity-name-field">
+                  Entity name
+                  <input
+                    autoFocus
+                    value={newEntityLabel}
+                    placeholder="For example: Purchase order number"
+                    onChange={(event) => setNewEntityLabel(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') addInstanceEntity();
+                    }}
+                  />
+                  <small>This entity will be added only to this document's instance JSON.</small>
+                </label>
+              )}
+              confirmLabel={addingEntity ? 'Adding…' : 'Add entity'}
+              confirmIcon={addingEntity ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+              confirmDisabled={!newEntityLabel.trim() || addingEntity}
+              isDanger={false}
+              onCancel={() => {
+                if (addingEntity) return;
+                setShowAddEntityDialog(false);
+                setNewEntityLabel('');
+              }}
+              onConfirm={addInstanceEntity}
+            />
+          )}
           {isLocked && (
             <div className={`locked-state ${document.status}`}>
               {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}
-              {document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.
+              {document.status === 'unsupported_format'
+                ? 'This file format is not enabled for processing.'
+                : `${document.status === 'validated' ? 'Validated' : 'Rejected'} documents are locked.`}
             </div>
           )}
         </div>
@@ -6167,6 +6807,10 @@ function PdfViewer({
   documentId,
   highlights,
   activeFieldKey,
+  selectionMode,
+  onReplaceSelection,
+  onAppendSelection,
+  onNotify,
 }: {
   documentId: string;
   highlights: Array<{
@@ -6180,6 +6824,10 @@ function PdfViewer({
     activeFill: string;
   }>;
   activeFieldKey: string | null;
+  selectionMode: boolean;
+  onReplaceSelection: (selection: { text: string; boundingBoxes: NonNullable<ExtractedValue['boundingBoxes']> }) => void;
+  onAppendSelection: (selection: { text: string; boundingBoxes: NonNullable<ExtractedValue['boundingBoxes']> }) => void;
+  onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
 }) {
   const [selectedPage, setSelectedPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
@@ -6188,7 +6836,20 @@ function PdfViewer({
   const [pageError, setPageError] = useState('');
   const [zoom, setZoom] = useState(100);
   const [isPanning, setIsPanning] = useState(false);
+  const [pageTextItems, setPageTextItems] = useState<Awaited<ReturnType<typeof api.documentPageText>>['items']>([]);
+  const [loadingPageText, setLoadingPageText] = useState(false);
+  const [pageTextError, setPageTextError] = useState('');
+  const [textSelection, setTextSelection] = useState<{
+    text: string;
+    left: number;
+    top: number;
+    boundingBoxes: NonNullable<ExtractedValue['boundingBoxes']>;
+  } | null>(null);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
+  const pageTextCacheRef = useRef(new Map<string, Awaited<ReturnType<typeof api.documentPageText>>['items']>());
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
   const panStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -6222,6 +6883,7 @@ function PdfViewer({
   }
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (selectionMode) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const pagesContainer = pdfContainerRef.current;
     if (!pagesContainer) return;
@@ -6264,6 +6926,10 @@ function PdfViewer({
     setPageCount(0);
     setPageImage(null);
     setPageError('');
+    setPageTextItems([]);
+    setPageTextError('');
+    setTextSelection(null);
+    pageTextCacheRef.current.clear();
 
     api.documentPageCount(documentId)
       .then(({ pageCount: count }) => {
@@ -6277,6 +6943,108 @@ function PdfViewer({
       cancelled = true;
     };
   }, [documentId]);
+
+  useEffect(() => {
+    setTextSelection(null);
+    window.getSelection()?.removeAllRanges();
+    if (!selectionMode) {
+      setPageTextItems([]);
+      setPageTextError('');
+      setLoadingPageText(false);
+      return;
+    }
+    const cacheKey = `${documentId}:${selectedPage}`;
+    const cached = pageTextCacheRef.current.get(cacheKey);
+    if (cached) {
+      setPageTextItems(cached);
+      setPageTextError('');
+      setLoadingPageText(false);
+      return;
+    }
+    let cancelled = false;
+    setPageTextItems([]);
+    setLoadingPageText(true);
+    setPageTextError('');
+    api.documentPageText(documentId, selectedPage).then((result) => {
+      if (cancelled) return;
+      pageTextCacheRef.current.set(cacheKey, result.items);
+      setPageTextItems(result.items);
+    }).catch((error) => {
+      if (cancelled) return;
+      const message = error instanceof Error ? error.message : 'Selectable text could not be loaded.';
+      setPageTextError(message);
+      onNotifyRef.current(message, 'error');
+    }).finally(() => {
+      if (!cancelled) setLoadingPageText(false);
+    });
+    return () => { cancelled = true; };
+  }, [documentId, selectedPage, selectionMode]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    function dismissSelection(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setTextSelection(null);
+      window.getSelection()?.removeAllRanges();
+    }
+    window.addEventListener('keydown', dismissSelection);
+    return () => window.removeEventListener('keydown', dismissSelection);
+  }, [selectionMode]);
+
+  function captureTextSelection() {
+    if (!selectionMode || !textLayerRef.current) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+      setTextSelection(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const ancestor = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentElement
+      : range.commonAncestorContainer as HTMLElement;
+    if (!ancestor || !textLayerRef.current.contains(ancestor)) return;
+    const text = selection.toString().replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const selectedIndexes = Array.from(textLayerRef.current.querySelectorAll<HTMLElement>('[data-text-index]'))
+      .filter((element) => range.intersectsNode(element))
+      .map((element) => Number(element.dataset.textIndex))
+      .filter(Number.isInteger);
+    const boundingBoxes = selectedIndexes.flatMap((index) => {
+      const item = pageTextItems[index];
+      return item ? [{
+        page: selectedPage - 1,
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+      }] : [];
+    });
+    if (!boundingBoxes.length) return;
+    const rangeRect = range.getBoundingClientRect();
+    const layerRect = textLayerRef.current.getBoundingClientRect();
+    setTextSelection({
+      text,
+      boundingBoxes,
+      left: Math.min(92, Math.max(2, ((rangeRect.left - layerRect.left) / layerRect.width) * 100)),
+      top: Math.min(94, Math.max(2, ((rangeRect.bottom - layerRect.top) / layerRect.height) * 100)),
+    });
+  }
+
+  function clearTextSelection() {
+    setTextSelection(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  async function copySelectedText() {
+    if (!textSelection) return;
+    try {
+      await navigator.clipboard.writeText(textSelection.text);
+      onNotify('Selected document text copied', 'success');
+      clearTextSelection();
+    } catch {
+      onNotify('Clipboard access failed. You can still Replace or Append the selected text.', 'error');
+    }
+  }
 
   useEffect(() => {
     if (!pageCount) return;
@@ -6403,7 +7171,7 @@ function PdfViewer({
         </button>
       </div>
       <div
-        className={`pdf-pages${isPanning ? ' panning' : ''}`}
+        className={`pdf-pages${isPanning ? ' panning' : ''}${selectionMode ? ' selecting-text' : ''}`}
         ref={pdfContainerRef}
         onPointerDown={startPan}
         onPointerMove={movePan}
@@ -6438,6 +7206,37 @@ function PdfViewer({
                 />
               );
             })}
+            {selectionMode && (
+              <div
+                className="pdf-text-layer"
+                ref={textLayerRef}
+                aria-label={`Selectable text for PDF page ${selectedPage}`}
+                onPointerUp={() => setTimeout(captureTextSelection, 0)}
+              >
+                {pageTextItems.map((item, index) => (
+                  <span
+                    key={`${item.order}-${index}`}
+                    data-text-index={index}
+                    style={{
+                      left: `${item.x * 100}%`,
+                      top: `${item.y * 100}%`,
+                      width: `${item.width * 100}%`,
+                      height: `${item.height * 100}%`,
+                      fontSize: `${item.height * 100}cqh`,
+                    }}
+                  >{item.text} </span>
+                ))}
+                {textSelection && (
+                  <div className="pdf-selection-actions" style={{ left: `${textSelection.left}%`, top: `${textSelection.top}%` }}>
+                    <button type="button" onClick={copySelectedText}><Copy size={13} /> Copy</button>
+                    <button type="button" onClick={() => { onReplaceSelection(textSelection); clearTextSelection(); }}>Replace</button>
+                    <button type="button" onClick={() => { onAppendSelection(textSelection); clearTextSelection(); }}>Append</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {selectionMode && loadingPageText && <div className="pdf-text-layer-status">Loading selectable text…</div>}
+            {selectionMode && pageTextError && <div className="pdf-text-layer-status error">{pageTextError}</div>}
           </div>
         )}
       </div>

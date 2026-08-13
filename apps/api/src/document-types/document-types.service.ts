@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { QueueServiceClient } from '@azure/storage-queue';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
 import { Model } from 'mongoose';
@@ -8,6 +7,7 @@ import { inferTemplateWithOpenAI } from '../openai-document-ai';
 import { DocumentType, DocumentTypeDocument, ExtractionField, ReasoningEffort, TableColumn } from '../schemas/document-type.schema';
 import { BlobStorageService, TRAIN_CONTAINER } from '../storage/blob-storage.service';
 import { ConfigurationService } from '../configuration/configuration.service';
+import { hasServiceBusConfiguration, sendServiceBusMessage } from '../service-bus';
 
 function toKey(label: string) {
   return label
@@ -243,15 +243,12 @@ export class DocumentTypesService {
   }
 
   private hasQueueConnection() {
-    return Boolean(process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage);
+    return hasServiceBusConfiguration();
   }
 
   private async enqueueClassifierTraining(trainedBy: string) {
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
-    if (!connectionString) return;
-    const queue = QueueServiceClient.fromConnectionString(connectionString).getQueueClient('classifier-training');
-    await queue.createIfNotExists();
-    await queue.sendMessage(Buffer.from(JSON.stringify({ trainAll: true, trainedBy })).toString('base64'));
+    if (!this.hasQueueConnection()) return;
+    await sendServiceBusMessage('classifier-training', { trainAll: true, trainedBy });
   }
 
   async generateTemplate(id: string, prompt: string) {

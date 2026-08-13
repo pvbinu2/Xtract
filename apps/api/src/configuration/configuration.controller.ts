@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { ConfigurationService } from './configuration.service';
 import { Configuration } from '../schemas/configuration.schema';
+import type { IngestionFileType } from '../schemas/configuration.schema';
 import { Roles } from '../auth/auth.decorators';
 
 @Controller('configuration')
@@ -30,6 +31,8 @@ export class ConfigurationController {
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;
       useOcrForDocumentProcessing?: boolean;
+      documentIngestionTrigger?: 'event-grid' | 'blob';
+      ingestionFileTypes?: IngestionFileType[];
       documentTextMode?: 'ocr' | 'markdown';
       markdownServiceUrl?: string;
       aiProvider?: 'openai' | 'custom' | 'ollama';
@@ -42,6 +45,9 @@ export class ConfigurationController {
       embeddingProvider?: 'openai' | 'ollama';
       embeddingModel?: string;
       ollamaEmbeddingModel?: string;
+      vectorDatabaseProvider?: string;
+      vectorDatabaseEndpoint?: string;
+      vectorDatabaseApiKey?: string;
       classificationModel?: string;
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       classificationMode?: 'vector' | 'llm' | 'rag';

@@ -57,6 +57,9 @@ export type IncomingDocument = {
   mimeType?: string;
   textArtifactBlobName?: string;
   textArtifactMode?: 'ocr' | 'markdown';
+  spatialTextArtifactBlobName?: string;
+  ingestionSource?: 'ui' | 'api' | 'blob';
+  ingestionMetadata?: Record<string, unknown>;
   stageTimings?: Array<{
     status: IncomingDocument['status'];
     startTime: string;
@@ -88,7 +91,8 @@ export type IncomingDocument = {
     | 'rejected'
     | 'failed'
     | 'uploaded'
-    | 'processing';
+    | 'processing'
+    | 'unsupported_format';
   revision?: number;
   extractedData: ExtractedValue[];
   validatedBy?: {

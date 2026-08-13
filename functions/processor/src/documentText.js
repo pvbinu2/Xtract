@@ -19,25 +19,48 @@ async function loadPdfJs() {
 }
 
 async function extractPdfText(filePath) {
+  return (await extractPdfContent(filePath)).text;
+}
+
+async function extractPdfContent(filePath) {
   const { getDocument } = await loadPdfJs();
   const data = fs.readFileSync(filePath);
   const standardFontDataUrl = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + path.sep;
   const pdf = await getDocument({ data: new Uint8Array(data), disableWorker: true, standardFontDataUrl }).promise;
   const pages = [];
+  const spatialItems = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
-    const text = textContent.items
-      .filter((item) => 'str' in item)
+    const viewport = page.getViewport({ scale: 1 });
+    const items = textContent.items.filter((item) => 'str' in item);
+    const text = items
       .map((item) => item.str)
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
     if (text) pages.push(text);
+    for (const item of items) {
+      const itemText = item.str?.trim();
+      if (!itemText) continue;
+      const [, , , d, e, f] = item.transform;
+      const height = Math.abs(d) || item.height || 0;
+      spatialItems.push({
+        text: itemText,
+        page: pageNumber - 1,
+        x: e / viewport.width,
+        y: 1 - (f + height) / viewport.height,
+        width: (item.width || 0) / viewport.width,
+        height: height / viewport.height,
+        lineKey: `${pageNumber - 1}:pdf:${Math.round(f)}`,
+        order: spatialItems.length,
+      });
+    }
   }
 
-  return pages.join('\n');
+  await pdf.destroy();
+  return { text: pages.join('\n'), spatialItems };
 }
 
 function parseTesseractTsv(tsv, page, pageWidth, pageHeight) {
@@ -58,8 +81,9 @@ function parseTesseractTsv(tsv, page, pageWidth, pageHeight) {
       width: width / pageWidth,
       height: height / pageHeight,
       lineKey: `${page}:${columns[2]}:${columns[3]}:${columns[4]}`,
+      order: 0,
     }];
-  });
+  }).map((item, order) => ({ ...item, order }));
 }
 
 async function ocrPdfContent(filePath) {
@@ -148,10 +172,10 @@ async function extractDocumentText(filePath, limit = Number(process.env.DOCUMENT
   return (await extractDocumentContent(filePath, limit, options)).text;
 }
 
-async function extractDocumentSpatialItems(filePath) {
+async function extractDocumentSpatialItems(filePath, options = {}) {
   const minTextLength = Number(process.env.OCR_MIN_TEXT_LENGTH || 80);
-  const embeddedText = await extractPdfText(filePath);
-  if (embeddedText.trim().length >= minTextLength) return [];
+  const embedded = await extractPdfContent(filePath);
+  if (!options.forceOcr && embedded.text.trim().length >= minTextLength) return embedded.spatialItems;
   return (await ocrPdfContent(filePath)).spatialItems;
 }
 

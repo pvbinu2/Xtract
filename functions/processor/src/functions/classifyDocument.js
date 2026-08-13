@@ -19,9 +19,9 @@ const {
   transitionDocumentStatus,
 } = require('../documentProcessingCommon');
 
-const extractionQueueOutput = output.storageQueue({
+const extractionQueueOutput = output.serviceBusQueue({
   queueName: 'document-extraction',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
 });
 
 async function classifyQueuedDocument(message, context) {
@@ -148,9 +148,9 @@ async function classifyQueuedDocument(message, context) {
   }
 }
 
-app.storageQueue('classifyDocument', {
+app.serviceBusQueue('classifyDocument', {
   queueName: 'document-classification',
-  connection: 'AzureWebJobsStorage',
+  connection: 'ServiceBusConnection',
   extraOutputs: [extractionQueueOutput],
   handler: withClassificationConcurrency(classifyQueuedDocument),
 });

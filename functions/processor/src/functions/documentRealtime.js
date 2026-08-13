@@ -5,9 +5,9 @@ const broadcastUrl = process.env.REALTIME_BROADCAST_URL || '';
 const realtimeEnabled = process.env.SIGNALR_ENABLED !== 'false' && Boolean(broadcastUrl);
 
 if (realtimeEnabled) {
-  app.storageQueue('broadcastDocumentEvent', {
+  app.serviceBusQueue('broadcastDocumentEvent', {
     queueName: 'document-events',
-    connection: 'AzureWebJobsStorage',
+    connection: 'ServiceBusConnection',
     handler: async (message, context) => {
       const event = resolveMessage(message);
       if (!event.documentId || !event.status) {
