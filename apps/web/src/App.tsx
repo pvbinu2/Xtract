@@ -60,7 +60,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
@@ -430,6 +430,13 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
     return (
       <span className="processing-mode-icon markdown" title="Processed using markdown" aria-label="Processed using markdown">
         <FileText size={14} />
+      </span>
+    );
+  }
+  if (mode === 'spreadsheet') {
+    return (
+      <span className="processing-mode-icon spreadsheet" title="Processed from an Excel workbook" aria-label="Processed from an Excel workbook">
+        <FileSpreadsheet size={14} />
       </span>
     );
   }
@@ -863,37 +870,29 @@ function OperationsApp() {
     const pageSize = documentPage.pageSize;
     let page = documentPage.page;
     let items = documents;
-    let totalPages = documentPage.totalPages;
-
-    for (let attempts = 0; attempts < Math.max(totalPages, 1); attempts += 1) {
-      const currentIndex = items.findIndex((item) => item._id === currentId);
-      if (currentIndex >= 0) {
-        if (direction === 'previous') {
-          if (currentIndex > 0) return { page, document: items[currentIndex - 1] };
-          if (page <= 1) return null;
-          const previousPage = await api.listDocuments(
-            new URLSearchParams({ sort: 'latest', page: String(page - 1), pageSize: String(pageSize) }),
-          );
-          return { page: previousPage.page, document: previousPage.items.at(-1) };
-        }
-
-        if (currentIndex < items.length - 1) return { page, document: items[currentIndex + 1] };
-        if (page >= totalPages) return null;
-        const nextPage = await api.listDocuments(
-          new URLSearchParams({ sort: 'latest', page: String(page + 1), pageSize: String(pageSize) }),
-        );
-        return { page: nextPage.page, document: nextPage.items[0] };
-      }
-
-      const nextSearchPage = attempts === 0 ? documentPage.page : attempts;
-      const refreshed = await api.listDocuments(
-        new URLSearchParams({ sort: 'latest', page: String(nextSearchPage), pageSize: String(pageSize) }),
-      );
-      page = refreshed.page;
+    let currentIndex = items.findIndex((item) => item._id === currentId);
+    if (currentIndex < 0) {
+      const refreshed = await api.listDocuments(new URLSearchParams({ sort: 'latest', page: String(page), pageSize: String(pageSize) }));
       items = refreshed.items;
-      totalPages = refreshed.totalPages;
+      currentIndex = items.findIndex((item) => item._id === currentId);
+      if (currentIndex < 0) return null;
     }
 
+    while (page >= 1 && page <= documentPage.totalPages) {
+      const candidates = direction === 'previous'
+        ? items.slice(0, currentIndex).reverse()
+        : items.slice(currentIndex + 1);
+      const supported = candidates.find((item) => item.status !== 'unsupported_format');
+      if (supported) return { page, document: supported };
+
+      page += direction === 'previous' ? -1 : 1;
+      if (page < 1 || page > documentPage.totalPages) break;
+      const adjacentPage = await api.listDocuments(
+        new URLSearchParams({ sort: 'latest', page: String(page), pageSize: String(pageSize) }),
+      );
+      items = adjacentPage.items;
+      currentIndex = direction === 'previous' ? items.length : -1;
+    }
     return null;
   }
 
@@ -916,30 +915,7 @@ function OperationsApp() {
       return;
     }
 
-    const currentIndex = documents.findIndex((item) => item._id === currentId);
-    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
-      setActiveDocumentId(documents[currentIndex + 1]._id);
-      setView('validation');
-      return;
-    }
-
-    if (documentPage.page < documentPage.totalPages) {
-      const nextPage = await loadDocumentsPage(documentPage.page + 1);
-      if (nextPage.items.length > 0) {
-        setActiveDocumentId(nextPage.items[0]._id);
-        setView('validation');
-        return;
-      }
-    }
-
-    const refreshed = await refreshDocuments();
-    const refreshedIndex = refreshed.items.findIndex((item) => item._id === currentId);
-    if (refreshedIndex >= 0 && refreshedIndex < refreshed.items.length - 1) {
-      setActiveDocumentId(refreshed.items[refreshedIndex + 1]._id);
-      setView('validation');
-      return;
-    }
-
+    if (await moveToAdjacentDocument(currentId, 'next')) return;
     setView('documents');
   }
 
@@ -1189,11 +1165,11 @@ function OperationsApp() {
   const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
   const canNavigatePreviousDocument =
     Boolean(validationDocumentId) &&
-    (documentPage.page > 1 || validationDocumentIndex > 0);
+    (documentPage.page > 1 || documents.slice(0, validationDocumentIndex).some((item) => item.status !== 'unsupported_format'));
   const canNavigateNextDocument =
     Boolean(validationDocumentId) &&
     (documentPage.page < documentPage.totalPages ||
-      (validationDocumentIndex >= 0 && validationDocumentIndex < documents.length - 1));
+      documents.slice(validationDocumentIndex + 1).some((item) => item.status !== 'unsupported_format'));
   const averageCostPerFile = operationsMetrics.filesProcessed
     ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
     : 0;
@@ -1230,7 +1206,15 @@ function OperationsApp() {
     <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand-mark" src="/icon-192.png" alt="" aria-hidden="true" />
+          <button
+            type="button"
+            className="brand-mark-link"
+            aria-label="Open Xtractor marketing site"
+            title="Open Xtractor marketing site"
+            onClick={() => { window.location.href = '/xtractor'; }}
+          >
+            <img className="brand-mark" src="/icon-192.png" alt="" aria-hidden="true" />
+          </button>
           <div className="brand-copy">
             <strong>Xtract</strong>
             <span>Document intake</span>
@@ -1507,6 +1491,8 @@ function MarketingSite() {
           </div>
           <div className="marketing-nav-links">
             <a href="#how-it-works">How it works</a>
+            <a href="#supported-formats">File support</a>
+            <a href="#platform-features">Features</a>
             <a href="#business-applications">Solutions</a>
             <a href="#demo-request-form">Contact</a>
           </div>
@@ -1520,7 +1506,7 @@ function MarketingSite() {
             <span className="marketing-kicker"><Sparkles size={14} /> Intelligent document operations</span>
             <h1>From complex documents to <em>trusted data.</em></h1>
             <p>
-              Xtractor classifies, extracts, and validates business documents—then delivers clean, structured data to the systems your teams already use.
+              Xtractor classifies, extracts, and validates PDFs, images, and Excel workbooks—then delivers clean, structured data to the systems your teams already use.
             </p>
             <div className="marketing-actions">
               <button type="button" className="marketing-primary-button" onClick={focusRequestForm}>
@@ -1531,6 +1517,7 @@ function MarketingSite() {
             </div>
             <div className="marketing-proof-points">
               <span><CheckCircle2 size={15} /> Human-in-the-loop validation</span>
+              <span><CheckCircle2 size={15} /> PDF, image, and Excel intake</span>
               <span><CheckCircle2 size={15} /> Flexible AI providers</span>
               <span><CheckCircle2 size={15} /> API-ready output</span>
             </div>
@@ -1558,8 +1545,8 @@ function MarketingSite() {
                   <span className="visual-status extracted">Extracted</span><em>96%</em>
                 </div>
                 <div className="visual-document-row">
-                  <div className="visual-file-icon"><FileText size={20} /></div>
-                  <div><strong>Policy_Renewal.pdf</strong><small>Insurance</small></div>
+                  <div className="visual-file-icon"><FileSpreadsheet size={20} /></div>
+                  <div><strong>Claims_Register.xlsx</strong><small>Insurance</small></div>
                   <span className="visual-status classified">Classified</span><em>92%</em>
                 </div>
                 <div className="visual-progress-card">
@@ -1584,7 +1571,7 @@ function MarketingSite() {
         <article><strong>3 modes</strong><span>Vector, LLM, and RAG classification</span></article>
         <article><strong>Live</strong><span>Real-time processing visibility</span></article>
         <article><strong>Flexible</strong><span>OpenAI or Self Hosted models</span></article>
-        <article><strong>Ready</strong><span>Structured JSON for downstream systems</span></article>
+        <article><strong>API-ready</strong><span>Secure, idempotent document ingestion and JSON delivery</span></article>
       </section>
 
       <section className="marketing-automation-demo" aria-label="Animated Xtractor document workflow">
@@ -1595,8 +1582,8 @@ function MarketingSite() {
         <div className="marketing-animation-track">
           <div className="marketing-animation-line"><span /></div>
           <div className="marketing-moving-document" aria-hidden="true">
-            <FileText size={18} />
-            <span>PDF</span>
+            <Files size={18} />
+            <span>FILE</span>
           </div>
           {[
             { icon: Upload, label: 'Received', detail: 'Document intake' },
@@ -1621,10 +1608,10 @@ function MarketingSite() {
         </div>
         <div className="marketing-workflow-grid">
           {[
-            { icon: Upload, step: '01', title: 'Receive', text: 'Upload PDFs or drop them into monitored storage for immediate processing.' },
+            { icon: Upload, step: '01', title: 'Receive', text: 'Upload PDFs, supported images, or Excel workbooks through the app, API, or monitored storage.' },
             { icon: BrainCircuit, step: '02', title: 'Classify', text: 'Route documents accurately using vector search, LLM, or RAG classification.' },
-            { icon: ScanText, step: '03', title: 'Extract', text: 'Generate OCR or markdown and capture the business fields that matter.' },
-            { icon: ClipboardCheck, step: '04', title: 'Validate', text: 'Review low-confidence data against the source document before delivery.' },
+            { icon: ScanText, step: '03', title: 'Extract', text: 'Generate OCR, markdown, or structured workbook text and capture the business fields that matter.' },
+            { icon: ClipboardCheck, step: '04', title: 'Validate', text: 'Review fields beside selectable PDF text or a native multi-sheet Excel grid before delivery.' },
           ].map(({ icon: Icon, step, title, text }) => (
             <article key={title}>
               <span className="marketing-step">{step}</span>
@@ -1633,6 +1620,50 @@ function MarketingSite() {
               <p>{text}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="marketing-section marketing-formats" id="supported-formats">
+        <div className="marketing-section-heading centered">
+          <span className="marketing-kicker">Flexible document intake</span>
+          <h2>One workflow for the files your operation receives.</h2>
+          <p>Administrators control which formats enter processing. Unsupported files are safely recorded without entering the processing queue.</p>
+        </div>
+        <div className="marketing-card-grid">
+          <article>
+            <div className="marketing-card-icon"><FileText size={22} /></div>
+            <span>DOCUMENTS</span>
+            <h3>PDF</h3>
+            <p>Process native-text and scanned PDFs with direct model input, built-in OCR, or markdown preparation.</p>
+          </article>
+          <article>
+            <div className="marketing-card-icon"><FileImage size={22} /></div>
+            <span>IMAGES</span>
+            <h3>PNG, JPG, TIFF and more</h3>
+            <p>Supports PNG, JPEG, TIFF, WebP, BMP, GIF, AVIF, HEIC, HEIF, and SVG through one configurable image option.</p>
+          </article>
+          <article>
+            <div className="marketing-card-icon"><FileSpreadsheet size={22} /></div>
+            <span>SPREADSHEETS</span>
+            <h3>Excel XLSX and XLS</h3>
+            <p>Extract visible worksheets and validate results in a native sheet grid with tabs, cell ranges, and cached formula values.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="marketing-section" id="platform-features">
+        <div className="marketing-section-heading">
+          <span className="marketing-kicker">Built for controlled automation</span>
+          <h2>Powerful extraction with the controls teams need.</h2>
+          <p>Move from intake to trusted output with transparent processing, precise validation, and configurable infrastructure.</p>
+        </div>
+        <div className="marketing-card-grid">
+          <article><div className="marketing-card-icon"><TextSelect size={22} /></div><span>VALIDATION</span><h3>Select from the source</h3><p>Copy, replace, or append selectable document text and Excel cell ranges while retaining source bounding boxes or cell references.</p></article>
+          <article><div className="marketing-card-icon"><BrainCircuit size={22} /></div><span>AI & CLASSIFICATION</span><h3>Choose the right intelligence</h3><p>Use vector, LLM, or RAG classification with OpenAI, custom endpoints, or self-hosted Ollama models.</p></article>
+          <article><div className="marketing-card-icon"><KeyRound size={22} /></div><span>INTEGRATION</span><h3>External ingestion API</h3><p>Accept files, category and type, and business metadata through API-key authentication with idempotent retries.</p></article>
+          <article><div className="marketing-card-icon"><ShieldCheck size={22} /></div><span>SECURITY</span><h3>Encrypted processing</h3><p>Apply configurable storage and database encryption to originals, extracted values, OCR text, spatial text, and workbook artifacts.</p></article>
+          <article><div className="marketing-card-icon"><Activity size={22} /></div><span>OPERATIONS</span><h3>Health and cost visibility</h3><p>Monitor application dependencies, provider readiness, processing stages, token usage, model cost, and OpenAI credit information.</p></article>
+          <article><div className="marketing-card-icon"><Plus size={22} /></div><span>INSTANCE CONTROL</span><h3>Adapt during review</h3><p>Add instance-only entities without changing the extraction template, and save reviewer edits with 100% confidence.</p></article>
         </div>
       </section>
 
@@ -1654,7 +1685,7 @@ function MarketingSite() {
             <div className="marketing-card-icon"><ShieldCheck size={22} /></div>
             <span>COMPLIANCE</span>
             <h3>Review with confidence</h3>
-            <p>Validate extracted fields beside the original PDF and maintain clear visibility into every processing step.</p>
+            <p>Validate extracted fields beside the original PDF, scanned image, or Excel sheet and maintain visibility into every processing step.</p>
             <a href="#demo-request-form">Strengthen review workflows <ChevronRight size={15} /></a>
           </article>
           <article>
@@ -3212,6 +3243,7 @@ function ConfigurationScreen({
   ] as const;
   const pdfIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.includes('application/pdf'));
   const imageIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.startsWith('image/')));
+  const excelIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.includes('spreadsheetml') || mimeType.includes('ms-excel')));
   const pendingChanges = useMemo(() => pendingConfigurationFields.flatMap((field) => {
     const previous = persistedConfig[field.key];
     const current = config[field.key];
@@ -3756,8 +3788,8 @@ function ConfigurationScreen({
                 )}
               </div>
               <div className="document-processing-option-card ingestion-file-types-card">
-                <strong>API ingestion file types</strong>
-                <p className="help-text">Choose which file types the external document ingestion endpoint accepts.</p>
+                <strong>Processing file types</strong>
+                <p className="help-text">Choose which uploaded and blob-ingested file types enter document processing.</p>
                 <div className="ingestion-file-type-grid">
                   <label className="checkbox-row">
                     <input
@@ -3773,6 +3805,24 @@ function ConfigurationScreen({
                     <span>
                       PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
                       <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                    </span>
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={excelIngestionTypes.length > 0 && excelIngestionTypes.every((fileType) => fileType.enabled)}
+                      onChange={(event) => onConfigChange({
+                        ...config,
+                        ingestionFileTypes: config.ingestionFileTypes.map((candidate) => (
+                          candidate.mimeTypes.some((mimeType) => mimeType.includes('spreadsheetml') || mimeType.includes('ms-excel'))
+                            ? { ...candidate, enabled: event.target.checked }
+                            : candidate
+                        )),
+                      })}
+                    />
+                    <span>
+                      Excel <strong>{excelIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                      <small>{excelIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
                     </span>
                   </label>
                   <label className="checkbox-row">
@@ -5960,7 +6010,7 @@ function ReprocessDialog({
   onConfirm: (payload: ReprocessDocumentPayload) => Promise<void> | void;
 }) {
   const initialMode: ReprocessProcessingMode =
-    document.processingMode || (config.useOcrForDocumentProcessing
+    (document.processingMode === 'spreadsheet' ? 'ocr' : document.processingMode) || (config.useOcrForDocumentProcessing
       ? config.documentTextMode === 'markdown' ? 'markdown' : 'ocr'
       : 'pdf');
   const [extractionModel, setExtractionModel] = useState(
@@ -6068,6 +6118,7 @@ function ValidationScreen({
   const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
   const [editingValueDraft, setEditingValueDraft] = useState('');
   const [editingValueBoundingBoxes, setEditingValueBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
+  const [editingValueCellReferences, setEditingValueCellReferences] = useState<NonNullable<ExtractedValue['cellReferences']>>([]);
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [copyFromDocumentKey, setCopyFromDocumentKey] = useState<string | null>(null);
   const [showAddEntityDialog, setShowAddEntityDialog] = useState(false);
@@ -6137,6 +6188,7 @@ function ValidationScreen({
     setEditingValueKey(null);
     setEditingValueDraft('');
     setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
     setSavingValueKey(null);
     setCopyFromDocumentKey(null);
     api.getDocument(documentId).then((doc) => {
@@ -6175,6 +6227,7 @@ function ValidationScreen({
     setEditingValueKey(item.key);
     setEditingValueDraft(coerceValue(item.value));
     setEditingValueBoundingBoxes(item.boundingBoxes || []);
+    setEditingValueCellReferences(item.cellReferences || []);
   }
 
   function cancelValueEdit() {
@@ -6182,6 +6235,7 @@ function ValidationScreen({
     setEditingValueKey(null);
     setEditingValueDraft('');
     setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
   }
 
   async function persistExtractedData(nextValues: ExtractedValue[]) {
@@ -6198,7 +6252,7 @@ function ValidationScreen({
     if (!current) return;
 
     const next = [...values];
-    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes };
+    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes, cellReferences: editingValueCellReferences };
 
     setSavingValueKey(current.key);
     try {
@@ -6239,7 +6293,7 @@ function ValidationScreen({
       setShowAddEntityDialog(false);
       setNewEntityLabel('');
       startValueEdit(entity);
-      if (document?.spatialTextArtifactBlobName) setCopyFromDocumentKey(entity.key);
+      if (document?.spatialTextArtifactBlobName || document?.workbookArtifactBlobName) setCopyFromDocumentKey(entity.key);
       onNotify(`${label} added to this document`, 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to add entity', 'error');
@@ -6319,13 +6373,15 @@ function ValidationScreen({
     onNotify('JSON downloaded', 'success');
   }
 
-  async function downloadPdf() {
+  async function downloadSourceDocument() {
     if (!document) return;
     try {
-      const displayName = document.originalName || document.fileName || 'document.pdf';
-      const processingPdfName = `${displayName.replace(/\.[^.]+$/, '') || 'document'}.pdf`;
-      downloadBlobFile(processingPdfName, await api.documentFile(document._id));
-      onNotify('Processing PDF downloaded', 'success');
+      const displayName = document.originalName || document.fileName || 'document';
+      const downloadName = document.processingMode === 'spreadsheet'
+        ? displayName
+        : `${displayName.replace(/\.[^.]+$/, '') || 'document'}.pdf`;
+      downloadBlobFile(downloadName, await api.documentFile(document._id));
+      onNotify(document.processingMode === 'spreadsheet' ? 'Workbook downloaded' : 'Processing PDF downloaded', 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to download PDF', 'error');
     }
@@ -6352,6 +6408,22 @@ function ValidationScreen({
   return (
     <div className="validation-layout">
       <section className="pdf-pane">
+        {document.processingMode === 'spreadsheet' || Boolean(document.workbookArtifactBlobName) ? (
+          <SpreadsheetViewer
+            documentId={document._id}
+            activeReferences={values.find((item) => item.key === activeFieldKey)?.cellReferences || []}
+            selectionMode={copyFromDocumentKey !== null}
+            onReplaceSelection={({ text, reference }) => {
+              setEditingValueDraft(text);
+              setEditingValueCellReferences([reference]);
+            }}
+            onAppendSelection={({ text, reference }) => {
+              setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+              setEditingValueCellReferences((current) => [...current, reference]);
+            }}
+            onNotify={onNotify}
+          />
+        ) : (
         <PdfViewer
           documentId={document._id}
           highlights={pdfHighlights}
@@ -6370,6 +6442,7 @@ function ValidationScreen({
           }}
           onNotify={onNotify}
         />
+        )}
       </section>
       <section className="panel extraction-pane">
         <div className="extraction-pane-content">
@@ -6434,8 +6507,8 @@ function ValidationScreen({
               <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
-              <button className="icon-button" title="Download processing PDF" onClick={downloadPdf}>
-                <FileText size={16} />
+              <button className="icon-button" title={document.processingMode === 'spreadsheet' ? 'Download workbook' : 'Download processing PDF'} onClick={downloadSourceDocument}>
+                {document.processingMode === 'spreadsheet' ? <FileSpreadsheet size={16} /> : <FileText size={16} />}
               </button>
               <button
                 className="icon-button"
@@ -6559,8 +6632,8 @@ function ValidationScreen({
                             aria-label={copyFromDocumentKey === item.key ? 'Stop copying from document' : 'Copy from document'}
                             aria-pressed={copyFromDocumentKey === item.key}
                             onClick={() => {
-                              if (!document.spatialTextArtifactBlobName) {
-                                onNotify('Selectable text is unavailable. Reprocess this document to generate it.', 'info');
+                              if (!document.spatialTextArtifactBlobName && !document.workbookArtifactBlobName) {
+                                onNotify('Selectable document content is unavailable. Reprocess this document to generate it.', 'info');
                                 return;
                               }
                               setCopyFromDocumentKey((key) => key === item.key ? null : item.key);
@@ -6801,6 +6874,126 @@ function ValidationScreen({
       )}
     </div>
   );
+}
+
+function spreadsheetColumnName(index: number) {
+  let value = index + 1;
+  let name = '';
+  while (value > 0) {
+    name = String.fromCharCode(65 + ((value - 1) % 26)) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+  return name;
+}
+
+function spreadsheetCellCoordinates(address: string) {
+  const match = /^([A-Z]+)(\d+)$/i.exec(address);
+  if (!match) return null;
+  const column = [...match[1].toUpperCase()].reduce((value, character) => value * 26 + character.charCodeAt(0) - 64, 0) - 1;
+  return { row: Number(match[2]) - 1, column };
+}
+
+function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onReplaceSelection, onAppendSelection, onNotify }: {
+  documentId: string;
+  activeReferences: NonNullable<ExtractedValue['cellReferences']>;
+  selectionMode: boolean;
+  onReplaceSelection: (selection: { text: string; reference: NonNullable<ExtractedValue['cellReferences']>[number] }) => void;
+  onAppendSelection: (selection: { text: string; reference: NonNullable<ExtractedValue['cellReferences']>[number] }) => void;
+  onNotify: (message: string, tone?: 'success' | 'error' | 'info') => void;
+}) {
+  const [metadata, setMetadata] = useState<WorkbookMetadata | null>(null);
+  const [sheet, setSheet] = useState<WorkbookSheet | null>(null);
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [viewport, setViewport] = useState({ row: 0, column: 0 });
+  const [selection, setSelection] = useState<{ startRow: number; startColumn: number; endRow: number; endColumn: number } | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const rowHeight = 32;
+  const columnWidth = 140;
+
+  useEffect(() => {
+    let cancelled = false;
+    setMetadata(null); setSheet(null); setSelection(null);
+    api.documentWorkbook(documentId).then((result) => {
+      if (cancelled) return;
+      setMetadata(result);
+      setSheetIndex(result.sheets[0]?.index ?? 0);
+    }).catch((error) => !cancelled && onNotify(error instanceof Error ? error.message : 'Failed to load workbook', 'error'));
+    return () => { cancelled = true; };
+  }, [documentId]);
+
+  useEffect(() => {
+    if (!metadata?.sheets.some((candidate) => candidate.index === sheetIndex)) return;
+    let cancelled = false;
+    setSheet(null); setSelection(null); setViewport({ row: 0, column: 0 });
+    api.documentWorkbookSheet(documentId, sheetIndex).then((result) => !cancelled && setSheet(result))
+      .catch((error) => !cancelled && onNotify(error instanceof Error ? error.message : 'Failed to load worksheet', 'error'));
+    return () => { cancelled = true; };
+  }, [documentId, metadata, sheetIndex]);
+
+  const cellMap = useMemo(() => new Map((sheet?.cells || []).map((cell) => [`${cell.row}:${cell.column}`, cell.value])), [sheet]);
+  const range = selection ? {
+    top: Math.min(selection.startRow, selection.endRow), bottom: Math.max(selection.startRow, selection.endRow),
+    left: Math.min(selection.startColumn, selection.endColumn), right: Math.max(selection.startColumn, selection.endColumn),
+  } : null;
+  const selectedPayload = () => {
+    if (!sheet || !range) return null;
+    const rows = [];
+    for (let row = range.top; row <= range.bottom; row += 1) {
+      const values = [];
+      for (let column = range.left; column <= range.right; column += 1) values.push(cellMap.get(`${row}:${column}`) || '');
+      rows.push(values.join('\t'));
+    }
+    return {
+      text: rows.join('\n').trim(),
+      reference: {
+        sheetIndex: sheet.index, sheetName: sheet.name,
+        startCell: `${spreadsheetColumnName(range.left)}${range.top + 1}`,
+        endCell: `${spreadsheetColumnName(range.right)}${range.bottom + 1}`,
+      },
+    };
+  };
+  const rows = sheet ? Array.from({ length: Math.min(35, Math.max(0, sheet.rowCount - viewport.row)) }, (_, index) => viewport.row + index) : [];
+  const columns = sheet ? Array.from({ length: Math.min(12, Math.max(0, sheet.columnCount - viewport.column)) }, (_, index) => viewport.column + index) : [];
+
+  return <div className="spreadsheet-viewer">
+    <div className="spreadsheet-tabs">
+      {(metadata?.sheets || []).map((candidate) => <button key={candidate.index} className={candidate.index === sheetIndex ? 'active' : ''} onClick={() => setSheetIndex(candidate.index)}>{candidate.name}</button>)}
+    </div>
+    {!sheet && <div className="pdf-page-state">Loading worksheet.</div>}
+    {sheet && sheet.rowCount === 0 && <div className="pdf-page-state">This worksheet is empty.</div>}
+    {sheet && sheet.rowCount > 0 && <div className="spreadsheet-scroll" onScroll={(event) => {
+      setViewport({ row: Math.floor(event.currentTarget.scrollTop / rowHeight), column: Math.floor(event.currentTarget.scrollLeft / columnWidth) });
+    }} onPointerUp={() => setSelecting(false)}>
+      <div className="spreadsheet-canvas" style={{ width: 52 + sheet.columnCount * columnWidth, height: 32 + sheet.rowCount * rowHeight }}>
+        {columns.map((column) => <div className="spreadsheet-column-heading" key={column} style={{ left: 52 + column * columnWidth, top: viewport.row * rowHeight }}>{spreadsheetColumnName(column)}</div>)}
+        {rows.map((row) => <Fragment key={row}>
+          <div className="spreadsheet-row-heading" style={{ left: viewport.column * columnWidth, top: 32 + row * rowHeight }}>{row + 1}</div>
+          {columns.map((column) => {
+            const selected = Boolean(range && row >= range.top && row <= range.bottom && column >= range.left && column <= range.right);
+            const address = `${spreadsheetColumnName(column)}${row + 1}`;
+            const active = activeReferences.some((reference) => {
+              if (reference.sheetIndex !== sheet.index) return false;
+              const start = spreadsheetCellCoordinates(reference.startCell);
+              const end = spreadsheetCellCoordinates(reference.endCell);
+              return Boolean(start && end && row >= Math.min(start.row, end.row) && row <= Math.max(start.row, end.row)
+                && column >= Math.min(start.column, end.column) && column <= Math.max(start.column, end.column));
+            });
+            return <div key={column} className={`spreadsheet-cell${selected ? ' selected' : ''}${active ? ' active' : ''}`}
+              style={{ left: 52 + column * columnWidth, top: 32 + row * rowHeight }}
+              onPointerDown={() => { if (selectionMode) { setSelecting(true); setSelection({ startRow: row, startColumn: column, endRow: row, endColumn: column }); } }}
+              onPointerEnter={() => { if (selectionMode && selecting) setSelection((current) => current ? { ...current, endRow: row, endColumn: column } : current); }}>
+              {cellMap.get(`${row}:${column}`) || ''}
+            </div>;
+          })}
+        </Fragment>)}
+      </div>
+    </div>}
+    {selectionMode && range && <div className="spreadsheet-selection-actions">
+      <button onClick={async () => { const payload = selectedPayload(); if (!payload?.text) return; try { await navigator.clipboard.writeText(payload.text); onNotify('Selected cells copied', 'success'); } catch { onNotify('Clipboard access failed', 'error'); } }}>Copy</button>
+      <button onClick={() => { const payload = selectedPayload(); if (payload?.text) onReplaceSelection(payload); }}>Replace</button>
+      <button onClick={() => { const payload = selectedPayload(); if (payload?.text) onAppendSelection(payload); }}>Append</button>
+    </div>}
+  </div>;
 }
 
 function PdfViewer({

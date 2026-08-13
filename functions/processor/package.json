@@ -18,7 +18,8 @@
     "openai": "^5.0.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "azure-functions-core-tools": "^4.0.5907"

@@ -18,6 +18,7 @@ const { extractDocumentContent, extractDocumentSpatialItems } = require('../docu
 const { publishDocumentChanged } = require('../documentEvents');
 const { getConfiguration } = require('../configurationCache');
 const { imageBufferToPdf, isImageDocument } = require('../imageToPdf');
+const { isExcelDocument, parseWorkbook } = require('../workbook');
 const { resolveDataEncryptionSettings } = require('@xtract/common');
 const {
   PROCESSING_CONTAINER,
@@ -52,6 +53,12 @@ function spatialTextArtifactBlobName(document) {
   const sourceName = path.posix.basename(document.storageBlobName || document.originalName || document.fileName);
   const stem = sourceName.slice(0, sourceName.length - path.posix.extname(sourceName).length) || 'document';
   return `${document._id}/${stem}.spatial-text.json`;
+}
+
+function workbookArtifactBlobName(document) {
+  const sourceName = path.posix.basename(document.storageBlobName || document.originalName || document.fileName);
+  const stem = sourceName.slice(0, sourceName.length - path.posix.extname(sourceName).length) || 'workbook';
+  return `${document._id}/${stem}.workbook.json`;
 }
 
 async function prepareDocumentText(message, context) {
@@ -150,15 +157,18 @@ async function prepareDocumentText(message, context) {
 
     const { documentTextMode, textOptions } = processingOptionsFor(document, configuration);
     localFilePath = await resolveDocumentFile(document, configuration);
-    const content = await extractDocumentContent(localFilePath, undefined, {
+    const excelDocument = isExcelDocument(document);
+    const workbook = excelDocument ? parseWorkbook(await fs.readFile(localFilePath)) : undefined;
+    const content = workbook ? { text: workbook.text } : await extractDocumentContent(localFilePath, undefined, {
       ...textOptions,
       fileName: document.convertedToPdf
         ? path.posix.basename(document.storageBlobName || document.fileName)
         : document.originalName || document.fileName,
     });
     const artifactBlobName = textArtifactBlobName(document, documentTextMode);
-    const spatialItems = await extractDocumentSpatialItems(localFilePath, { forceOcr: documentTextMode === 'markdown' });
+    const spatialItems = workbook ? [] : await extractDocumentSpatialItems(localFilePath, { forceOcr: documentTextMode === 'markdown' });
     const spatialArtifactBlobName = spatialTextArtifactBlobName(document);
+    const workbookBlobName = workbook ? workbookArtifactBlobName(document) : undefined;
     await uploadBuffer(
       PROCESSING_CONTAINER,
       artifactBlobName,
@@ -166,6 +176,15 @@ async function prepareDocumentText(message, context) {
       documentTextMode === 'markdown' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8',
       storageEncryption,
     );
+    if (workbook && workbookBlobName) {
+      await uploadBuffer(
+        PROCESSING_CONTAINER,
+        workbookBlobName,
+        Buffer.from(JSON.stringify(workbook.artifact), 'utf8'),
+        'application/json; charset=utf-8',
+        storageEncryption,
+      );
+    }
     await uploadBuffer(
       PROCESSING_CONTAINER,
       spatialArtifactBlobName,
@@ -197,12 +216,17 @@ async function prepareDocumentText(message, context) {
         textArtifactMode: documentTextMode,
         spatialTextArtifactContainer: PROCESSING_CONTAINER,
         spatialTextArtifactBlobName: spatialArtifactBlobName,
+        ...(workbookBlobName ? {
+          workbookArtifactContainer: PROCESSING_CONTAINER,
+          workbookArtifactBlobName: workbookBlobName,
+          processingMode: 'spreadsheet',
+        } : {}),
       },
     );
     await publishDocumentChanged(
       documents,
       document._id,
-      ['status', 'textArtifactBlobName', 'textArtifactMode', 'spatialTextArtifactBlobName'],
+      ['status', 'textArtifactBlobName', 'textArtifactMode', 'spatialTextArtifactBlobName', 'workbookArtifactBlobName', 'processingMode'],
       context,
     );
 

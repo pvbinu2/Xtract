@@ -32,6 +32,10 @@ const IMAGE_MIME_TYPES = {
   '.tiff': 'image/tiff',
   '.webp': 'image/webp',
 };
+const EXCEL_MIME_TYPES = {
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel',
+};
 let triggerEventIndexReady;
 
 function ensureTriggerEventIndex(documents) {
@@ -46,7 +50,7 @@ function ensureTriggerEventIndex(documents) {
 
 function mimeTypeForFileName(fileName) {
   const extension = path.extname(fileName).toLowerCase();
-  return extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension];
+  return extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension] || EXCEL_MIME_TYPES[extension];
 }
 
 function documentIdForEvent(eventId) {

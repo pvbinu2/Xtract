@@ -131,6 +131,26 @@ button {
   flex: 0 0 40px;
 }
 
+.brand-mark-link {
+  display: flex;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.brand-mark-link:hover .brand-mark,
+.brand-mark-link:focus-visible .brand-mark {
+  border-color: #5eead4;
+  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.22);
+}
+
+.brand-mark-link:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 3px;
+}
+
 .brand span,
 .type-row small,
 .document-row small,
@@ -5338,6 +5358,11 @@ textarea {
   color: #7c3aed;
 }
 
+.processing-mode-icon.spreadsheet {
+  color: #15803d;
+  background: #dcfce7;
+}
+
 .processing-mode-icon.markdown {
   color: #0369a1;
 }
@@ -6361,6 +6386,80 @@ textarea {
   height: 100%;
   min-height: 0;
 }
+
+.spreadsheet-viewer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.spreadsheet-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.spreadsheet-tabs button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.spreadsheet-tabs button.active {
+  color: #fff;
+  border-color: #2563eb;
+  background: #2563eb;
+}
+
+.spreadsheet-scroll {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  user-select: none;
+}
+
+.spreadsheet-canvas { position: relative; }
+.spreadsheet-cell,
+.spreadsheet-column-heading,
+.spreadsheet-row-heading {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-right: 1px solid #dbe3ee;
+  border-bottom: 1px solid #dbe3ee;
+  white-space: nowrap;
+}
+
+.spreadsheet-cell { width: 140px; height: 32px; padding: 7px 8px; background: #fff; }
+.spreadsheet-column-heading { z-index: 2; width: 140px; height: 32px; padding: 7px; text-align: center; font-weight: 700; background: #eef2f7; }
+.spreadsheet-row-heading { z-index: 2; width: 52px; height: 32px; padding: 7px; text-align: center; font-weight: 700; background: #eef2f7; }
+.spreadsheet-cell.selected { background: #dbeafe; outline: 2px solid #2563eb; outline-offset: -2px; }
+.spreadsheet-cell.active { background: #fef3c7; outline: 2px solid #f59e0b; outline-offset: -2px; }
+.spreadsheet-selection-actions {
+  position: absolute;
+  z-index: 5;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.18);
+}
+
+.spreadsheet-selection-actions button { padding: 6px 10px; border: 0; border-radius: 6px; cursor: pointer; }
 
 .pdf-toolbar {
   z-index: 2;

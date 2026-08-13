@@ -42,6 +42,7 @@ Xtract is designed for organizations that need to automate document processing w
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
 - Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
 - API-key-authenticated multipart ingestion for external systems, with idempotent retries and caller metadata.
+- Excel `.xlsx` and `.xls` ingestion with text extraction and a selectable multi-sheet validation grid.
 - Validation screen with source PDF preview and editable extracted fields.
 - Reclassification and reprocessing when a document was assigned to the wrong type or a schema changes.
 - Business review dashboard with processed-file counts, token usage, estimated cost, and display currency conversion.

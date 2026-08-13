@@ -106,6 +106,18 @@ export class DocumentsController {
     return this.service.getSpatialTextPage(id, pageNumber);
   }
 
+  @Get(':id/workbook')
+  @Roles('admin', 'validator')
+  workbook(@Param('id') id: string) {
+    return this.service.getWorkbook(id);
+  }
+
+  @Get(':id/workbook/sheets/:sheetIndex')
+  @Roles('admin', 'validator')
+  workbookSheet(@Param('id') id: string, @Param('sheetIndex') sheetIndex: string) {
+    return this.service.getWorkbookSheet(id, sheetIndex);
+  }
+
   @Post(':id/extracted-data')
   @Roles('admin', 'validator')
   updateExtractedData(

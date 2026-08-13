@@ -73,6 +73,12 @@ export type SpatialTextPage = {
     order: number;
   }>;
 };
+export type WorkbookMetadata = { version: 1; sheets: Array<{ index: number; name: string; rowCount: number; columnCount: number }> };
+export type WorkbookSheet = WorkbookMetadata['sheets'][number] & {
+  version: 1;
+  merges: string[];
+  cells: Array<{ address: string; row: number; column: number; value: string; type: string }>;
+};
 
 export type HealthCheckResult = {
   status: 'ready' | 'degraded';
@@ -225,6 +231,8 @@ export const api = {
   },
   documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
   documentPageText: (id: string, pageNumber: number) => request<SpatialTextPage>(`/documents/${id}/pages/${pageNumber}/text`),
+  documentWorkbook: (id: string) => request<WorkbookMetadata>(`/documents/${id}/workbook`),
+  documentWorkbookSheet: (id: string, sheetIndex: number) => request<WorkbookSheet>(`/documents/${id}/workbook/sheets/${sheetIndex}`),
   documentFile: (id: string) => requestFile(`/documents/${id}/file`),
   documentTextArtifact: (id: string) => requestFile(`/documents/${id}/text-artifact`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),

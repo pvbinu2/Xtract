@@ -344,6 +344,11 @@ export class DocumentsService {
       document.spatialTextArtifactContainer = undefined;
       document.spatialTextArtifactBlobName = undefined;
     }
+    if (document.workbookArtifactContainer && document.workbookArtifactBlobName) {
+      await this.blobStorage.deleteBlob(document.workbookArtifactContainer, document.workbookArtifactBlobName);
+      document.workbookArtifactContainer = undefined;
+      document.workbookArtifactBlobName = undefined;
+    }
     document.validatedBy = undefined;
     document.validatedAt = undefined;
     document.rejectedBy = undefined;
@@ -368,6 +373,7 @@ export class DocumentsService {
       'rejectedBy',
       'rejectedAt',
       'spatialTextArtifactBlobName',
+      'workbookArtifactBlobName',
     ]);
 
     await this.enqueueProcessing(document.id);
@@ -462,6 +468,43 @@ export class DocumentsService {
       }];
     }).sort((a, b) => a.order - b.order);
     return { version: 1 as const, page: pageNumber, items };
+  }
+
+  private async readWorkbookArtifact(id: string) {
+    const document = await this.documentModel.findById(id).lean();
+    if (!document) throw new NotFoundException('Document not found');
+    if (!document.workbookArtifactContainer || !document.workbookArtifactBlobName) {
+      throw new NotFoundException('Workbook preview is unavailable. Reprocess this document to generate it.');
+    }
+    const buffer = await this.blobStorage.downloadBuffer(
+      document.workbookArtifactContainer,
+      document.workbookArtifactBlobName,
+      await this.storageReadKeys(),
+    );
+    const artifact = JSON.parse(buffer.toString('utf8')) as any;
+    if (artifact?.version !== 1 || !Array.isArray(artifact.sheets)) {
+      throw new BadRequestException('The workbook artifact is invalid or unsupported.');
+    }
+    return artifact;
+  }
+
+  async getWorkbook(id: string) {
+    const artifact = await this.readWorkbookArtifact(id);
+    return {
+      version: 1,
+      sheets: artifact.sheets.map((sheet: any) => ({
+        index: sheet.index, name: sheet.name, rowCount: sheet.rowCount, columnCount: sheet.columnCount,
+      })),
+    };
+  }
+
+  async getWorkbookSheet(id: string, sheetIndexInput: string) {
+    const sheetIndex = Number(sheetIndexInput);
+    if (!Number.isInteger(sheetIndex) || sheetIndex < 0) throw new BadRequestException('Sheet index must be a non-negative integer.');
+    const artifact = await this.readWorkbookArtifact(id);
+    const sheet = artifact.sheets.find((candidate: any) => candidate.index === sheetIndex);
+    if (!sheet) throw new NotFoundException('Workbook sheet not found.');
+    return { version: 1, ...sheet };
   }
 
   async getPdfPageCount(id: string) {
@@ -825,6 +868,9 @@ export class DocumentsService {
     }
     if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
       await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
+    }
+    if (document.workbookArtifactContainer && document.workbookArtifactBlobName) {
+      await this.blobStorage.deleteBlob(document.workbookArtifactContainer, document.workbookArtifactBlobName);
     }
 
     await this.documentModel.deleteOne({ _id: document._id });

@@ -56,6 +56,16 @@ export class BoundingBox {
 const BoundingBoxSchema = SchemaFactory.createForClass(BoundingBox);
 
 @Schema({ _id: false })
+export class SpreadsheetCellReference {
+  @Prop({ required: true }) sheetIndex!: number;
+  @Prop({ required: true }) sheetName!: string;
+  @Prop({ required: true }) startCell!: string;
+  @Prop({ required: true }) endCell!: string;
+}
+
+const SpreadsheetCellReferenceSchema = SchemaFactory.createForClass(SpreadsheetCellReference);
+
+@Schema({ _id: false })
 export class ExtractedValue {
   @Prop({ required: true })
   key!: string;
@@ -74,6 +84,9 @@ export class ExtractedValue {
 
   @Prop({ type: [BoundingBoxSchema], default: [] })
   boundingBoxes?: BoundingBox[];
+
+  @Prop({ type: [SpreadsheetCellReferenceSchema], default: [] })
+  cellReferences?: SpreadsheetCellReference[];
 }
 
 const ExtractedValueSchema = SchemaFactory.createForClass(ExtractedValue);
@@ -193,6 +206,12 @@ export class IncomingDocument {
   @Prop()
   spatialTextArtifactBlobName?: string;
 
+  @Prop()
+  workbookArtifactContainer?: string;
+
+  @Prop()
+  workbookArtifactBlobName?: string;
+
   @Prop({ type: [DocumentStageTimingSchema], default: [] })
   stageTimings!: DocumentStageTiming[];
 
@@ -235,7 +254,7 @@ export class IncomingDocument {
   }>;
 
   @Prop()
-  processingMode?: 'ocr' | 'pdf' | 'markdown';
+  processingMode?: 'ocr' | 'pdf' | 'markdown' | 'spreadsheet';
 
   @Prop({ default: 'received' })
   status!: DocumentStatus;

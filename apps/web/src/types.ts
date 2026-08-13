@@ -48,6 +48,7 @@ export type ExtractedValue = {
     width: number;
     height: number;
   }>;
+  cellReferences?: Array<{ sheetIndex: number; sheetName: string; startCell: string; endCell: string }>;
 };
 
 export type IncomingDocument = {
@@ -58,6 +59,7 @@ export type IncomingDocument = {
   textArtifactBlobName?: string;
   textArtifactMode?: 'ocr' | 'markdown';
   spatialTextArtifactBlobName?: string;
+  workbookArtifactBlobName?: string;
   ingestionSource?: 'ui' | 'api' | 'blob';
   ingestionMetadata?: Record<string, unknown>;
   stageTimings?: Array<{
@@ -78,7 +80,7 @@ export type IncomingDocument = {
     name: string;
     score: number;
   }>;
-  processingMode?: 'ocr' | 'pdf' | 'markdown';
+  processingMode?: 'ocr' | 'pdf' | 'markdown' | 'spreadsheet';
   processingMetrics?: {
     model?: string;
   };
