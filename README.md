@@ -41,6 +41,7 @@ Xtract is designed for organizations that need to automate document processing w
 - Configurable classification using the top vector result, an LLM with all document types, or RAG with the top vector-retrieved types.
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
 - Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
+- API-key-authenticated multipart ingestion for external systems, with idempotent retries and caller metadata.
 - Validation screen with source PDF preview and editable extracted fields.
 - Reclassification and reprocessing when a document was assigned to the wrong type or a schema changes.
 - Business review dashboard with processed-file counts, token usage, estimated cost, and display currency conversion.
@@ -247,6 +248,22 @@ The API runs on:
 ```text
 http://localhost:3000
 ```
+
+### External document ingestion API
+
+Set `DOCUMENT_INGESTION_API_KEY` to enable single-document ingestion for external systems. Requests are asynchronous and require a unique idempotency key:
+
+```bash
+curl --request POST http://localhost:3000/api/ingestion/documents \
+  --header "X-Ingestion-Api-Key: $DOCUMENT_INGESTION_API_KEY" \
+  --header "Idempotency-Key: invoice-2026-0001" \
+  --form "file=@/absolute/path/to/invoice.pdf" \
+  --form "category=Finance" \
+  --form "type=Invoice" \
+  --form 'metadata={"source":"erp","externalId":"INV-0001"}'
+```
+
+`category` and `type` must be supplied together to select an existing document type, or both omitted to use automatic classification. The endpoint accepts one PDF or supported image up to 50 MB. `metadata` is an optional JSON object up to 16 KB. Repeating a successful request with the same `Idempotency-Key` returns the original document receipt without queueing a duplicate.
 
 Document processing always runs through the Azure Function worker and Service Bus. A document progresses through the persisted statuses **Received**, **Preprocessed**, **Classified**, and **Extracted**. The API enqueues work on `document-processing`; text preparation enqueues `document-classification`; classification then enqueues `document-extraction`. Classifier training and realtime events also use Service Bus. The Configuration screen's **Scaling** section controls independent preprocessing, vector-classification, LLM/RAG-classification, and extraction concurrency limits from 1 to 16. Saved limits apply to subsequent queue invocations without restarting the Function App. Environment fallbacks are `PREPROCESSING_CONCURRENCY`, `VECTOR_CLASSIFICATION_CONCURRENCY`, `LLM_CLASSIFICATION_CONCURRENCY`, and `EXTRACTION_CONCURRENCY`.
 

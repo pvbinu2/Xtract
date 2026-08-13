@@ -168,6 +168,15 @@ export class IncomingDocument {
   @Prop()
   triggerEventSequencer?: string;
 
+  @Prop({ enum: ['ui', 'api', 'blob'], default: 'ui' })
+  ingestionSource!: 'ui' | 'api' | 'blob';
+
+  @Prop({ type: Object, default: undefined })
+  ingestionMetadata?: Record<string, unknown>;
+
+  @Prop()
+  ingestionIdempotencyKeyHash?: string;
+
   @Prop()
   textArtifactContainer?: string;
 
@@ -263,5 +272,6 @@ export class IncomingDocument {
 
 export const IncomingDocumentSchema = SchemaFactory.createForClass(IncomingDocument);
 IncomingDocumentSchema.index({ triggerEventId: 1 }, { unique: true, sparse: true });
+IncomingDocumentSchema.index({ ingestionIdempotencyKeyHash: 1 }, { unique: true, sparse: true });
 IncomingDocumentSchema.index({ createdAt: -1 });
 IncomingDocumentSchema.index({ status: 1, category: 1, documentTypeId: 1 });

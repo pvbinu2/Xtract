@@ -129,6 +129,7 @@ services:
       - DOCLING_HEALTH_URL=http://docling-markdown:7072/admin/host/status
       - REALTIME_BROADCAST_SECRET=${REALTIME_BROADCAST_SECRET:-xtract-local-realtime-secret}
       - VITE_REALTIME_URL=${VITE_REALTIME_URL:-http://127.0.0.1:5080/hubs/documents}
+      - DOCUMENT_INGESTION_API_KEY=${DOCUMENT_INGESTION_API_KEY:-}
     depends_on:
       - mongo
       - azurite

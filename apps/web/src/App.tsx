@@ -6236,6 +6236,7 @@ function ValidationScreen({
       documentId: document._id,
       fileName: document.originalName,
       category: document.category,
+      metadata: document.ingestionMetadata,
       documentTypeId: document.documentTypeId,
       documentTypeName: document.documentTypeName,
       classificationScore: document.classificationScore,

@@ -58,6 +58,8 @@ export type IncomingDocument = {
   textArtifactBlobName?: string;
   textArtifactMode?: 'ocr' | 'markdown';
   spatialTextArtifactBlobName?: string;
+  ingestionSource?: 'ui' | 'api' | 'blob';
+  ingestionMetadata?: Record<string, unknown>;
   stageTimings?: Array<{
     status: IncomingDocument['status'];
     startTime: string;

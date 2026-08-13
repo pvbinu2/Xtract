@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash, randomUUID } from 'crypto';
 import { InjectModel } from '@nestjs/mongoose';
 import { unlink } from 'fs/promises';
 import { Model, Types } from 'mongoose';
@@ -150,18 +150,78 @@ export class DocumentsService {
     for (const item of payload) {
       const docType = item.documentTypeId ? await this.documentTypeModel.findById(item.documentTypeId) : undefined;
       if (item.documentTypeId && !docType) throw new NotFoundException('Document type not found');
+      const result = await this.createIngestedDocument(item, docType, settings, { ingestionSource: 'ui' });
+      documents.push(result.document);
+    }
 
-      const documentId = new Types.ObjectId();
-      const blobName = this.blobStorage.createBlobName(item.originalName, documentId.toString());
-      await this.blobStorage.uploadBuffer(PROCESSING_CONTAINER, blobName, item.buffer, item.mimeType,
-        settings.storage.enabled ? { key: settings.storage.key, keyVersion: settings.storage.keyVersion } : undefined);
+    return Promise.all(documents.map((document) => this.findById(document.id)));
+  }
 
-      const encryptionPolicy = this.policyFor(settings);
-      const initialPayload = settings.database.enabled
-        ? { encryptedExtractedData: encryptJson([], { key: settings.database.key, keyVersion: settings.database.keyVersion, context: `${documentId}:extractedData` }) }
-        : { extractedData: [] };
+  async ingestExternal(item: {
+    fileName: string;
+    originalName: string;
+    buffer: Buffer;
+    mimeType?: string;
+    category?: string;
+    type?: string;
+    metadata?: Record<string, unknown>;
+    idempotencyKey: string;
+  }) {
+    this.requireServiceBus();
+    const hasCategory = Boolean(item.category);
+    const hasType = Boolean(item.type);
+    if (hasCategory !== hasType) {
+      throw new BadRequestException('Category and type must be supplied together or both omitted.');
+    }
+    const idempotencyHash = createHash('sha256').update(item.idempotencyKey).digest('hex');
+    const existing = await this.documentModel.findOne({ ingestionIdempotencyKeyHash: idempotencyHash });
+    if (existing) {
+      if (existing.status === 'failed') {
+        throw new ConflictException('The original ingestion request failed. Use a new Idempotency-Key to retry.');
+      }
+      return this.ingestionReceipt(existing, true);
+    }
 
-      const document = await this.documentModel.create({
+    const docType = hasCategory
+      ? await this.documentTypeModel.findOne({ category: item.category, name: item.type })
+      : undefined;
+    if (hasCategory && !docType) throw new NotFoundException('Document category and type were not found.');
+
+    const settings = await this.encryptionSettings();
+    const result = await this.createIngestedDocument(item, docType, settings, {
+      ingestionSource: 'api',
+      ingestionMetadata: item.metadata,
+      ingestionIdempotencyKeyHash: idempotencyHash,
+    });
+    return this.ingestionReceipt(result.document, result.deduplicated);
+  }
+
+  private async createIngestedDocument(
+    item: { fileName: string; originalName: string; buffer: Buffer; mimeType?: string },
+    docType: DocumentTypeDocument | null | undefined,
+    settings: any,
+    ingestion: {
+      ingestionSource: 'ui' | 'api';
+      ingestionMetadata?: Record<string, unknown>;
+      ingestionIdempotencyKeyHash?: string;
+    },
+  ): Promise<{ document: IncomingDocumentDocument; deduplicated: boolean }> {
+    const documentId = new Types.ObjectId();
+    const blobName = this.blobStorage.createBlobName(item.originalName, documentId.toString());
+    await this.blobStorage.uploadBuffer(
+      PROCESSING_CONTAINER,
+      blobName,
+      item.buffer,
+      item.mimeType,
+      settings.storage.enabled ? { key: settings.storage.key, keyVersion: settings.storage.keyVersion } : undefined,
+    );
+
+    const initialPayload = settings.database.enabled
+      ? { encryptedExtractedData: encryptJson([], { key: settings.database.key, keyVersion: settings.database.keyVersion, context: `${documentId}:extractedData` }) }
+      : { extractedData: [] };
+    let document: IncomingDocumentDocument;
+    try {
+      document = await this.documentModel.create({
         _id: documentId,
         fileName: blobName,
         originalName: item.originalName,
@@ -176,22 +236,48 @@ export class DocumentsService {
         classificationMethod: docType ? 'manual' : 'vector',
         classificationModel: docType ? 'manual' : undefined,
         status: 'received',
-        stageTimings: [{
-          status: 'received',
-          startTime: new Date(),
-          endTime: new Date(),
-        }],
+        stageTimings: [{ status: 'received', startTime: new Date(), endTime: new Date() }],
         revision: 1,
-        encryptionPolicy,
+        encryptionPolicy: this.policyFor(settings),
+        ...ingestion,
         ...initialPayload,
       });
-
-      documents.push(document);
-      await this.publishDocumentChanged(document, ['status']);
-      await this.enqueueProcessing(document.id);
+    } catch (error) {
+      await this.blobStorage.deleteBlob(PROCESSING_CONTAINER, blobName).catch(() => undefined);
+      if ((error as { code?: number }).code === 11000 && ingestion.ingestionIdempotencyKeyHash) {
+        const existing = await this.documentModel.findOne({
+          ingestionIdempotencyKeyHash: ingestion.ingestionIdempotencyKeyHash,
+        });
+        if (existing) return { document: existing, deduplicated: true };
+      }
+      throw error;
     }
 
-    return Promise.all(documents.map((document) => this.findById(document.id)));
+    await this.publishDocumentChanged(document, ['status']);
+    try {
+      await this.enqueueProcessing(document.id);
+    } catch (error) {
+      document.status = 'failed';
+      document.error = error instanceof Error ? error.message : String(error);
+      document.revision = Number(document.revision || 0) + 1;
+      await document.save();
+      await this.publishDocumentChanged(document, ['status', 'error']);
+      throw error;
+    }
+    return { document, deduplicated: false };
+  }
+
+  private ingestionReceipt(document: IncomingDocumentDocument, deduplicated: boolean) {
+    const manual = Boolean(document.documentTypeId);
+    return {
+      documentId: document.id,
+      status: document.status,
+      category: document.category,
+      type: manual ? document.documentTypeName : undefined,
+      documentTypeId: document.documentTypeId?.toString(),
+      classificationMode: manual ? 'manual' : 'automatic',
+      deduplicated,
+    };
   }
 
   private async enqueueProcessing(documentId: string) {
@@ -597,6 +683,7 @@ export class DocumentsService {
       documentId: document.id,
       fileName: document.originalName,
       category: document.category,
+      metadata: document.ingestionMetadata,
       documentTypeId: document.documentTypeId?.toString(),
       documentTypeName: document.documentTypeName,
       classificationScore: document.classificationScore,

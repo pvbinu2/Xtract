@@ -12,6 +12,8 @@ import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
 import { ConfigurationModule } from '../configuration/configuration.module';
 import { BlobStorageService } from '../storage/blob-storage.service';
+import { IngestionController } from './ingestion.controller';
+import { IngestionApiKeyGuard } from './ingestion-api-key.guard';
 
 @Module({
   imports: [
@@ -23,7 +25,7 @@ import { BlobStorageService } from '../storage/blob-storage.service';
     ]),
     ConfigurationModule,
   ],
-  controllers: [DocumentsController],
-  providers: [DocumentsService, BlobStorageService],
+  controllers: [DocumentsController, IngestionController],
+  providers: [DocumentsService, BlobStorageService, IngestionApiKeyGuard],
 })
 export class DocumentsModule {}

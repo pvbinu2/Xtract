@@ -103,6 +103,7 @@ async function ingestBlob(details, context, configuration) {
     triggerEventId: details.event.id,
     triggerEventEtag: details.etag,
     triggerEventSequencer: details.sequencer,
+    ingestionSource: 'blob',
     category: 'Unclassified',
     documentTypeName: 'Pending classification',
     classificationMethod: 'vector',
