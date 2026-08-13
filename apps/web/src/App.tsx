@@ -6006,6 +6006,9 @@ function ValidationScreen({
   const [editingValueBoundingBoxes, setEditingValueBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [copyFromDocumentKey, setCopyFromDocumentKey] = useState<string | null>(null);
+  const [showAddEntityDialog, setShowAddEntityDialog] = useState(false);
+  const [newEntityLabel, setNewEntityLabel] = useState('');
+  const [addingEntity, setAddingEntity] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [showClassificationJustification, setShowClassificationJustification] = useState(false);
   const [showDocumentFlow, setShowDocumentFlow] = useState(false);
@@ -6149,6 +6152,36 @@ function ValidationScreen({
     const next = [...values];
     next[index] = { ...next[index], value, confidence: 1 };
     await persistExtractedData(next);
+  }
+
+  async function addInstanceEntity() {
+    const label = newEntityLabel.trim();
+    if (!label || addingEntity) return;
+    const baseKey = normalizedColumnName(label) || 'customfield';
+    const existingKeys = new Set(values.map((item) => item.key));
+    let key = baseKey;
+    let suffix = 2;
+    while (existingKeys.has(key)) key = `${baseKey}${suffix++}`;
+    const entity: ExtractedValue = {
+      key,
+      label,
+      type: 'string',
+      value: '',
+      boundingBoxes: [],
+    };
+    setAddingEntity(true);
+    try {
+      await persistExtractedData([...values, entity]);
+      setShowAddEntityDialog(false);
+      setNewEntityLabel('');
+      startValueEdit(entity);
+      if (document?.spatialTextArtifactBlobName) setCopyFromDocumentKey(entity.key);
+      onNotify(`${label} added to this document`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to add entity', 'error');
+    } finally {
+      setAddingEntity(false);
+    }
   }
 
   async function submit() {
@@ -6349,6 +6382,17 @@ function ValidationScreen({
           {showDocumentFlow && (
             <DocumentFlowDialog document={document} onClose={() => setShowDocumentFlow(false)} />
           )}
+          <div className="instance-entity-toolbar">
+            <div>
+              <strong>Extracted entities</strong>
+              <small>Custom entities are saved only in this document instance.</small>
+            </div>
+            {!isLocked && (
+              <button className="secondary-button compact" type="button" onClick={() => setShowAddEntityDialog(true)}>
+                <Plus size={15} /> Add entity
+              </button>
+            )}
+          </div>
           <div className="extraction-form">
             {values.map((item, index) => {
               const styles = fieldStyles[item.key];
@@ -6356,6 +6400,7 @@ function ValidationScreen({
               const isMissingValue = !hasExtractedValue(item);
               const isLowConfidence = typeof item.confidence === 'number' && item.confidence < 0.8;
               const badge = confidenceBadge(item);
+              const isInstanceEntity = !documentTypeFor(document)?.fields.some((field) => field.key === item.key);
               const fieldClassName = [
                 'extraction-field',
                 isActive ? 'active' : '',
@@ -6384,10 +6429,15 @@ function ValidationScreen({
                     <button className="value-link" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {badge && (
-                      <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
-                        {badge}
-                      </em>
+                    {(badge || isInstanceEntity) && (
+                      <span className="field-label-badges">
+                        {isInstanceEntity && <span className="instance-only-badge">Instance only</span>}
+                        {badge && (
+                          <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
+                            {badge}
+                          </em>
+                        )}
+                      </span>
                     )}
                   </div>
                   <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
@@ -6402,10 +6452,15 @@ function ValidationScreen({
                     <button className="value-link" type="button" onClick={() => setActiveFieldKey(item.key)}>
                       {item.label}
                     </button>
-                    {badge && (
-                      <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
-                        {badge}
-                      </em>
+                    {(badge || isInstanceEntity) && (
+                      <span className="field-label-badges">
+                        {isInstanceEntity && <span className="instance-only-badge">Instance only</span>}
+                        {badge && (
+                          <em className={isLowClassificationScore(item.confidence) ? 'low-score' : undefined}>
+                            {badge}
+                          </em>
+                        )}
+                      </span>
                     )}
                   </div>
                   <div className="value-editor">
@@ -6468,6 +6523,36 @@ function ValidationScreen({
               );
             })}
           </div>
+          {showAddEntityDialog && (
+            <ConfirmDialog
+              title="Add entity"
+              body={(
+                <label className="instance-entity-name-field">
+                  Entity name
+                  <input
+                    autoFocus
+                    value={newEntityLabel}
+                    placeholder="For example: Purchase order number"
+                    onChange={(event) => setNewEntityLabel(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') addInstanceEntity();
+                    }}
+                  />
+                  <small>This entity will be added only to this document's instance JSON.</small>
+                </label>
+              )}
+              confirmLabel={addingEntity ? 'Adding…' : 'Add entity'}
+              confirmIcon={addingEntity ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+              confirmDisabled={!newEntityLabel.trim() || addingEntity}
+              isDanger={false}
+              onCancel={() => {
+                if (addingEntity) return;
+                setShowAddEntityDialog(false);
+                setNewEntityLabel('');
+              }}
+              onConfirm={addInstanceEntity}
+            />
+          )}
           {isLocked && (
             <div className={`locked-state ${document.status}`}>
               {document.status === 'validated' ? <CheckCircle2 size={16} /> : <X size={16} />}

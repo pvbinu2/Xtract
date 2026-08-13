@@ -6638,7 +6638,7 @@ textarea {
   width: 100%;
 }
 
-.extraction-form .field-label {
+.extraction-form .extraction-field > .field-label {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -6653,6 +6653,18 @@ textarea {
 
 .extraction-form .field-label > button {
   flex: 1;
+}
+
+.field-label-badges {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.extraction-form .field-label-badges em {
+  margin-left: 0;
 }
 
 .extraction-field {
@@ -6700,6 +6712,57 @@ textarea {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+}
+
+.instance-entity-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.instance-entity-toolbar > div {
+  display: grid;
+  gap: 2px;
+}
+
+.instance-entity-toolbar strong {
+  font-size: 13px;
+}
+
+.instance-entity-toolbar small,
+.instance-entity-name-field small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.instance-entity-name-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.instance-entity-name-field input {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.extraction-form .instance-only-badge {
+  border-radius: 999px;
+  background: color-mix(in srgb, #7c3aed 12%, var(--surface));
+  color: #6d28d9;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .value-editor input {
