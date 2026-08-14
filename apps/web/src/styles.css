@@ -720,6 +720,46 @@ nav {
   white-space: nowrap;
 }
 
+.review-projection-result {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.review-projection-result span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.review-volume-control {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 180px) minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.review-volume-control label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.review-volume-control input[type='number'] {
+  width: 100%;
+}
+
+.review-volume-control input[type='range'] {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
 .review-chart-wrap {
   position: relative;
   width: 100%;

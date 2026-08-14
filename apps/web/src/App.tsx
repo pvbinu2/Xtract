@@ -2827,13 +2827,17 @@ function ReviewMetric({ label, value, helper, icon }: { label: string; value: st
 function MonthlyCostProjectionChart({
   averageCostPerDocument,
   formatReviewCurrency,
+  monthlyVolume,
+  onMonthlyVolumeChange,
 }: {
   averageCostPerDocument: number;
   formatReviewCurrency: (value: number) => string;
+  monthlyVolume: number;
+  onMonthlyVolumeChange: (value: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maxFiles = 1_000_000;
-  const projectedCost = maxFiles * averageCostPerDocument;
+  const maxFiles = Math.max(monthlyVolume, 1);
+  const projectedCost = monthlyVolume * averageCostPerDocument;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2844,7 +2848,7 @@ function MonthlyCostProjectionChart({
     const muted = styles.getPropertyValue('--muted').trim() || '#64748b';
     const border = styles.getPropertyValue('--border').trim() || '#e2e8f0';
     const surface = styles.getPropertyValue('--surface').trim() || '#ffffff';
-    const volumePoints = Array.from({ length: 21 }, (_item, index) => index * 50_000);
+    const volumePoints = Array.from({ length: 21 }, (_item, index) => Math.round((maxFiles * index) / 20));
     const chart = new Chart(canvas, {
       type: 'line',
       data: {
@@ -2858,7 +2862,7 @@ function MonthlyCostProjectionChart({
             borderColor: primary,
             backgroundColor: 'rgba(79, 70, 229, 0.12)',
             borderWidth: 1.5,
-            pointRadius: 2,
+              pointRadius: (context) => context.dataIndex === volumePoints.length - 1 ? 5 : 2,
             pointHoverRadius: 4,
             pointBackgroundColor: surface,
             pointBorderColor: primary,
@@ -2909,8 +2913,9 @@ function MonthlyCostProjectionChart({
               callback: (value) => {
                 const files = Number(value);
                 if (files === 0) return '0';
-                if (files === maxFiles) return '1M';
-                return `${files / 1000}k`;
+                if (files >= 1_000_000) return `${Number((files / 1_000_000).toFixed(1))}M`;
+                if (files >= 1000) return `${Number((files / 1000).toFixed(1))}k`;
+                return String(Math.round(files));
               },
             },
             title: {
@@ -2947,16 +2952,40 @@ function MonthlyCostProjectionChart({
     });
 
     return () => chart.destroy();
-  }, [averageCostPerDocument, formatReviewCurrency]);
+  }, [averageCostPerDocument, formatReviewCurrency, maxFiles]);
 
   return (
     <section className="review-chart-card" aria-label="Monthly files and cost projection">
       <div className="review-chart-heading">
         <div>
           <h3>Monthly Volume Projection</h3>
-          <p>Estimated cost from current average cost per file, scaled up to 1,000,000 files/month.</p>
+          <p>Estimated cost using the current average cost per processed file.</p>
         </div>
-        <strong>{formatReviewCurrency(projectedCost)}</strong>
+        <div className="review-projection-result">
+          <span>{formatNumber(monthlyVolume)} files/month</span>
+          <strong>{formatReviewCurrency(projectedCost)}</strong>
+        </div>
+      </div>
+      <div className="review-volume-control">
+        <label htmlFor="monthly-volume">Monthly volume</label>
+        <input
+          id="monthly-volume"
+          type="number"
+          min="0"
+          max="10000000"
+          step="1000"
+          value={monthlyVolume}
+          onChange={(event) => onMonthlyVolumeChange(Math.min(10_000_000, Math.max(0, Number(event.target.value) || 0)))}
+        />
+        <input
+          type="range"
+          aria-label="Monthly volume slider"
+          min="0"
+          max="1000000"
+          step="1000"
+          value={Math.min(monthlyVolume, 1_000_000)}
+          onChange={(event) => onMonthlyVolumeChange(Number(event.target.value))}
+        />
       </div>
       <div className="review-chart-wrap">
         <canvas ref={canvasRef} aria-label="Cost projection by monthly file volume" role="img" />
@@ -2977,6 +3006,15 @@ function BusinessReviewScreen({
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [monthlyVolume, setMonthlyVolume] = useState(() => {
+    const stored = Number(localStorage.getItem('xtract-business-review-monthly-volume'));
+    return Number.isFinite(stored) && stored >= 0 ? Math.min(10_000_000, stored) : 1_000_000;
+  });
+
+  function updateMonthlyVolume(value: number) {
+    setMonthlyVolume(value);
+    localStorage.setItem('xtract-business-review-monthly-volume', String(value));
+  }
 
   async function loadSummary() {
     setLoadingSummary(true);
@@ -3065,6 +3103,8 @@ function BusinessReviewScreen({
         <MonthlyCostProjectionChart
           averageCostPerDocument={averageCostPerDocument}
           formatReviewCurrency={formatReviewCurrency}
+          monthlyVolume={monthlyVolume}
+          onMonthlyVolumeChange={updateMonthlyVolume}
         />
       </section>
 
