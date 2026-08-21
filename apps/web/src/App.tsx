@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import Chart from 'chart.js/auto';
 import {
@@ -25,6 +25,7 @@ import {
   FileSearch,
   Files,
   Gauge,
+  GripVertical,
   HardDrive,
   ListOrdered,
   Radio,
@@ -45,6 +46,7 @@ import {
   Trash2,
   Upload,
   Download,
+  Eye,
   Database,
   FileText,
   FileImage,
@@ -236,6 +238,22 @@ function withUiIds(fields: ExtractionField[]) {
       key: column.key || `column_${columnIndex + 1}`,
     })),
   }));
+}
+
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (toIndex < 0 || toIndex >= items.length || fromIndex === toIndex) return items;
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
+}
+
+function moveArrayItemToSlot<T>(items: T[], fromIndex: number, slotIndex: number) {
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  const adjustedIndex = Math.max(0, Math.min(next.length, slotIndex > fromIndex ? slotIndex - 1 : slotIndex));
+  next.splice(adjustedIndex, 0, item);
+  return next;
 }
 
 function toKey(label: string) {
@@ -553,7 +571,7 @@ function coerceRowsToColumns(value: unknown, columns: TableColumn[]) {
 function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?: DocumentType) {
   if (!documentType) return values;
   const fieldsByKey = new Map(documentType.fields.map((field) => [field.key, field]));
-  return values.map((item) => {
+  const normalizedValues = values.map((item) => {
     const schemaField = fieldsByKey.get(item.key);
     if (item.type !== 'table' || !schemaField?.columns?.length) return item;
     return {
@@ -561,6 +579,12 @@ function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?:
       value: coerceRowsToColumns(item.value, schemaField.columns),
     };
   });
+  const schemaOrder = new Map(documentType.fields.map((field, index) => [field.key, index]));
+  const instanceValues = normalizedValues.filter((item) => !schemaOrder.has(item.key));
+  const schemaValues = normalizedValues
+    .filter((item) => schemaOrder.has(item.key))
+    .sort((left, right) => schemaOrder.get(left.key)! - schemaOrder.get(right.key)!);
+  return [...instanceValues, ...schemaValues];
 }
 
 function hasExtractedValue(item: ExtractedValue) {
@@ -4258,20 +4282,85 @@ function DocumentTypeManagement({
   const [sample, setSample] = useState<File | null>(null);
   const [fields, setFields] = useState<ExtractionField[]>([]);
   const [schemaEditing, setSchemaEditing] = useState(false);
+  const [schemaOrdering, setSchemaOrdering] = useState(false);
+  const [documentTypeTab, setDocumentTypeTab] = useState<'configuration' | 'files' | 'schema'>('schema');
+  const [draggedFieldIndex, setDraggedFieldIndex] = useState<number | null>(null);
+  const [draggedColumn, setDraggedColumn] = useState<{ fieldIndex: number; columnIndex: number } | null>(null);
+  const [fieldDropSlot, setFieldDropSlot] = useState<number | null>(null);
+  const [columnDropSlot, setColumnDropSlot] = useState<{ fieldIndex: number; slotIndex: number } | null>(null);
+  const draggedFieldIndexRef = useRef<number | null>(null);
+  const draggedColumnRef = useRef<{ fieldIndex: number; columnIndex: number } | null>(null);
+  const schemaOrderListRef = useRef<HTMLDivElement | null>(null);
+  const previousOrderPositionsRef = useRef<Map<string, DOMRect> | null>(null);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  const [isFileListExpanded, setIsFileListExpanded] = useState(false);
-  const [isSchemaExpanded, setIsSchemaExpanded] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
+  const [samplePreview, setSamplePreview] = useState<{ fileName: string; url: string } | null>(null);
+  const [loadingSamplePreview, setLoadingSamplePreview] = useState<string | null>(null);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
     setPrompt(activeType?.prompt || prompt);
     setSchemaEditing(false);
+    setSchemaOrdering(false);
+    setDocumentTypeTab('schema');
+    setDraggedFieldIndex(null);
+    setDraggedColumn(null);
+    setFieldDropSlot(null);
+    setColumnDropSlot(null);
+    draggedFieldIndexRef.current = null;
+    draggedColumnRef.current = null;
     setExpandedTables({});
-    setIsFileListExpanded(false);
-    setIsSchemaExpanded(true);
   }, [activeType?._id]);
+
+  useLayoutEffect(() => {
+    const previousPositions = previousOrderPositionsRef.current;
+    const list = schemaOrderListRef.current;
+    if (!previousPositions || !list) return;
+
+    list.querySelectorAll<HTMLElement>('[data-order-key]').forEach((element) => {
+      const key = element.dataset.orderKey;
+      const previous = key ? previousPositions.get(key) : undefined;
+      if (!previous) return;
+      const current = element.getBoundingClientRect();
+      const deltaY = previous.top - current.top;
+      if (Math.abs(deltaY) < 1) return;
+      element.animate(
+        [{ transform: `translateY(${deltaY}px)` }, { transform: 'translateY(0)' }],
+        { duration: 420, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+      );
+    });
+    previousOrderPositionsRef.current = null;
+  }, [fields]);
+
+  function captureOrderPositions() {
+    const positions = new Map<string, DOMRect>();
+    schemaOrderListRef.current?.querySelectorAll<HTMLElement>('[data-order-key]').forEach((element) => {
+      if (element.dataset.orderKey) positions.set(element.dataset.orderKey, element.getBoundingClientRect());
+    });
+    previousOrderPositionsRef.current = positions;
+  }
+
+  function closeSamplePreview() {
+    if (samplePreview?.url) URL.revokeObjectURL(samplePreview.url);
+    setSamplePreview(null);
+  }
+
+  useEffect(() => () => {
+    if (samplePreview?.url) URL.revokeObjectURL(samplePreview.url);
+  }, [samplePreview?.url]);
+
+  async function previewSample(fileName: string) {
+    if (!activeType || loadingSamplePreview) return;
+    setLoadingSamplePreview(fileName);
+    try {
+      const blob = await api.documentTypeSample(activeType._id, fileName);
+      closeSamplePreview();
+      setSamplePreview({ fileName: displaySampleName(fileName), url: URL.createObjectURL(blob) });
+    } finally {
+      setLoadingSamplePreview(null);
+    }
+  }
 
   function addSchemaField() {
     const nextNumber = fields.length + 1;
@@ -4372,7 +4461,41 @@ function DocumentTypeManagement({
               </span>
             </div>
 
+            <div className="document-type-tabs" role="tablist" aria-label="Document type sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'schema'}
+                className={documentTypeTab === 'schema' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('schema')}
+              >
+                <ScanText size={16} /> Schema
+                <span>{fields.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'files'}
+                className={documentTypeTab === 'files' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('files')}
+              >
+                <Files size={16} /> Training Files
+                <span>{activeType.sampleFiles.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'configuration'}
+                className={documentTypeTab === 'configuration' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('configuration')}
+              >
+                <BrainCircuit size={16} /> Configuration
+              </button>
+            </div>
+
             <div className="document-type-config-grid">
+            {documentTypeTab === 'configuration' && (
+            <>
             <section className="document-type-config-card model-card">
               <div className="document-type-card-heading">
                 <span><BrainCircuit size={18} /></span>
@@ -4516,7 +4639,10 @@ function DocumentTypeManagement({
               </label>
               </div>
             </section>
+            </>
+            )}
 
+            {documentTypeTab === 'files' && (
             <section className="document-type-config-card files-card">
               <div className="document-type-card-heading">
                 <span><Files size={18} /></span>
@@ -4545,43 +4671,50 @@ function DocumentTypeManagement({
               </div>
 
               <div className="sample-file-list">
-              <button
-                className="collapsible-section-heading"
-                type="button"
-                onClick={() => setIsFileListExpanded((current) => !current)}
-              >
+              <div className="collapsible-section-heading">
                 <span>
-                  {isFileListExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                   Uploaded Documents
                 </span>
                 <span>{activeType.sampleFiles.length} file{activeType.sampleFiles.length === 1 ? '' : 's'}</span>
-              </button>
-              {isFileListExpanded && (
-                activeType.sampleFiles.length ? (
+              </div>
+              {activeType.sampleFiles.length ? (
                   activeType.sampleFiles.map((fileName) => (
                     <div className="sample-file-row" key={fileName}>
                       <span title={fileName}>{displaySampleName(fileName)}</span>
-                      <button
-                        className="icon-button danger"
-                        title="Delete sample file"
-                        onClick={() =>
-                          onRun(async () => {
-                            await api.deleteSample(activeType._id, fileName);
-                            await onRefresh();
-                          }, 'Sample deleted')
-                        }
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="sample-file-actions">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="View sample file"
+                          aria-label={`View ${displaySampleName(fileName)}`}
+                          disabled={loadingSamplePreview === fileName}
+                          onClick={() => onRun(() => previewSample(fileName), 'Sample opened')}
+                        >
+                          {loadingSamplePreview === fileName ? <Loader2 size={15} className="spin" /> : <Eye size={15} />}
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          title="Delete sample file"
+                          onClick={() =>
+                            onRun(async () => {
+                              await api.deleteSample(activeType._id, fileName);
+                              await onRefresh();
+                            }, 'Sample deleted')
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (
                   <div className="empty-table">No documents uploaded for this type.</div>
-                )
               )}
               </div>
             </section>
+            )}
 
+            {documentTypeTab === 'schema' && (
             <section className="document-type-config-card schema-card">
               <div className="document-type-card-heading">
                 <span><ScanText size={18} /></span>
@@ -4589,6 +4722,67 @@ function DocumentTypeManagement({
                   <strong>Extraction Schema</strong>
                   <small>Define the fields and tables extracted from this document type.</small>
                 </div>
+                {!!fields.length && (
+                  !schemaEditing && !schemaOrdering ? (
+                    <div className="schema-actions">
+                      <button className="secondary-button" onClick={() => setSchemaOrdering(true)}>
+                        <ListOrdered size={16} />
+                        Arrange
+                      </button>
+                      <button className="secondary-button" onClick={() => setSchemaEditing(true)}>
+                        <Pencil size={16} />
+                        Edit Schema
+                      </button>
+                    </div>
+                  ) : schemaOrdering ? (
+                    <div className="schema-actions">
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          setFields(withUiIds(activeType.fields));
+                          setSchemaOrdering(false);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="primary-button"
+                        onClick={() =>
+                          onRun(async () => {
+                            const updated = await api.finalizeTemplate(activeType._id, fields);
+                            onDocumentTypeSaved(updated);
+                            setFields(withUiIds(updated.fields));
+                            setSchemaOrdering(false);
+                            await onRefresh();
+                          }, 'Schema order saved')
+                        }
+                      >
+                        <Save size={16} />
+                        Save Order
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="schema-actions">
+                      <button className="secondary-button" onClick={addSchemaField}>
+                        <Plus size={16} />
+                        Add Field
+                      </button>
+                      <button
+                        className="primary-button"
+                        onClick={() =>
+                          onRun(async () => {
+                            await api.finalizeTemplate(activeType._id, fields);
+                            setSchemaEditing(false);
+                            await onRefresh();
+                          }, 'Schema saved')
+                        }
+                      >
+                        <Save size={16} />
+                        Save Schema
+                      </button>
+                    </div>
+                  )
+                )}
               </div>
             {!fields.length && (
               <>
@@ -4617,48 +4811,145 @@ function DocumentTypeManagement({
 
             {!!fields.length && (
               <div className="collapsible-section schema-card-content">
-                <div className="schema-toolbar">
-                  <button
-                    className="collapsible-section-title"
-                    type="button"
-                    onClick={() => setIsSchemaExpanded((current) => !current)}
-                  >
-                    {isSchemaExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                    <span>Extraction Schema</span>
-                  </button>
-                  {isSchemaExpanded && (
-                    !schemaEditing ? (
-                      <button className="secondary-button" onClick={() => setSchemaEditing(true)}>
-                        <Pencil size={16} />
-                        Edit Schema
-                      </button>
-                    ) : (
-                      <div className="schema-actions">
-                        <button className="secondary-button" onClick={addSchemaField}>
-                          <Plus size={16} />
-                          Add Field
-                        </button>
-                        <button
-                          className="primary-button"
-                          onClick={() =>
-                            onRun(async () => {
-                              await api.finalizeTemplate(activeType._id, fields);
-                              setSchemaEditing(false);
-                              await onRefresh();
-                            }, 'Schema saved')
-                          }
-                        >
-                          <Save size={16} />
-                          Save Schema
-                        </button>
-                      </div>
-                    )
-                  )}
-                </div>
-
-                {isSchemaExpanded && (
                   <div className="fields-table">
-                    {fields.map((field, index) => (
+                    {schemaOrdering ? (
+                      <div
+                        className="schema-order-list"
+                        ref={schemaOrderListRef}
+                        onDragOver={(event) => {
+                          if (draggedFieldIndexRef.current !== null && !draggedColumnRef.current) event.preventDefault();
+                        }}
+                        onDrop={(event) => {
+                          const sourceIndex = draggedFieldIndexRef.current;
+                          if (sourceIndex === null || fieldDropSlot === null || draggedColumnRef.current) return;
+                          event.preventDefault();
+                          captureOrderPositions();
+                          setFields((current) => moveArrayItemToSlot(current, sourceIndex, fieldDropSlot));
+                          draggedFieldIndexRef.current = null;
+                          setDraggedFieldIndex(null);
+                          setFieldDropSlot(null);
+                        }}
+                      >
+                        {fields.map((field, fieldIndex) => (
+                          <div
+                            className={`schema-order-field${draggedFieldIndex === fieldIndex ? ' dragging' : ''}${fieldDropSlot === fieldIndex && fieldDropSlot !== draggedFieldIndex && fieldDropSlot !== (draggedFieldIndex ?? -2) + 1 ? ' drop-before' : ''}${fieldIndex === fields.length - 1 && fieldDropSlot === fields.length && fieldDropSlot !== (draggedFieldIndex ?? -2) + 1 ? ' drop-after' : ''}`}
+                            key={field.uiId || field.key}
+                            data-order-key={`field:${field.uiId || field.key}`}
+                            draggable
+                            onDragStart={(event) => {
+                              draggedFieldIndexRef.current = fieldIndex;
+                              setDraggedFieldIndex(fieldIndex);
+                              setFieldDropSlot(null);
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', `field:${fieldIndex}`);
+                            }}
+                            onDragOver={(event) => {
+                              const sourceIndex = draggedFieldIndexRef.current;
+                              if (sourceIndex === null || draggedColumnRef.current) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                              const bounds = event.currentTarget.getBoundingClientRect();
+                              setFieldDropSlot(event.clientY < bounds.top + bounds.height / 2 ? fieldIndex : fieldIndex + 1);
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const sourceIndex = draggedFieldIndexRef.current;
+                              if (sourceIndex !== null && fieldDropSlot !== null) {
+                                captureOrderPositions();
+                                setFields((current) => moveArrayItemToSlot(current, sourceIndex, fieldDropSlot));
+                              }
+                              draggedFieldIndexRef.current = null;
+                              setDraggedFieldIndex(null);
+                              setFieldDropSlot(null);
+                            }}
+                            onDragEnd={() => {
+                              draggedFieldIndexRef.current = null;
+                              setDraggedFieldIndex(null);
+                              setFieldDropSlot(null);
+                            }}
+                          >
+                            <div className="schema-order-field-name">
+                              <GripVertical size={18} aria-hidden="true" />
+                              <strong>{field.label}</strong>
+                              {field.type === 'table' && <span>Table</span>}
+                            </div>
+                            {field.type === 'table' && Boolean(field.columns?.length) && (
+                              <div
+                                className="schema-order-columns"
+                                onDragOver={(event) => {
+                                  if (draggedColumnRef.current?.fieldIndex === fieldIndex) {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                  }
+                                }}
+                                onDrop={(event) => {
+                                  const source = draggedColumnRef.current;
+                                  if (!source || source.fieldIndex !== fieldIndex || columnDropSlot?.fieldIndex !== fieldIndex) return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  captureOrderPositions();
+                                  setFields((current) => current.map((currentField, index) => index === fieldIndex
+                                    ? { ...currentField, columns: moveArrayItemToSlot(currentField.columns || [], source.columnIndex, columnDropSlot.slotIndex) }
+                                    : currentField));
+                                  draggedColumnRef.current = null;
+                                  setDraggedColumn(null);
+                                  setColumnDropSlot(null);
+                                }}
+                              >
+                                {(field.columns || []).map((column, columnIndex) => (
+                                  <div
+                                    className={`schema-order-column${draggedColumn?.fieldIndex === fieldIndex && draggedColumn.columnIndex === columnIndex ? ' dragging' : ''}${columnDropSlot?.fieldIndex === fieldIndex && columnDropSlot.slotIndex === columnIndex && columnDropSlot.slotIndex !== draggedColumn?.columnIndex && columnDropSlot.slotIndex !== (draggedColumn?.columnIndex ?? -2) + 1 ? ' drop-before' : ''}${columnIndex === (field.columns?.length || 0) - 1 && columnDropSlot?.fieldIndex === fieldIndex && columnDropSlot.slotIndex === (field.columns?.length || 0) && columnDropSlot.slotIndex !== (draggedColumn?.columnIndex ?? -2) + 1 ? ' drop-after' : ''}`}
+                                    key={`${field.uiId || field.key}-${column.key}-${columnIndex}`}
+                                    data-order-key={`column:${field.uiId || field.key}:${column.key}`}
+                                    draggable
+                                    onDragStart={(event) => {
+                                      event.stopPropagation();
+                                      draggedColumnRef.current = { fieldIndex, columnIndex };
+                                      setDraggedColumn({ fieldIndex, columnIndex });
+                                      setColumnDropSlot(null);
+                                      event.dataTransfer.effectAllowed = 'move';
+                                      event.dataTransfer.setData('text/plain', `column:${fieldIndex}:${columnIndex}`);
+                                    }}
+                                    onDragOver={(event) => {
+                                      const source = draggedColumnRef.current;
+                                      if (!source || source.fieldIndex !== fieldIndex) return;
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      event.dataTransfer.dropEffect = 'move';
+                                      const bounds = event.currentTarget.getBoundingClientRect();
+                                      setColumnDropSlot({ fieldIndex, slotIndex: event.clientY < bounds.top + bounds.height / 2 ? columnIndex : columnIndex + 1 });
+                                    }}
+                                    onDrop={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      const source = draggedColumnRef.current;
+                                      if (source?.fieldIndex === fieldIndex && columnDropSlot?.fieldIndex === fieldIndex) {
+                                        captureOrderPositions();
+                                        setFields((current) => current.map((currentField, index) => index === fieldIndex
+                                          ? { ...currentField, columns: moveArrayItemToSlot(currentField.columns || [], source.columnIndex, columnDropSlot.slotIndex) }
+                                          : currentField));
+                                      }
+                                      draggedColumnRef.current = null;
+                                      setDraggedColumn(null);
+                                      setColumnDropSlot(null);
+                                    }}
+                                    onDragEnd={(event) => {
+                                      event.stopPropagation();
+                                      draggedColumnRef.current = null;
+                                      setDraggedColumn(null);
+                                      setColumnDropSlot(null);
+                                    }}
+                                  >
+                                    <GripVertical size={16} aria-hidden="true" />
+                                    <span>{column.label}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : fields.map((field, index) => (
                 <div className="schema-field" key={field.uiId || `${field.key}-${index}`}>
                   <div className={schemaEditing ? 'field-row editable' : 'field-row readonly'}>
                     <input
@@ -4704,13 +4995,16 @@ function DocumentTypeManagement({
                       ))}
                     </select>
                     {schemaEditing && (
-                      <button
-                        className="icon-button danger"
-                        title="Remove field"
-                        onClick={() => removeSchemaField(index)}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="schema-row-actions">
+                        <button
+                          className="icon-button danger"
+                          type="button"
+                          title="Remove field"
+                          onClick={() => removeSchemaField(index)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className={schemaEditing ? 'field-description' : 'field-description readonly'}>
@@ -4808,19 +5102,22 @@ function DocumentTypeManagement({
                                 ))}
                               </select>
                               {schemaEditing && (
-                                <button
-                                  className="icon-button danger"
-                                  title="Remove table field"
-                                  onClick={() => {
-                                    const next = [...fields];
-                                    const columns = [...(next[index].columns || [])];
-                                    columns.splice(columnIndex, 1);
-                                    next[index] = { ...field, columns };
-                                    setFields(next);
-                                  }}
-                                >
-                                  <Trash2 size={15} />
-                                </button>
+                                <div className="schema-row-actions">
+                                  <button
+                                    className="icon-button danger"
+                                    type="button"
+                                    title="Remove table field"
+                                    onClick={() => {
+                                      const next = [...fields];
+                                      const columns = [...(next[index].columns || [])];
+                                      columns.splice(columnIndex, 1);
+                                      next[index] = { ...field, columns };
+                                      setFields(next);
+                                    }}
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                </div>
                               )}
                             </div>
                             <div className={schemaEditing ? 'column-description' : 'column-description readonly'}>
@@ -4845,10 +5142,10 @@ function DocumentTypeManagement({
                 </div>
                     ))}
                   </div>
-                )}
               </div>
             )}
             </section>
+            )}
             </div>
           </>
         ) : (
@@ -4868,6 +5165,22 @@ function DocumentTypeManagement({
           }}
           onRun={onRun}
         />
+      )}
+      {samplePreview && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeSamplePreview()}>
+          <section className="modal sample-preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${samplePreview.fileName}`}>
+            <div className="sample-preview-heading">
+              <div>
+                <span className="section-kicker">Training file</span>
+                <h3>{samplePreview.fileName}</h3>
+              </div>
+              <button className="icon-button" type="button" title="Close preview" aria-label="Close preview" onClick={closeSamplePreview}>
+                <X size={18} />
+              </button>
+            </div>
+            <iframe src={samplePreview.url} title={samplePreview.fileName} />
+          </section>
+        </div>
       )}
       {deleteTypeTarget && (
         <ConfirmDialog
@@ -6329,7 +6642,7 @@ function ValidationScreen({
     };
     setAddingEntity(true);
     try {
-      await persistExtractedData([...values, entity]);
+      await persistExtractedData([entity, ...values]);
       setShowAddEntityDialog(false);
       setNewEntityLabel('');
       startValueEdit(entity);

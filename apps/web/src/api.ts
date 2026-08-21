@@ -250,6 +250,8 @@ export const api = {
   },
   deleteSample: (id: string, fileName: string) =>
     request<DocumentType>(`/document-types/${id}/samples/${encodeURIComponent(fileName)}`, { method: 'DELETE' }),
+  documentTypeSample: (id: string, fileName: string) =>
+    requestFile(`/document-types/${id}/samples/${encodeURIComponent(fileName)}`),
   trainClassifier: () => request<DocumentType[]>('/document-types/train-classifier', { method: 'POST' }),
   resetClassifierTraining: () => request<DocumentType[]>('/document-types/reset-classifier-training', { method: 'POST' }),
   updateClassificationInclusion: (id: string, includeInClassification: boolean) =>

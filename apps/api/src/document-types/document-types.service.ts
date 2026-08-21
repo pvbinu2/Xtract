@@ -154,6 +154,17 @@ export class DocumentTypesService {
     return docType.save();
   }
 
+  async getSample(id: string, fileName: string) {
+    const docType = await this.model.findById(id).lean();
+    if (!docType) throw new NotFoundException('Document type not found');
+    if (!docType.sampleFiles.includes(fileName)) throw new NotFoundException('Sample file not found');
+    return {
+      buffer: await this.blobStorage.downloadBuffer(TRAIN_CONTAINER, fileName),
+      contentType: 'application/pdf',
+      fileName: fileName.split('/').at(-1) || 'sample.pdf',
+    };
+  }
+
   async trainClassifier(trainedBy: string) {
     if (!this.hasQueueConnection()) {
       throw new BadRequestException('Classifier training requires Azure queue storage and the function worker.');
