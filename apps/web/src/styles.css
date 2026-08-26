@@ -1740,6 +1740,71 @@ nav {
   background: var(--surface-strong);
 }
 
+.password-strength {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+}
+
+.password-strength-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.password-strength-heading strong {
+  color: #dc2626;
+}
+
+.password-strength-bars {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+
+.password-strength-bars span {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.password-strength-bars span.active {
+  background: #dc2626;
+}
+
+.password-strength.strength-2 .password-strength-heading strong {
+  color: #d97706;
+}
+
+.password-strength.strength-2 .password-strength-bars span.active {
+  background: #d97706;
+}
+
+.password-strength.strength-3 .password-strength-heading strong {
+  color: #2563eb;
+}
+
+.password-strength.strength-3 .password-strength-bars span.active {
+  background: #2563eb;
+}
+
+.password-strength.strength-4 .password-strength-heading strong {
+  color: #16a34a;
+}
+
+.password-strength.strength-4 .password-strength-bars span.active {
+  background: #16a34a;
+}
+
+.password-strength small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .password-reset-form .configuration-actions {
   margin-top: 3px;
   border-top: 1px solid var(--border);

@@ -1956,6 +1956,34 @@ function LoginScreen({
   );
 }
 
+function PasswordStrength({ password }: { password: string }) {
+  if (!password) return null;
+
+  const checks = [
+    password.length >= 8,
+    password.length >= 12,
+    /[a-z]/.test(password) && /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ];
+  const score = Math.min(4, checks.filter(Boolean).length);
+  const labels = ['Weak', 'Weak', 'Fair', 'Good', 'Strong'];
+  const label = labels[score];
+
+  return (
+    <div className={`password-strength strength-${score}`} role="meter" aria-label="Password strength" aria-valuemin={0} aria-valuemax={4} aria-valuenow={score} aria-valuetext={label}>
+      <div className="password-strength-heading">
+        <span>Password strength</span>
+        <strong>{label}</strong>
+      </div>
+      <div className="password-strength-bars" aria-hidden="true">
+        {[1, 2, 3, 4].map((level) => <span key={level} className={score >= level ? 'active' : ''} />)}
+      </div>
+      <small>{password.length < 8 ? `${8 - password.length} more character${8 - password.length === 1 ? '' : 's'} required` : 'Use 12+ characters with uppercase, lowercase, numbers, and symbols.'}</small>
+    </div>
+  );
+}
+
 function PasswordResetScreen({
   currentUser,
   onUserChange,
@@ -2049,6 +2077,7 @@ function PasswordResetScreen({
           New password
           <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
         </label>
+        <PasswordStrength password={newPassword} />
         <label className="full-label">
           Confirm new password
           <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
@@ -2420,6 +2449,7 @@ function UserManagementScreen({
                 Initial password
                 <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
               </label>
+              <PasswordStrength password={newPassword} />
               <label>
                 Role
                 <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
@@ -2447,6 +2477,7 @@ function UserManagementScreen({
                 New password for {resetTarget.username}
                 <input type="password" autoComplete="new-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
               </label>
+              <PasswordStrength password={resetPassword} />
               <label>
                 Confirm new password
                 <input
@@ -4766,6 +4797,15 @@ function DocumentTypeManagement({
                       <button className="secondary-button" onClick={addSchemaField}>
                         <Plus size={16} />
                         Add Field
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          setFields(withUiIds(activeType.fields));
+                          setSchemaEditing(false);
+                        }}
+                      >
+                        Cancel Edit
                       </button>
                       <button
                         className="primary-button"
