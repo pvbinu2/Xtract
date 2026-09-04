@@ -8,6 +8,7 @@
     "test": "node --test src/*.test.js"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
     "@azure/storage-blob": "^12.31.0",
     "mongodb": "^6.8.0",
     "pdfjs-dist": "^4.10.38"

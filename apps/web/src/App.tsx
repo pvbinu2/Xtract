@@ -46,7 +46,9 @@ import {
   Trash2,
   Upload,
   Download,
+  Eraser,
   Eye,
+  EyeOff,
   Database,
   FileText,
   FileImage,
@@ -4324,6 +4326,7 @@ function DocumentTypeManagement({
   const schemaOrderListRef = useRef<HTMLDivElement | null>(null);
   const previousOrderPositionsRef = useRef<Map<string, DOMRect> | null>(null);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [visibleSchemaDescriptions, setVisibleSchemaDescriptions] = useState<Record<string, boolean>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
   const [samplePreview, setSamplePreview] = useState<{ fileName: string; url: string } | null>(null);
@@ -4342,6 +4345,7 @@ function DocumentTypeManagement({
     draggedFieldIndexRef.current = null;
     draggedColumnRef.current = null;
     setExpandedTables({});
+    setVisibleSchemaDescriptions({});
   }, [activeType?._id]);
 
   useLayoutEffect(() => {
@@ -4756,6 +4760,22 @@ function DocumentTypeManagement({
                 {!!fields.length && (
                   !schemaEditing && !schemaOrdering ? (
                     <div className="schema-actions">
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          const showAll = !fields.every((field) => visibleSchemaDescriptions[field.uiId || field.key]);
+                          setVisibleSchemaDescriptions(showAll
+                            ? Object.fromEntries(fields.map((field) => [field.uiId || field.key, true]))
+                            : {});
+                        }}
+                      >
+                        {fields.every((field) => visibleSchemaDescriptions[field.uiId || field.key])
+                          ? <EyeOff size={16} />
+                          : <Eye size={16} />}
+                        {fields.every((field) => visibleSchemaDescriptions[field.uiId || field.key])
+                          ? 'Hide All Descriptions'
+                          : 'Show All Descriptions'}
+                      </button>
                       <button className="secondary-button" onClick={() => setSchemaOrdering(true)}>
                         <ListOrdered size={16} />
                         Arrange
@@ -4988,6 +5008,49 @@ function DocumentTypeManagement({
                             )}
                           </div>
                         ))}
+                      </div>
+                    ) : !schemaEditing ? (
+                      <div className="schema-summary-list">
+                        {fields.map((field) => {
+                          const fieldId = field.uiId || field.key;
+                          const descriptionVisible = Boolean(visibleSchemaDescriptions[fieldId]);
+                          return (
+                            <div className="schema-summary-field" key={fieldId}>
+                              <div className="schema-summary-field-heading">
+                                <strong>{field.label}</strong>
+                                {field.type === 'table' && <span>Table</span>}
+                                <button
+                                  type="button"
+                                  className="icon-button"
+                                  title={`${descriptionVisible ? 'Hide' : 'Show'} description for ${field.label}`}
+                                  aria-label={`${descriptionVisible ? 'Hide' : 'Show'} description for ${field.label}`}
+                                  aria-expanded={descriptionVisible}
+                                  onClick={() => setVisibleSchemaDescriptions((current) => ({
+                                    ...current,
+                                    [fieldId]: !current[fieldId],
+                                  }))}
+                                >
+                                  {descriptionVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                              </div>
+                              {descriptionVisible && (
+                                <div className="schema-summary-description">
+                                  <p>{field.description || 'No description provided.'}</p>
+                                </div>
+                              )}
+                              {field.type === 'table' && Boolean(field.columns?.length) && (
+                                <div className="schema-summary-columns">
+                                  {(field.columns || []).map((column, columnIndex) => (
+                                    <div key={`${fieldId}-${column.key}-${columnIndex}`}>
+                                      <strong>{column.label}</strong>
+                                      {descriptionVisible && <p>{column.description || 'No description provided.'}</p>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : fields.map((field, index) => (
                 <div className="schema-field" key={field.uiId || `${field.key}-${index}`}>
@@ -6508,6 +6571,10 @@ function ValidationScreen({
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
+  const [tableEditRows, setTableEditRows] = useState<Record<string, unknown>[]>([]);
+  const [tableEditBoundingBoxes, setTableEditBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
+  const [tableEditCellReferences, setTableEditCellReferences] = useState<NonNullable<ExtractedValue['cellReferences']>>([]);
+  const [tableSelectionTarget, setTableSelectionTarget] = useState<{ rowIndex: number; column: string } | null>(null);
   const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
   const [editingValueDraft, setEditingValueDraft] = useState('');
   const [editingValueBoundingBoxes, setEditingValueBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
@@ -6561,22 +6628,28 @@ function ValidationScreen({
   }, [values]);
 
   const pdfHighlights = useMemo(() => {
-    return values.flatMap((item) => {
+    return values.flatMap((item, index) => {
       const styles = fieldStyles[item.key];
-      return (item.boundingBoxes || []).map((box) => ({
+      const boundingBoxes = tableEditIndex === index ? tableEditBoundingBoxes : item.boundingBoxes || [];
+      return boundingBoxes.map((box) => ({
         ...box,
         fieldKey: item.key,
         color: styles?.border || 'rgba(59, 130, 246, 0.8)',
         activeFill: styles?.activeFill || 'rgba(59, 130, 246, 0.25)',
       }));
     });
-  }, [fieldStyles, values]);
+  }, [fieldStyles, tableEditBoundingBoxes, tableEditIndex, values]);
 
   useEffect(() => {
     if (!documentId) return;
     let cancelled = false;
     setDocument(null);
     setValues([]);
+    setTableEditIndex(null);
+    setTableEditRows([]);
+    setTableEditBoundingBoxes([]);
+    setTableEditCellReferences([]);
+    setTableSelectionTarget(null);
     setActiveFieldKey(null);
     setEditingValueKey(null);
     setEditingValueDraft('');
@@ -6615,6 +6688,11 @@ function ValidationScreen({
   }
 
   function startValueEdit(item: ExtractedValue) {
+    setTableEditIndex(null);
+    setTableEditRows([]);
+    setTableEditBoundingBoxes([]);
+    setTableEditCellReferences([]);
+    setTableSelectionTarget(null);
     setCopyFromDocumentKey(null);
     setActiveFieldKey(item.key);
     setEditingValueKey(item.key);
@@ -6623,9 +6701,51 @@ function ValidationScreen({
     setEditingValueCellReferences(item.cellReferences || []);
   }
 
+  function startTableEdit(index: number, item: ExtractedValue) {
+    setEditingValueKey(null);
+    setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
+    setActiveFieldKey(item.key);
+    setTableEditIndex(index);
+    setTableEditRows(asTableRows(item.value));
+    setTableEditBoundingBoxes(item.boundingBoxes || []);
+    setTableEditCellReferences(item.cellReferences || []);
+    setTableSelectionTarget(null);
+    setCopyFromDocumentKey(null);
+  }
+
+  function cancelTableEdit() {
+    setTableEditIndex(null);
+    setTableEditRows([]);
+    setTableEditBoundingBoxes([]);
+    setTableEditCellReferences([]);
+    setTableSelectionTarget(null);
+    setCopyFromDocumentKey(null);
+  }
+
+  function updateSelectedTableCell(text: string, append: boolean) {
+    if (!tableSelectionTarget) return;
+    setTableEditRows((current) => current.map((row, rowIndex) => rowIndex === tableSelectionTarget.rowIndex
+      ? {
+          ...row,
+          [tableSelectionTarget.column]: append
+            ? [coerceValue(row[tableSelectionTarget.column]).trim(), text].filter(Boolean).join(' ')
+            : text,
+        }
+      : row));
+  }
+
   function cancelValueEdit() {
     setCopyFromDocumentKey(null);
     setEditingValueKey(null);
+    setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
+  }
+
+  function clearValueEdit() {
+    setCopyFromDocumentKey(null);
     setEditingValueDraft('');
     setEditingValueBoundingBoxes([]);
     setEditingValueCellReferences([]);
@@ -6661,7 +6781,13 @@ function ValidationScreen({
 
   async function updateTableValue(index: number, value: Record<string, unknown>[]) {
     const next = [...values];
-    next[index] = { ...next[index], value, confidence: 1 };
+    next[index] = {
+      ...next[index],
+      value,
+      confidence: 1,
+      boundingBoxes: tableEditBoundingBoxes,
+      cellReferences: tableEditCellReferences,
+    };
     await persistExtractedData(next);
   }
 
@@ -6804,15 +6930,28 @@ function ValidationScreen({
         {document.processingMode === 'spreadsheet' || Boolean(document.workbookArtifactBlobName) ? (
           <SpreadsheetViewer
             documentId={document._id}
-            activeReferences={values.find((item) => item.key === activeFieldKey)?.cellReferences || []}
+            activeReferences={tableEditIndex !== null && values[tableEditIndex]?.key === activeFieldKey
+              ? tableEditCellReferences
+              : values.find((item) => item.key === activeFieldKey)?.cellReferences || []}
             selectionMode={copyFromDocumentKey !== null}
             onReplaceSelection={({ text, reference }) => {
-              setEditingValueDraft(text);
-              setEditingValueCellReferences([reference]);
+              if (tableSelectionTarget) {
+                updateSelectedTableCell(text, false);
+                setTableEditCellReferences((current) => [...current, reference].filter((item, index, references) =>
+                  references.findIndex((candidate) => candidate.sheetIndex === item.sheetIndex && candidate.startCell === item.startCell && candidate.endCell === item.endCell) === index));
+              } else {
+                setEditingValueDraft(text);
+                setEditingValueCellReferences([reference]);
+              }
             }}
             onAppendSelection={({ text, reference }) => {
-              setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
-              setEditingValueCellReferences((current) => [...current, reference]);
+              if (tableSelectionTarget) {
+                updateSelectedTableCell(text, true);
+                setTableEditCellReferences((current) => [...current, reference]);
+              } else {
+                setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+                setEditingValueCellReferences((current) => [...current, reference]);
+              }
             }}
             onNotify={onNotify}
           />
@@ -6823,15 +6962,26 @@ function ValidationScreen({
           activeFieldKey={activeFieldKey}
           selectionMode={copyFromDocumentKey !== null}
           onReplaceSelection={({ text, boundingBoxes }) => {
-            setEditingValueDraft(text);
-            setEditingValueBoundingBoxes(boundingBoxes);
+            if (tableSelectionTarget) {
+              updateSelectedTableCell(text, false);
+              setTableEditBoundingBoxes((current) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
+                boxes.findIndex((candidate) => candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
+                  candidate.width === box.width && candidate.height === box.height) === index
+              )));
+            } else {
+              setEditingValueDraft(text);
+              setEditingValueBoundingBoxes(boundingBoxes);
+            }
           }}
           onAppendSelection={({ text, boundingBoxes }) => {
-            setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
-            setEditingValueBoundingBoxes((current) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
+            if (tableSelectionTarget) updateSelectedTableCell(text, true);
+            else setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+            const updateBoxes = (current: NonNullable<ExtractedValue['boundingBoxes']>) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
               boxes.findIndex((candidate) => candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
                 candidate.width === box.width && candidate.height === box.height) === index
-            )));
+            ));
+            if (tableSelectionTarget) setTableEditBoundingBoxes(updateBoxes);
+            else setEditingValueBoundingBoxes(updateBoxes);
           }}
           onNotify={onNotify}
         />
@@ -6977,7 +7127,42 @@ function ValidationScreen({
                       </span>
                     )}
                   </div>
-                  <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
+                  {tableEditIndex === index ? (
+                    <InlineTableEditor
+                      rows={tableEditRows}
+                      selectionTarget={tableSelectionTarget}
+                      selectingFromDocument={copyFromDocumentKey === item.key}
+                      saving={isSavingValue}
+                      onRowsChange={setTableEditRows}
+                      onSelectCell={(target) => {
+                        if (!document.spatialTextArtifactBlobName && !document.workbookArtifactBlobName) {
+                          onNotify('Selectable document content is unavailable. Reprocess this document to generate it.', 'info');
+                          return;
+                        }
+                        setTableSelectionTarget(target);
+                        setCopyFromDocumentKey(item.key);
+                      }}
+                      onStopSelecting={() => {
+                        setTableSelectionTarget(null);
+                        setCopyFromDocumentKey(null);
+                      }}
+                      onCancel={cancelTableEdit}
+                      onSave={async () => {
+                        setSavingValueKey(item.key);
+                        try {
+                          await updateTableValue(index, tableEditRows);
+                          cancelTableEdit();
+                          onNotify(`${item.label} saved`, 'success');
+                        } catch (error) {
+                          onNotify(error instanceof Error ? error.message : 'Failed to save table', 'error');
+                        } finally {
+                          setSavingValueKey(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => startTableEdit(index, item)} />
+                  )}
                 </div>
               ) : (
                 <div
@@ -7033,6 +7218,16 @@ function ValidationScreen({
                             }}
                           >
                             <TextSelect size={15} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Clear value and bounding box"
+                            aria-label={`Clear ${item.label} value and bounding box`}
+                            disabled={isSavingValue}
+                            onClick={clearValueEdit}
+                          >
+                            <Eraser size={15} />
                           </button>
                           <button
                             className="icon-button"
@@ -7170,22 +7365,6 @@ function ValidationScreen({
             </div>
           </div>
       </section>
-      {tableEditIndex !== null && values[tableEditIndex] && (
-        <TableEditDialog
-          item={values[tableEditIndex]}
-          onClose={() => setTableEditIndex(null)}
-          onSave={async (rows) => {
-            try {
-              const label = values[tableEditIndex].label;
-              await updateTableValue(tableEditIndex, rows);
-              setTableEditIndex(null);
-              onNotify(`${label} saved`, 'success');
-            } catch (error) {
-              onNotify(error instanceof Error ? error.message : 'Failed to save table', 'error');
-            }
-          }}
-        />
-      )}
       {pendingValidationAction && document && (
         <ConfirmDialog
           title={pendingValidationAction === 'validate' ? 'Validate Document' : 'Reject Document'}
@@ -7880,57 +8059,60 @@ function TableValuePreview({ item, canEdit, onEdit }: { item: ExtractedValue; ca
   );
 }
 
-function TableEditDialog({
-  item,
-  onClose,
+function InlineTableEditor({
+  rows,
+  selectionTarget,
+  selectingFromDocument,
+  saving,
+  onRowsChange,
+  onSelectCell,
+  onStopSelecting,
+  onCancel,
   onSave,
 }: {
-  item: ExtractedValue;
-  onClose: () => void;
-  onSave: (rows: Record<string, unknown>[]) => void;
+  rows: Record<string, unknown>[];
+  selectionTarget: { rowIndex: number; column: string } | null;
+  selectingFromDocument: boolean;
+  saving: boolean;
+  onRowsChange: (rows: Record<string, unknown>[]) => void;
+  onSelectCell: (target: { rowIndex: number; column: string }) => void;
+  onStopSelecting: () => void;
+  onCancel: () => void;
+  onSave: () => void;
 }) {
-  const [rows, setRows] = useState<Record<string, unknown>[]>(() => asTableRows(item.value));
   const columns = tableColumns(rows);
   const editableColumns = columns.length ? columns : ['value'];
 
   function updateCell(rowIndex: number, column: string, value: string) {
     const next = [...rows];
     next[rowIndex] = { ...next[rowIndex], [column]: value };
-    setRows(next);
+    onRowsChange(next);
   }
 
   function addRow() {
     const nextRow = Object.fromEntries(editableColumns.map((column) => [column, '']));
-    setRows([...rows, nextRow]);
+    onRowsChange([...rows, nextRow]);
   }
 
   function addColumn() {
     const label = `column_${editableColumns.length + 1}`;
-    setRows(rows.length ? rows.map((row) => ({ ...row, [label]: '' })) : [{ [label]: '' }]);
+    onRowsChange(rows.length ? rows.map((row) => ({ ...row, [label]: '' })) : [{ [label]: '' }]);
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="modal">
-        <div className="modal-heading">
+    <div className="inline-table-editor">
+        <div className="inline-table-editor-toolbar">
+          <span>Select a cell, then choose text from the source document.</span>
           <div>
-            <h2>Edit {item.label}</h2>
-            <p>Update extracted table cells before validation.</p>
-          </div>
-          <button className="icon-button" title="Close" onClick={onClose}>
-            <X size={17} />
-          </button>
-        </div>
-
-        <div className="modal-actions">
-          <button className="secondary-button" onClick={addRow}>
+          <button className="secondary-button compact" type="button" onClick={addRow} disabled={saving}>
             <PlusCircle size={16} />
             Row
           </button>
-          <button className="secondary-button" onClick={addColumn}>
+          <button className="secondary-button compact" type="button" onClick={addColumn} disabled={saving}>
             <PlusCircle size={16} />
             Column
           </button>
+          </div>
         </div>
 
         <div className="editable-table">
@@ -7947,15 +8129,37 @@ function TableEditDialog({
               {rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {editableColumns.map((column) => (
-                    <td key={column}>
-                      <input value={coerceValue(row[column] ?? '')} onChange={(event) => updateCell(rowIndex, column, event.target.value)} />
+                    <td key={column} className={selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column ? 'source-selection-target' : undefined}>
+                      <div className="editable-table-cell">
+                        <input
+                          aria-label={`Row ${rowIndex + 1}, ${column}`}
+                          value={coerceValue(row[column] ?? '')}
+                          disabled={saving}
+                          onFocus={() => onSelectCell({ rowIndex, column })}
+                          onChange={(event) => updateCell(rowIndex, column, event.target.value)}
+                        />
+                        <button
+                          className={`icon-button${selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column && selectingFromDocument ? ' active' : ''}`}
+                          type="button"
+                          title="Select value from source document"
+                          aria-label={`Select row ${rowIndex + 1}, ${column} from source document`}
+                          aria-pressed={selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column && selectingFromDocument}
+                          disabled={saving}
+                          onClick={() => selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column && selectingFromDocument
+                            ? onStopSelecting()
+                            : onSelectCell({ rowIndex, column })}
+                        >
+                          <TextSelect size={14} />
+                        </button>
+                      </div>
                     </td>
                   ))}
                   <td>
                     <button
                       className="icon-button danger"
                       title="Remove row"
-                      onClick={() => setRows(rows.filter((_, index) => index !== rowIndex))}
+                      disabled={saving}
+                      onClick={() => onRowsChange(rows.filter((_, index) => index !== rowIndex))}
                     >
                       <Trash2 size={15} />
                     </button>
@@ -7966,16 +8170,15 @@ function TableEditDialog({
           </table>
         </div>
 
-        <div className="modal-footer">
-          <button className="secondary-button" onClick={onClose}>
+        <div className="inline-table-editor-footer">
+          <button className="secondary-button compact" type="button" disabled={saving} onClick={onCancel}>
             Cancel
           </button>
-          <button className="primary-button" onClick={() => onSave(rows)}>
-            <Save size={16} />
+          <button className="primary-button compact" type="button" disabled={saving} onClick={onSave}>
+            {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
             Save Table
           </button>
         </div>
-      </section>
     </div>
   );
 }

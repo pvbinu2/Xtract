@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { ManagedIdentityCredential } = require('@azure/identity');
 const { BlobServiceClient } = require('@azure/storage-blob');
 const { decryptBuffer, encryptBuffer } = require('./data-encryption');
 
@@ -19,12 +20,33 @@ class AzureBlobStorage {
     return this.configuredConnectionString || process.env.AZURE_STORAGE_CONNECTION_STRING || process.env.AzureWebJobsStorage;
   }
 
-  isConfigured() { return Boolean(this.connectionString()); }
+  useManagedIdentity() { return process.env.AZURE_USE_MANAGED_IDENTITY?.toLowerCase() === 'true'; }
+
+  blobServiceUrl() {
+    return process.env.AZURE_STORAGE_BLOB_SERVICE_URL
+      || (process.env.AZURE_STORAGE_ACCOUNT_NAME
+        ? `https://${process.env.AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net`
+        : undefined);
+  }
+
+  isConfigured() { return this.useManagedIdentity() ? Boolean(this.blobServiceUrl()) : Boolean(this.connectionString()); }
 
   getClient() {
+    if (this.client) return this.client;
+    if (this.useManagedIdentity()) {
+      const serviceUrl = this.blobServiceUrl();
+      if (!serviceUrl) {
+        throw this.errorFactory('AZURE_STORAGE_BLOB_SERVICE_URL or AZURE_STORAGE_ACCOUNT_NAME is required when managed identity is enabled.');
+      }
+      const credential = process.env.AZURE_CLIENT_ID
+        ? new ManagedIdentityCredential(process.env.AZURE_CLIENT_ID)
+        : new ManagedIdentityCredential();
+      this.client = new BlobServiceClient(serviceUrl, credential);
+      return this.client;
+    }
     const value = this.connectionString();
     if (!value) throw this.errorFactory('Azure storage connection string is required for file storage.');
-    if (!this.client) this.client = BlobServiceClient.fromConnectionString(value);
+    this.client = BlobServiceClient.fromConnectionString(value);
     return this.client;
   }
 

@@ -104,6 +104,26 @@ resource functionReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
+resource apiBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, apiPrincipalId, storageBlobContributorRoleId)
+  scope: storage
+  properties: {
+    principalId: apiPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageBlobContributorRoleId
+  }
+}
+
+resource functionBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, functionPrincipalId, storageBlobContributorRoleId)
+  scope: storage
+  properties: {
+    principalId: functionPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageBlobContributorRoleId
+  }
+}
+
 resource storageEvents 'Microsoft.EventGrid/systemTopics@2023-12-15-preview' = {
   name: '${storageAccountName}-blob-events'
   location: location

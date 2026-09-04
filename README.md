@@ -292,7 +292,9 @@ An optional second argument sets the blob name. Uploading directly through Stora
 
 Deploy `infra/messaging.bicep` into the resource group containing the existing storage account. Supply the storage account name, globally unique Service Bus namespace name, and the API and Function App managed-identity principal IDs. The module creates a Premium namespace, six queues, managed-identity RBAC, an Event Grid system topic filtered to committed blobs in the `trigger` container, and dead-letter storage.
 
-Set `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE=<namespace>.servicebus.windows.net` on the API and `ServiceBusConnection__fullyQualifiedNamespace=<namespace>.servicebus.windows.net` on the Function App. Keep `AzureWebJobsStorage` configured for the Functions host and blob operations.
+Set `AZURE_USE_MANAGED_IDENTITY=true`, `AZURE_STORAGE_ACCOUNT_NAME=<storage-account>`, and `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE=<namespace>.servicebus.windows.net` on both the API and Function App. For a user-assigned identity, also set `AZURE_CLIENT_ID` to its client ID; omit it for a system-assigned identity. The identity needs Blob Storage and Service Bus data-plane roles.
+
+For the Azure Functions host bindings, configure identity-based host storage separately with `AzureWebJobsStorage__accountName=<storage-account>` (and `AzureWebJobsStorage__credential=managedidentity` plus `AzureWebJobsStorage__clientId=<client-id>` for a user-assigned identity). Configure the Service Bus trigger with `ServiceBusConnection__fullyQualifiedNamespace=<namespace>.servicebus.windows.net`. When `AZURE_USE_MANAGED_IDENTITY=false` or unset, the application continues to use `AZURE_STORAGE_CONNECTION_STRING`/`AzureWebJobsStorage` and `SERVICE_BUS_CONNECTION_STRING` for local development.
 
 ### Run the Mock Downstream API
 

@@ -1,4 +1,4 @@
-const { DefaultAzureCredential } = require('@azure/identity');
+const { DefaultAzureCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { ServiceBusClient } = require('@azure/service-bus');
 
 let client;
@@ -6,16 +6,24 @@ const senders = new Map();
 
 function serviceBusClient() {
   if (client) return client;
+  const useManagedIdentity = process.env.AZURE_USE_MANAGED_IDENTITY?.toLowerCase() === 'true';
   const connectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
-  if (connectionString) {
+  if (!useManagedIdentity && connectionString) {
     client = new ServiceBusClient(connectionString);
     return client;
   }
   const namespace = process.env.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE;
   if (!namespace) {
-    throw new Error('Service Bus requires SERVICE_BUS_CONNECTION_STRING or SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE.');
+    throw new Error(useManagedIdentity
+      ? 'SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE is required when managed identity is enabled.'
+      : 'Service Bus requires SERVICE_BUS_CONNECTION_STRING or SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE.');
   }
-  client = new ServiceBusClient(namespace, new DefaultAzureCredential());
+  const credential = useManagedIdentity
+    ? (process.env.AZURE_CLIENT_ID
+      ? new ManagedIdentityCredential(process.env.AZURE_CLIENT_ID)
+      : new ManagedIdentityCredential())
+    : new DefaultAzureCredential();
+  client = new ServiceBusClient(namespace, credential);
   return client;
 }
 

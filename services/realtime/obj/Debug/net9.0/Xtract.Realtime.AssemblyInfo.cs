@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Xtract.Realtime")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+756b5be1630d3b26b44acba4865a623af7f62ba9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e5a8312453b5e9d04e21b1b6acdcc4c9f494c75d")]
 [assembly: System.Reflection.AssemblyProductAttribute("Xtract.Realtime")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Xtract.Realtime")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

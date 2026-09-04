@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { BlobServiceClient } from '@azure/storage-blob';
-import { DefaultAzureCredential } from '@azure/identity';
+import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 import { ServiceBusAdministrationClient, ServiceBusClient } from '@azure/service-bus';
 import { Connection } from 'mongoose';
 import { ConfigurationService } from '../configuration/configuration.service';
@@ -26,7 +26,13 @@ export class HealthService {
 
   async checkAll() {
     const configuration = await this.configurationService.get();
+    const useManagedIdentity = process.env.AZURE_USE_MANAGED_IDENTITY?.toLowerCase() === 'true';
     const storageConnection = process.env.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AzureWebJobsStorage;
+    const storageServiceUrl = process.env.AZURE_STORAGE_BLOB_SERVICE_URL
+      || (process.env.AZURE_STORAGE_ACCOUNT_NAME ? `https://${process.env.AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net` : undefined);
+    const storageClient = useManagedIdentity && storageServiceUrl
+      ? new BlobServiceClient(storageServiceUrl, this.managedIdentityCredential())
+      : (!useManagedIdentity && storageConnection ? BlobServiceClient.fromConnectionString(storageConnection) : undefined);
     const vectorDatabaseUrl = (configuration.vectorDatabaseEndpoint || process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/$/, '');
     const vectorDatabaseHeaders = configuration.vectorDatabaseApiKey
       ? { 'api-key': configuration.vectorDatabaseApiKey }
@@ -65,18 +71,16 @@ export class HealthService {
       this.embeddingCheck(configuration),
     ];
 
-    if (storageConnection) {
+    if (storageClient) {
       checks.push(
         this.timed('blob-storage', 'Blob storage', 'Storage', async () => {
-          await BlobServiceClient.fromConnectionString(storageConnection).getProperties();
+          await storageClient.getProperties();
           return 'Blob service is reachable.';
         }),
       );
       for (const containerName of ['processing', 'train', 'trigger']) {
         checks.push(this.timed(`container-${containerName}`, `${containerName} container`, 'Storage', async () => {
-          const container = BlobServiceClient
-            .fromConnectionString(storageConnection)
-            .getContainerClient(containerName);
+          const container = storageClient.getContainerClient(containerName);
           if (!(await container.exists())) throw new Error('Container does not exist.');
           return 'Blob container is ready.';
         }));
@@ -110,13 +114,14 @@ export class HealthService {
     ];
     const connectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
     const namespace = process.env.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE;
-    if (!connectionString && !namespace) {
+    const useManagedIdentity = process.env.AZURE_USE_MANAGED_IDENTITY?.toLowerCase() === 'true';
+    if ((useManagedIdentity && !namespace) || (!useManagedIdentity && !connectionString && !namespace)) {
       return [
         Promise.resolve(this.notConfigured('service-bus', 'Service Bus', 'Services')),
         ...queueNames.map((name) => Promise.resolve(this.notConfigured(`queue-${name}`, name, 'Queues'))),
       ];
     }
-    if (connectionString?.includes('UseDevelopmentEmulator=true')) {
+    if (!useManagedIdentity && connectionString?.includes('UseDevelopmentEmulator=true')) {
       const client = new ServiceBusClient(connectionString);
       const queueChecks = queueNames.map((name) => this.timed(`queue-${name}`, name, 'Queues', async () => {
         const receiver = client.createReceiver(name, { receiveMode: 'peekLock' });
@@ -139,9 +144,11 @@ export class HealthService {
       });
       return [serviceCheck, ...queueChecks];
     }
-    const admin = connectionString
+    const admin = !useManagedIdentity && connectionString
       ? new ServiceBusAdministrationClient(connectionString)
-      : new ServiceBusAdministrationClient(namespace!, new DefaultAzureCredential());
+      : new ServiceBusAdministrationClient(namespace!, useManagedIdentity
+        ? this.managedIdentityCredential()
+        : new DefaultAzureCredential());
     const queueChecks = queueNames.map((name) => this.timed(`queue-${name}`, name, 'Queues', async () => {
       const properties = await admin.getQueueRuntimeProperties(name);
       return `${properties.activeMessageCount} active message(s).`;
@@ -156,6 +163,12 @@ export class HealthService {
       return `Service Bus is ready. All ${queueNames.length} required queues exist; ${activeMessages} active message(s).`;
     });
     return [serviceCheck, ...queueChecks];
+  }
+
+  private managedIdentityCredential() {
+    return process.env.AZURE_CLIENT_ID
+      ? new ManagedIdentityCredential(process.env.AZURE_CLIENT_ID)
+      : new ManagedIdentityCredential();
   }
 
   private aiCheck(configuration: Awaited<ReturnType<ConfigurationService['get']>>) {
