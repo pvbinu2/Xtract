@@ -4316,7 +4316,11 @@ function DocumentTypeManagement({
   const [fields, setFields] = useState<ExtractionField[]>([]);
   const [schemaEditing, setSchemaEditing] = useState(false);
   const [schemaOrdering, setSchemaOrdering] = useState(false);
-  const [documentTypeTab, setDocumentTypeTab] = useState<'configuration' | 'files' | 'schema'>('schema');
+  const [documentTypeTab, setDocumentTypeTab] = useState<'configuration' | 'files' | 'schema' | 'test'>('schema');
+  const [testFile, setTestFile] = useState<File | null>(null);
+  const [testDocument, setTestDocument] = useState<IncomingDocument | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testError, setTestError] = useState('');
   const [draggedFieldIndex, setDraggedFieldIndex] = useState<number | null>(null);
   const [draggedColumn, setDraggedColumn] = useState<{ fieldIndex: number; columnIndex: number } | null>(null);
   const [fieldDropSlot, setFieldDropSlot] = useState<number | null>(null);
@@ -4346,6 +4350,10 @@ function DocumentTypeManagement({
     draggedColumnRef.current = null;
     setExpandedTables({});
     setVisibleSchemaDescriptions({});
+    setTestFile(null);
+    setTestDocument(null);
+    setTestRunning(false);
+    setTestError('');
   }, [activeType?._id]);
 
   useLayoutEffect(() => {
@@ -4415,6 +4423,45 @@ function DocumentTypeManagement({
 
   function removeSchemaField(index: number) {
     setFields(fields.filter((_, fieldIndex) => fieldIndex !== index));
+  }
+
+  async function runModelTest() {
+    if (!activeType || !testFile || testRunning) return;
+    setTestRunning(true);
+    setTestDocument(null);
+    setTestError('');
+    try {
+      const [uploadedDocument] = await api.uploadDocuments({
+        category: activeType.category,
+        documentTypeId: activeType._id,
+        isModelTest: true,
+        files: [testFile],
+      });
+      if (!uploadedDocument) throw new Error('The test document could not be uploaded.');
+      let document = await api.consumeModelTestResult(uploadedDocument._id);
+      setTestDocument(document);
+
+      const terminalStatuses: IncomingDocument['status'][] = ['extracted', 'failed', 'unsupported_format'];
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (!terminalStatuses.includes(document.status) && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        document = await api.consumeModelTestResult(document._id);
+        setTestDocument(document);
+      }
+
+      if (!terminalStatuses.includes(document.status)) {
+        throw new Error('The model test timed out before a result was available.');
+      }
+      if (document.status !== 'extracted') {
+        throw new Error(document.error || (document.status === 'unsupported_format'
+          ? 'This file format is not enabled for processing.'
+          : 'The extraction failed.'));
+      }
+    } catch (error) {
+      setTestError(error instanceof Error ? error.message : 'The model test failed.');
+    } finally {
+      setTestRunning(false);
+    }
   }
 
   return (
@@ -4526,9 +4573,79 @@ function DocumentTypeManagement({
               >
                 <BrainCircuit size={16} /> Configuration
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'test'}
+                className={documentTypeTab === 'test' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('test')}
+              >
+                <Sparkles size={16} /> Test Model
+              </button>
             </div>
 
             <div className="document-type-config-grid">
+            {documentTypeTab === 'test' && (
+              <section className="document-type-config-card test-model-card">
+                <div className="document-type-card-heading">
+                  <span><Sparkles size={18} /></span>
+                  <div>
+                    <strong>Test extraction model</strong>
+                    <small>Upload one document and extract it using {activeType.name} and its current schema. Test files and results are deleted from the server when the result is returned.</small>
+                  </div>
+                </div>
+                <div className="test-model-upload">
+                  <label className={`file-drop${testFile ? ' has-files' : ''}`}>
+                    <span className="file-drop-icon"><Upload size={28} /></span>
+                    <strong>{testFile?.name || 'Choose a document to test'}</strong>
+                    <span>{testFile ? 'Ready to extract' : 'Drop a file here or click to browse'}</span>
+                    <input
+                      type="file"
+                      disabled={testRunning}
+                      onChange={(event) => {
+                        setTestFile(event.target.files?.[0] || null);
+                        setTestDocument(null);
+                        setTestError('');
+                      }}
+                    />
+                  </label>
+                  <button className="primary-button" type="button" disabled={!testFile || testRunning || !activeType.fields.length} onClick={runModelTest}>
+                    {testRunning ? <Loader2 size={16} className="spin" /> : <ScanText size={16} />}
+                    {testRunning ? 'Extracting…' : 'Run Extraction'}
+                  </button>
+                  {!activeType.fields.length && <p className="warning-text">Create and save an extraction schema before testing this model.</p>}
+                </div>
+
+                {(testDocument || testError) && (
+                  <div className="test-model-results" aria-live="polite">
+                    <div className="test-model-status">
+                      <div>
+                        <span className="section-kicker">Test result</span>
+                        <strong>{testDocument?.originalName || testFile?.name}</strong>
+                      </div>
+                      {testDocument && <span className={`status-badge ${testDocument.status}`}>{testDocument.status.replace(/_/g, ' ')}</span>}
+                    </div>
+                    {testError && <div className="test-model-error"><AlertTriangle size={17} /> {testError}</div>}
+                    {testDocument?.status === 'extracted' && (
+                      <div className="test-extraction-fields">
+                        {normalizeExtractedDataToSchema(testDocument.extractedData, activeType).map((item) => (
+                          <div className="test-extraction-field" key={item.key}>
+                            <div className="field-label">
+                              <strong>{item.label}</strong>
+                              {confidenceBadge(item) && <em>{confidenceBadge(item)}</em>}
+                            </div>
+                            {item.type === 'table'
+                              ? <TableValuePreview item={item} canEdit={false} onEdit={() => undefined} />
+                              : <div className="test-extraction-value">{hasExtractedValue(item) ? coerceValue(item.value) : <span>Not extracted</span>}</div>}
+                          </div>
+                        ))}
+                        {!testDocument.extractedData.length && <div className="empty-table">No values were extracted.</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
             {documentTypeTab === 'configuration' && (
             <>
             <section className="document-type-config-card model-card">

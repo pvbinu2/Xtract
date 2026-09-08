@@ -191,6 +191,9 @@ export class IncomingDocument {
   @Prop()
   ingestionIdempotencyKeyHash?: string;
 
+  @Prop({ default: false })
+  isModelTest?: boolean;
+
   @Prop()
   textArtifactContainer?: string;
 

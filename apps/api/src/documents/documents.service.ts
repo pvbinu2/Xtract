@@ -108,7 +108,7 @@ export class DocumentsService {
     page?: string;
     pageSize?: string;
   }): Promise<any> {
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = { isModelTest: { $ne: true } };
     if (query.status === 'in-progress') {
       filter.status = { $in: ['received', 'preprocessed', 'classified', 'uploaded', 'processing'] };
     } else if (query.status) {
@@ -142,6 +142,7 @@ export class DocumentsService {
     mimeType?: string;
     category?: string;
     documentTypeId?: string;
+    isModelTest?: boolean;
   }[]): Promise<any> {
     const documents = [] as IncomingDocumentDocument[];
     const settings = await this.encryptionSettings();
@@ -152,7 +153,10 @@ export class DocumentsService {
       if (item.documentTypeId && !docType) throw new NotFoundException('Document type not found');
       const support = ingestionFileSupport(item.originalName, item.mimeType, configuration.ingestionFileTypes);
       if (support.supported) this.requireServiceBus();
-      const result = await this.createIngestedDocument(item, docType, settings, { ingestionSource: 'ui' }, support);
+      const result = await this.createIngestedDocument(item, docType, settings, {
+        ingestionSource: 'ui',
+        isModelTest: Boolean(item.isModelTest),
+      }, support);
       documents.push(result.document);
     }
 
@@ -208,6 +212,7 @@ export class DocumentsService {
       ingestionSource: 'ui' | 'api';
       ingestionMetadata?: Record<string, unknown>;
       ingestionIdempotencyKeyHash?: string;
+      isModelTest?: boolean;
     },
     support: { supported: boolean; message: string } = { supported: true, message: '' },
   ): Promise<{ document: IncomingDocumentDocument; deduplicated: boolean }> {
@@ -269,6 +274,7 @@ export class DocumentsService {
       document.revision = Number(document.revision || 0) + 1;
       await document.save();
       await this.publishDocumentChanged(document, ['status', 'error']);
+      if (document.isModelTest) await this.remove(document.id);
       throw error;
     }
     return { document, deduplicated: false };
@@ -386,6 +392,16 @@ export class DocumentsService {
     if (!document) throw new NotFoundException('Document not found');
     const settings = await this.encryptionSettings();
     return { ...document, extractedData: this.decryptExtractedData(document, settings), encryptedExtractedData: undefined };
+  }
+
+  async consumeModelTestResult(id: string) {
+    const document = await this.findById(id);
+    if (!document.isModelTest) throw new BadRequestException('Document is not a model test');
+    if (['extracted', 'failed', 'unsupported_format'].includes(document.status)) {
+      // Keep the result only in the response; delete storage before the database record.
+      await this.remove(id);
+    }
+    return document;
   }
 
   async getFile(id: string) {
@@ -551,6 +567,7 @@ export class DocumentsService {
   }
 
   private async recordBusinessReviewProcessing(document: IncomingDocumentDocument, metrics: ProcessingMetrics) {
+    if (document.isModelTest) return;
     const processedAt = metrics.processedAt ?? new Date();
     const extractionCostUsd = Number(metrics.extractionCostUsd ?? metrics.estimatedCostUsd ?? 0);
     const classificationCostUsd = Number(metrics.classificationCostUsd || 0);
@@ -854,9 +871,6 @@ export class DocumentsService {
 
     if (document.storageContainer && document.storageBlobName) {
       await this.blobStorage.deleteBlob(document.storageContainer, document.storageBlobName);
-      if (document.textArtifactContainer && document.textArtifactBlobName) {
-        await this.blobStorage.deleteBlob(document.textArtifactContainer, document.textArtifactBlobName);
-      }
     } else {
       try {
         await unlink(document.filePath);
@@ -865,6 +879,9 @@ export class DocumentsService {
           throw error;
         }
       }
+    }
+    if (document.textArtifactContainer && document.textArtifactBlobName) {
+      await this.blobStorage.deleteBlob(document.textArtifactContainer, document.textArtifactBlobName);
     }
     if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
       await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);

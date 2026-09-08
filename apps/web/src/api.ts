@@ -293,10 +293,11 @@ export const api = {
     data.append('files', payload.file);
     return request<IncomingDocument>('/documents/upload', { method: 'POST', body: data });
   },
-  uploadDocuments: (payload: { category?: string; documentTypeId?: string; files: File[] }) => {
+  uploadDocuments: (payload: { category?: string; documentTypeId?: string; isModelTest?: boolean; files: File[] }) => {
     const data = new FormData();
     if (payload.category) data.append('category', payload.category);
     if (payload.documentTypeId) data.append('documentTypeId', payload.documentTypeId);
+    if (payload.isModelTest) data.append('isModelTest', 'true');
     payload.files.forEach((file) => data.append('files', file));
     return request<IncomingDocument[]>('/documents/upload', { method: 'POST', body: data });
   },
@@ -325,6 +326,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ documentTypeId }),
     }),
+  consumeModelTestResult: (id: string) => request<IncomingDocument>(`/documents/${id}/model-test-result`, { method: 'POST' }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
   updateExtractedData: (id: string, extractedData: ExtractedValue[]) =>
     request<IncomingDocument>(`/documents/${id}/extracted-data`, {

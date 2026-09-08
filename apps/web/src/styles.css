@@ -4937,6 +4937,94 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.document-type-config-card.test-model-card {
+  --document-type-card-accent: #7c3aed;
+  grid-column: 1 / -1;
+}
+
+.test-model-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.test-model-upload .file-drop {
+  min-height: 150px;
+}
+
+.test-model-upload .warning-text {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.test-model-results {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.test-model-status,
+.test-model-status > div,
+.test-extraction-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.test-model-status {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.test-model-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgb(220 38 38 / 0.3);
+  border-radius: 8px;
+  background: rgb(220 38 38 / 0.08);
+  color: #b91c1c;
+  padding: 10px 12px;
+}
+
+.test-extraction-field {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.test-extraction-field > .field-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.test-extraction-field > .field-label em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.test-extraction-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.test-extraction-value > span {
+  color: var(--muted);
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .test-model-upload {
+    grid-template-columns: 1fr;
+  }
+}
+
 .document-type-card-heading {
   display: flex;
   align-items: flex-start;

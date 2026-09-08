@@ -61,6 +61,7 @@ export type IncomingDocument = {
   spatialTextArtifactBlobName?: string;
   workbookArtifactBlobName?: string;
   ingestionSource?: 'ui' | 'api' | 'blob';
+  isModelTest?: boolean;
   ingestionMetadata?: Record<string, unknown>;
   stageTimings?: Array<{
     status: IncomingDocument['status'];
@@ -95,6 +96,7 @@ export type IncomingDocument = {
     | 'uploaded'
     | 'processing'
     | 'unsupported_format';
+  error?: string;
   revision?: number;
   extractedData: ExtractedValue[];
   validatedBy?: {
