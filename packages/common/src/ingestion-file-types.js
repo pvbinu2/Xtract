@@ -2,6 +2,8 @@ const path = require('path');
 
 const DEFAULT_INGESTION_FILE_TYPES = [
   { extensions: ['.pdf'], label: 'PDF', mimeTypes: ['application/pdf'], enabled: true },
+  { extensions: ['.xlsx'], label: 'Excel', mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'], enabled: true },
+  { extensions: ['.xls'], label: 'Excel (legacy)', mimeTypes: ['application/vnd.ms-excel'], enabled: true },
   { extensions: ['.png'], label: 'PNG', mimeTypes: ['image/png'], enabled: true },
   { extensions: ['.jpg', '.jpeg'], label: 'JPEG', mimeTypes: ['image/jpeg'], enabled: true },
   { extensions: ['.tif', '.tiff'], label: 'TIFF', mimeTypes: ['image/tiff'], enabled: true },

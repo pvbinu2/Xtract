@@ -73,6 +73,12 @@ export type SpatialTextPage = {
     order: number;
   }>;
 };
+export type WorkbookMetadata = { version: 1; sheets: Array<{ index: number; name: string; rowCount: number; columnCount: number }> };
+export type WorkbookSheet = WorkbookMetadata['sheets'][number] & {
+  version: 1;
+  merges: string[];
+  cells: Array<{ address: string; row: number; column: number; value: string; type: string }>;
+};
 
 export type HealthCheckResult = {
   status: 'ready' | 'degraded';
@@ -225,6 +231,8 @@ export const api = {
   },
   documentPageCount: (id: string) => request<{ pageCount: number }>(`/documents/${id}/page-count`),
   documentPageText: (id: string, pageNumber: number) => request<SpatialTextPage>(`/documents/${id}/pages/${pageNumber}/text`),
+  documentWorkbook: (id: string) => request<WorkbookMetadata>(`/documents/${id}/workbook`),
+  documentWorkbookSheet: (id: string, sheetIndex: number) => request<WorkbookSheet>(`/documents/${id}/workbook/sheets/${sheetIndex}`),
   documentFile: (id: string) => requestFile(`/documents/${id}/file`),
   documentTextArtifact: (id: string) => requestFile(`/documents/${id}/text-artifact`),
   listDocumentTypes: () => request<DocumentType[]>('/document-types'),
@@ -242,6 +250,8 @@ export const api = {
   },
   deleteSample: (id: string, fileName: string) =>
     request<DocumentType>(`/document-types/${id}/samples/${encodeURIComponent(fileName)}`, { method: 'DELETE' }),
+  documentTypeSample: (id: string, fileName: string) =>
+    requestFile(`/document-types/${id}/samples/${encodeURIComponent(fileName)}`),
   trainClassifier: () => request<DocumentType[]>('/document-types/train-classifier', { method: 'POST' }),
   resetClassifierTraining: () => request<DocumentType[]>('/document-types/reset-classifier-training', { method: 'POST' }),
   updateClassificationInclusion: (id: string, includeInClassification: boolean) =>
@@ -283,10 +293,11 @@ export const api = {
     data.append('files', payload.file);
     return request<IncomingDocument>('/documents/upload', { method: 'POST', body: data });
   },
-  uploadDocuments: (payload: { category?: string; documentTypeId?: string; files: File[] }) => {
+  uploadDocuments: (payload: { category?: string; documentTypeId?: string; isModelTest?: boolean; files: File[] }) => {
     const data = new FormData();
     if (payload.category) data.append('category', payload.category);
     if (payload.documentTypeId) data.append('documentTypeId', payload.documentTypeId);
+    if (payload.isModelTest) data.append('isModelTest', 'true');
     payload.files.forEach((file) => data.append('files', file));
     return request<IncomingDocument[]>('/documents/upload', { method: 'POST', body: data });
   },
@@ -315,6 +326,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ documentTypeId }),
     }),
+  consumeModelTestResult: (id: string, retain = false) => request<IncomingDocument>(`/documents/${id}/model-test-result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ retain }),
+  }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
   updateExtractedData: (id: string, extractedData: ExtractedValue[]) =>
     request<IncomingDocument>(`/documents/${id}/extracted-data`, {

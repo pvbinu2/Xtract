@@ -6,12 +6,11 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
+const { isExcelDocument, parseWorkbook } = require('../workbook');
 const { extractDocumentContent, extractDocumentSpatialItems, extractDocumentText } = require('../documentText');
 const { withOpenAIRetry } = require('../openaiRetry');
 const {
   ObjectId,
-  beginDocumentStage,
-  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -412,7 +411,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
   // leaving most extracted fields without validation-page bounding boxes.
   // Prefer OCR positions in markdown mode and retain Docling positions as a
   // fallback for values that OCR did not recognize.
-  const ocrSpatialItems = textMode === 'markdown' || !documentContent.spatialItems.length
+  const ocrSpatialItems = !isExcelDocument(document) && (textMode === 'markdown' || !documentContent.spatialItems.length)
     ? await extractDocumentSpatialItems(document.filePath)
     : [];
   const spatialItems = [...ocrSpatialItems, ...documentContent.spatialItems];
@@ -449,7 +448,8 @@ async function extractQueuedDocument(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
-  await beginDocumentStage(documents, document._id, 'extracted');
+  await transitionDocumentStatus(documents, document._id, 'extraction_started');
+  await publishDocumentChanged(documents, document._id, ['status'], context);
 
   const configuration = await getConfiguration();
   const {
@@ -501,8 +501,8 @@ async function extractQueuedDocument(message, context) {
       apiKey: extractionProvider === 'custom' ? aiOptions.customApiKey : aiOptions.openAiApiKey,
       ...(extractionProvider === 'ollama' ? { ollamaModel: effectiveDocumentType.extractionModel } : {}),
     };
-    const usesPreparedText = useOcrForDocumentProcessing || providerName(extractionAiOptions) === 'ollama';
-    const effectiveProcessingMode = usesPreparedText ? preparedTextMode : 'pdf';
+    const usesPreparedText = Boolean(document.workbookArtifactBlobName) || useOcrForDocumentProcessing || providerName(extractionAiOptions) === 'ollama';
+    const effectiveProcessingMode = document.workbookArtifactBlobName ? 'spreadsheet' : usesPreparedText ? preparedTextMode : 'pdf';
     const localDocument = { ...document, ...payload.classificationUpdate, filePath: localFilePath };
     const extraction = await extractValuesWithOpenAI(
       localDocument,
@@ -515,9 +515,7 @@ async function extractQueuedDocument(message, context) {
       },
       extractionAiOptions,
     );
-    const extractedData = await attachBoundingBoxes(
-      localFilePath,
-      extraction?.values ||
+    const extractedValues = extraction?.values ||
       (documentType.fields || [])
         .filter((field) => field.selected)
         .map((field, index) => ({
@@ -531,9 +529,21 @@ async function extractQueuedDocument(message, context) {
             }, {})]
             : mockValue(field.label, field.type, index),
           confidence: Number((0.82 + Math.min(index, 8) * 0.015).toFixed(2)),
-        })),
-      extraction?.spatialItems || [],
-    );
+        }));
+    const excelDocument = isExcelDocument(document);
+    let extractedData = excelDocument
+      ? extractedValues
+      : await attachBoundingBoxes(localFilePath, extractedValues, extraction?.spatialItems || []);
+    if (excelDocument) {
+      const workbook = parseWorkbook(await require('fs/promises').readFile(localFilePath)).artifact;
+      extractedData = extractedData.map((item) => {
+        if (item.type === 'table' || item.value === undefined || item.value === null) return item;
+        const expected = String(item.value).trim().toLowerCase();
+        const match = workbook.sheets.flatMap((sheet) => sheet.cells.map((cell) => ({ sheet, cell })))
+          .find(({ cell }) => String(cell.value).trim().toLowerCase() === expected);
+        return match ? { ...item, cellReferences: [{ sheetIndex: match.sheet.index, sheetName: match.sheet.name, startCell: match.cell.address, endCell: match.cell.address }] } : item;
+      });
+    }
 
     const processingMetrics = extraction?.metrics || {
       model: 'mock',
@@ -578,10 +588,10 @@ async function extractQueuedDocument(message, context) {
     ).toFixed(8));
 
     const protectedExtractedData = extractedDataUpdate(document, extractedData, configuration);
-    await completeDocumentStage(
+    await transitionDocumentStatus(
       documents,
       document._id,
-      'extracted',
+      'extraction_completed',
       {
         ...(payload.classificationUpdate || {}),
         ...protectedExtractedData.$set,
@@ -591,6 +601,7 @@ async function extractQueuedDocument(message, context) {
         error: null,
       },
       ['reprocessOptions', ...Object.keys(protectedExtractedData.$unset || {})],
+      { completed: true },
     );
     await publishDocumentChanged(
       documents,

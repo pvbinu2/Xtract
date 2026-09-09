@@ -42,6 +42,7 @@ Xtract is designed for organizations that need to automate document processing w
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
 - Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
 - API-key-authenticated multipart ingestion for external systems, with idempotent retries and caller metadata.
+- Excel `.xlsx` and `.xls` ingestion with text extraction and a selectable multi-sheet validation grid.
 - Validation screen with source PDF preview and editable extracted fields.
 - Reclassification and reprocessing when a document was assigned to the wrong type or a schema changes.
 - Business review dashboard with processed-file counts, token usage, estimated cost, and display currency conversion.
@@ -265,7 +266,7 @@ curl --request POST http://localhost:3000/api/ingestion/documents \
 
 `category` and `type` must be supplied together to select an existing document type, or both omitted to use automatic classification. The endpoint accepts one file up to 50 MB; administrators manage the database-backed processing allowlist under **Configuration → Processing → API ingestion file types**. Files outside that allowlist are still stored as document instances with status **Unsupported**, but are not queued for processing. `metadata` is an optional JSON object up to 16 KB. Repeating a successful request with the same `Idempotency-Key` returns the original document receipt without queueing a duplicate.
 
-Document processing always runs through the Azure Function worker and Service Bus. A document progresses through the persisted statuses **Received**, **Preprocessed**, **Classified**, and **Extracted**. The API enqueues work on `document-processing`; text preparation enqueues `document-classification`; classification then enqueues `document-extraction`. Classifier training and realtime events also use Service Bus. The Configuration screen's **Scaling** section controls independent preprocessing, vector-classification, LLM/RAG-classification, and extraction concurrency limits from 1 to 16. Saved limits apply to subsequent queue invocations without restarting the Function App. Environment fallbacks are `PREPROCESSING_CONCURRENCY`, `VECTOR_CLASSIFICATION_CONCURRENCY`, `LLM_CLASSIFICATION_CONCURRENCY`, and `EXTRACTION_CONCURRENCY`.
+Document processing always runs through the Azure Function worker and Service Bus. A document progresses through the persisted statuses **Received**, **Preprocessing - Started**, **Preprocessing - Completed**, **Classification - Started**, **Classification - Completed**, **Extraction - Started**, and **Extraction - Completed**. The API enqueues work on `document-processing`; text preparation enqueues `document-classification`; classification then enqueues `document-extraction`. Classifier training and realtime events also use Service Bus. The Configuration screen's **Scaling** section controls independent preprocessing, vector-classification, LLM/RAG-classification, and extraction concurrency limits from 1 to 16. Saved limits apply to subsequent queue invocations without restarting the Function App. Environment fallbacks are `PREPROCESSING_CONCURRENCY`, `VECTOR_CLASSIFICATION_CONCURRENCY`, `LLM_CLASSIFICATION_CONCURRENCY`, and `EXTRACTION_CONCURRENCY`.
 
 Copy the tracked Function settings template before starting the worker:
 
@@ -291,7 +292,9 @@ An optional second argument sets the blob name. Uploading directly through Stora
 
 Deploy `infra/messaging.bicep` into the resource group containing the existing storage account. Supply the storage account name, globally unique Service Bus namespace name, and the API and Function App managed-identity principal IDs. The module creates a Premium namespace, six queues, managed-identity RBAC, an Event Grid system topic filtered to committed blobs in the `trigger` container, and dead-letter storage.
 
-Set `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE=<namespace>.servicebus.windows.net` on the API and `ServiceBusConnection__fullyQualifiedNamespace=<namespace>.servicebus.windows.net` on the Function App. Keep `AzureWebJobsStorage` configured for the Functions host and blob operations.
+Set `AZURE_USE_MANAGED_IDENTITY=true`, `AZURE_STORAGE_ACCOUNT_NAME=<storage-account>`, and `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE=<namespace>.servicebus.windows.net` on both the API and Function App. For a user-assigned identity, also set `AZURE_CLIENT_ID` to its client ID; omit it for a system-assigned identity. The identity needs Blob Storage and Service Bus data-plane roles.
+
+For the Azure Functions host bindings, configure identity-based host storage separately with `AzureWebJobsStorage__accountName=<storage-account>` (and `AzureWebJobsStorage__credential=managedidentity` plus `AzureWebJobsStorage__clientId=<client-id>` for a user-assigned identity). Configure the Service Bus trigger with `ServiceBusConnection__fullyQualifiedNamespace=<namespace>.servicebus.windows.net`. When `AZURE_USE_MANAGED_IDENTITY=false` or unset, the application continues to use `AZURE_STORAGE_CONNECTION_STRING`/`AzureWebJobsStorage` and `SERVICE_BUS_CONNECTION_STRING` for local development.
 
 ### Run the Mock Downstream API
 

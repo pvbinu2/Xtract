@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, CSSProperties, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import Chart from 'chart.js/auto';
 import {
@@ -25,6 +25,7 @@ import {
   FileSearch,
   Files,
   Gauge,
+  GripVertical,
   HardDrive,
   ListOrdered,
   Radio,
@@ -45,6 +46,9 @@ import {
   Trash2,
   Upload,
   Download,
+  Eraser,
+  Eye,
+  EyeOff,
   Database,
   FileText,
   FileImage,
@@ -60,7 +64,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken } from './api';
+import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
 
@@ -236,6 +240,22 @@ function withUiIds(fields: ExtractionField[]) {
       key: column.key || `column_${columnIndex + 1}`,
     })),
   }));
+}
+
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (toIndex < 0 || toIndex >= items.length || fromIndex === toIndex) return items;
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
+}
+
+function moveArrayItemToSlot<T>(items: T[], fromIndex: number, slotIndex: number) {
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  const adjustedIndex = Math.max(0, Math.min(next.length, slotIndex > fromIndex ? slotIndex - 1 : slotIndex));
+  next.splice(adjustedIndex, 0, item);
+  return next;
 }
 
 function toKey(label: string) {
@@ -433,6 +453,13 @@ function ProcessingModeIcon({ mode }: { mode?: IncomingDocument['processingMode'
       </span>
     );
   }
+  if (mode === 'spreadsheet') {
+    return (
+      <span className="processing-mode-icon spreadsheet" title="Processed from an Excel workbook" aria-label="Processed from an Excel workbook">
+        <FileSpreadsheet size={14} />
+      </span>
+    );
+  }
   return null;
 }
 
@@ -546,7 +573,7 @@ function coerceRowsToColumns(value: unknown, columns: TableColumn[]) {
 function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?: DocumentType) {
   if (!documentType) return values;
   const fieldsByKey = new Map(documentType.fields.map((field) => [field.key, field]));
-  return values.map((item) => {
+  const normalizedValues = values.map((item) => {
     const schemaField = fieldsByKey.get(item.key);
     if (item.type !== 'table' || !schemaField?.columns?.length) return item;
     return {
@@ -554,6 +581,12 @@ function normalizeExtractedDataToSchema(values: ExtractedValue[], documentType?:
       value: coerceRowsToColumns(item.value, schemaField.columns),
     };
   });
+  const schemaOrder = new Map(documentType.fields.map((field, index) => [field.key, index]));
+  const instanceValues = normalizedValues.filter((item) => !schemaOrder.has(item.key));
+  const schemaValues = normalizedValues
+    .filter((item) => schemaOrder.has(item.key))
+    .sort((left, right) => schemaOrder.get(left.key)! - schemaOrder.get(right.key)!);
+  return [...instanceValues, ...schemaValues];
 }
 
 function hasExtractedValue(item: ExtractedValue) {
@@ -824,7 +857,7 @@ function OperationsApp() {
       api.getBusinessReviewSummary(),
       api.listDocuments(
         new URLSearchParams({
-          status: 'extracted',
+          status: 'extraction_completed',
           page: '1',
           pageSize: '5',
         }),
@@ -863,37 +896,29 @@ function OperationsApp() {
     const pageSize = documentPage.pageSize;
     let page = documentPage.page;
     let items = documents;
-    let totalPages = documentPage.totalPages;
-
-    for (let attempts = 0; attempts < Math.max(totalPages, 1); attempts += 1) {
-      const currentIndex = items.findIndex((item) => item._id === currentId);
-      if (currentIndex >= 0) {
-        if (direction === 'previous') {
-          if (currentIndex > 0) return { page, document: items[currentIndex - 1] };
-          if (page <= 1) return null;
-          const previousPage = await api.listDocuments(
-            new URLSearchParams({ sort: 'latest', page: String(page - 1), pageSize: String(pageSize) }),
-          );
-          return { page: previousPage.page, document: previousPage.items.at(-1) };
-        }
-
-        if (currentIndex < items.length - 1) return { page, document: items[currentIndex + 1] };
-        if (page >= totalPages) return null;
-        const nextPage = await api.listDocuments(
-          new URLSearchParams({ sort: 'latest', page: String(page + 1), pageSize: String(pageSize) }),
-        );
-        return { page: nextPage.page, document: nextPage.items[0] };
-      }
-
-      const nextSearchPage = attempts === 0 ? documentPage.page : attempts;
-      const refreshed = await api.listDocuments(
-        new URLSearchParams({ sort: 'latest', page: String(nextSearchPage), pageSize: String(pageSize) }),
-      );
-      page = refreshed.page;
+    let currentIndex = items.findIndex((item) => item._id === currentId);
+    if (currentIndex < 0) {
+      const refreshed = await api.listDocuments(new URLSearchParams({ sort: 'latest', page: String(page), pageSize: String(pageSize) }));
       items = refreshed.items;
-      totalPages = refreshed.totalPages;
+      currentIndex = items.findIndex((item) => item._id === currentId);
+      if (currentIndex < 0) return null;
     }
 
+    while (page >= 1 && page <= documentPage.totalPages) {
+      const candidates = direction === 'previous'
+        ? items.slice(0, currentIndex).reverse()
+        : items.slice(currentIndex + 1);
+      const supported = candidates.find((item) => item.status !== 'unsupported_format');
+      if (supported) return { page, document: supported };
+
+      page += direction === 'previous' ? -1 : 1;
+      if (page < 1 || page > documentPage.totalPages) break;
+      const adjacentPage = await api.listDocuments(
+        new URLSearchParams({ sort: 'latest', page: String(page), pageSize: String(pageSize) }),
+      );
+      items = adjacentPage.items;
+      currentIndex = direction === 'previous' ? items.length : -1;
+    }
     return null;
   }
 
@@ -916,30 +941,7 @@ function OperationsApp() {
       return;
     }
 
-    const currentIndex = documents.findIndex((item) => item._id === currentId);
-    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
-      setActiveDocumentId(documents[currentIndex + 1]._id);
-      setView('validation');
-      return;
-    }
-
-    if (documentPage.page < documentPage.totalPages) {
-      const nextPage = await loadDocumentsPage(documentPage.page + 1);
-      if (nextPage.items.length > 0) {
-        setActiveDocumentId(nextPage.items[0]._id);
-        setView('validation');
-        return;
-      }
-    }
-
-    const refreshed = await refreshDocuments();
-    const refreshedIndex = refreshed.items.findIndex((item) => item._id === currentId);
-    if (refreshedIndex >= 0 && refreshedIndex < refreshed.items.length - 1) {
-      setActiveDocumentId(refreshed.items[refreshedIndex + 1]._id);
-      setView('validation');
-      return;
-    }
-
+    if (await moveToAdjacentDocument(currentId, 'next')) return;
     setView('documents');
   }
 
@@ -1189,11 +1191,11 @@ function OperationsApp() {
   const validationDocumentIndex = documents.findIndex((item) => item._id === validationDocumentId);
   const canNavigatePreviousDocument =
     Boolean(validationDocumentId) &&
-    (documentPage.page > 1 || validationDocumentIndex > 0);
+    (documentPage.page > 1 || documents.slice(0, validationDocumentIndex).some((item) => item.status !== 'unsupported_format'));
   const canNavigateNextDocument =
     Boolean(validationDocumentId) &&
     (documentPage.page < documentPage.totalPages ||
-      (validationDocumentIndex >= 0 && validationDocumentIndex < documents.length - 1));
+      documents.slice(validationDocumentIndex + 1).some((item) => item.status !== 'unsupported_format'));
   const averageCostPerFile = operationsMetrics.filesProcessed
     ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
     : 0;
@@ -1230,7 +1232,15 @@ function OperationsApp() {
     <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand-mark" src="/icon-192.png" alt="" aria-hidden="true" />
+          <button
+            type="button"
+            className="brand-mark-link"
+            aria-label="Open Xtractor marketing site"
+            title="Open Xtractor marketing site"
+            onClick={() => { window.location.href = '/xtractor'; }}
+          >
+            <img className="brand-mark" src="/icon-192.png" alt="" aria-hidden="true" />
+          </button>
           <div className="brand-copy">
             <strong>Xtract</strong>
             <span>Document intake</span>
@@ -1296,7 +1306,7 @@ function OperationsApp() {
                 <StatusMetric
                   label="Extracted"
                   value={operationsMetrics.filesReady}
-                  onClick={() => openDocuments('extracted')}
+                  onClick={() => openDocuments('extraction_completed')}
                 />
               </div>
             )}
@@ -1507,6 +1517,8 @@ function MarketingSite() {
           </div>
           <div className="marketing-nav-links">
             <a href="#how-it-works">How it works</a>
+            <a href="#supported-formats">File support</a>
+            <a href="#platform-features">Features</a>
             <a href="#business-applications">Solutions</a>
             <a href="#demo-request-form">Contact</a>
           </div>
@@ -1520,7 +1532,7 @@ function MarketingSite() {
             <span className="marketing-kicker"><Sparkles size={14} /> Intelligent document operations</span>
             <h1>From complex documents to <em>trusted data.</em></h1>
             <p>
-              Xtractor classifies, extracts, and validates business documents—then delivers clean, structured data to the systems your teams already use.
+              Xtractor classifies, extracts, and validates PDFs, images, and Excel workbooks—then delivers clean, structured data to the systems your teams already use.
             </p>
             <div className="marketing-actions">
               <button type="button" className="marketing-primary-button" onClick={focusRequestForm}>
@@ -1531,6 +1543,7 @@ function MarketingSite() {
             </div>
             <div className="marketing-proof-points">
               <span><CheckCircle2 size={15} /> Human-in-the-loop validation</span>
+              <span><CheckCircle2 size={15} /> PDF, image, and Excel intake</span>
               <span><CheckCircle2 size={15} /> Flexible AI providers</span>
               <span><CheckCircle2 size={15} /> API-ready output</span>
             </div>
@@ -1558,8 +1571,8 @@ function MarketingSite() {
                   <span className="visual-status extracted">Extracted</span><em>96%</em>
                 </div>
                 <div className="visual-document-row">
-                  <div className="visual-file-icon"><FileText size={20} /></div>
-                  <div><strong>Policy_Renewal.pdf</strong><small>Insurance</small></div>
+                  <div className="visual-file-icon"><FileSpreadsheet size={20} /></div>
+                  <div><strong>Claims_Register.xlsx</strong><small>Insurance</small></div>
                   <span className="visual-status classified">Classified</span><em>92%</em>
                 </div>
                 <div className="visual-progress-card">
@@ -1584,7 +1597,7 @@ function MarketingSite() {
         <article><strong>3 modes</strong><span>Vector, LLM, and RAG classification</span></article>
         <article><strong>Live</strong><span>Real-time processing visibility</span></article>
         <article><strong>Flexible</strong><span>OpenAI or Self Hosted models</span></article>
-        <article><strong>Ready</strong><span>Structured JSON for downstream systems</span></article>
+        <article><strong>API-ready</strong><span>Secure, idempotent document ingestion and JSON delivery</span></article>
       </section>
 
       <section className="marketing-automation-demo" aria-label="Animated Xtractor document workflow">
@@ -1595,8 +1608,8 @@ function MarketingSite() {
         <div className="marketing-animation-track">
           <div className="marketing-animation-line"><span /></div>
           <div className="marketing-moving-document" aria-hidden="true">
-            <FileText size={18} />
-            <span>PDF</span>
+            <Files size={18} />
+            <span>FILE</span>
           </div>
           {[
             { icon: Upload, label: 'Received', detail: 'Document intake' },
@@ -1621,10 +1634,10 @@ function MarketingSite() {
         </div>
         <div className="marketing-workflow-grid">
           {[
-            { icon: Upload, step: '01', title: 'Receive', text: 'Upload PDFs or drop them into monitored storage for immediate processing.' },
+            { icon: Upload, step: '01', title: 'Receive', text: 'Upload PDFs, supported images, or Excel workbooks through the app, API, or monitored storage.' },
             { icon: BrainCircuit, step: '02', title: 'Classify', text: 'Route documents accurately using vector search, LLM, or RAG classification.' },
-            { icon: ScanText, step: '03', title: 'Extract', text: 'Generate OCR or markdown and capture the business fields that matter.' },
-            { icon: ClipboardCheck, step: '04', title: 'Validate', text: 'Review low-confidence data against the source document before delivery.' },
+            { icon: ScanText, step: '03', title: 'Extract', text: 'Generate OCR, markdown, or structured workbook text and capture the business fields that matter.' },
+            { icon: ClipboardCheck, step: '04', title: 'Validate', text: 'Review fields beside selectable PDF text or a native multi-sheet Excel grid before delivery.' },
           ].map(({ icon: Icon, step, title, text }) => (
             <article key={title}>
               <span className="marketing-step">{step}</span>
@@ -1633,6 +1646,50 @@ function MarketingSite() {
               <p>{text}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="marketing-section marketing-formats" id="supported-formats">
+        <div className="marketing-section-heading centered">
+          <span className="marketing-kicker">Flexible document intake</span>
+          <h2>One workflow for the files your operation receives.</h2>
+          <p>Administrators control which formats enter processing. Unsupported files are safely recorded without entering the processing queue.</p>
+        </div>
+        <div className="marketing-card-grid">
+          <article>
+            <div className="marketing-card-icon"><FileText size={22} /></div>
+            <span>DOCUMENTS</span>
+            <h3>PDF</h3>
+            <p>Process native-text and scanned PDFs with direct model input, built-in OCR, or markdown preparation.</p>
+          </article>
+          <article>
+            <div className="marketing-card-icon"><FileImage size={22} /></div>
+            <span>IMAGES</span>
+            <h3>PNG, JPG, TIFF and more</h3>
+            <p>Supports PNG, JPEG, TIFF, WebP, BMP, GIF, AVIF, HEIC, HEIF, and SVG through one configurable image option.</p>
+          </article>
+          <article>
+            <div className="marketing-card-icon"><FileSpreadsheet size={22} /></div>
+            <span>SPREADSHEETS</span>
+            <h3>Excel XLSX and XLS</h3>
+            <p>Extract visible worksheets and validate results in a native sheet grid with tabs, cell ranges, and cached formula values.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="marketing-section" id="platform-features">
+        <div className="marketing-section-heading">
+          <span className="marketing-kicker">Built for controlled automation</span>
+          <h2>Powerful extraction with the controls teams need.</h2>
+          <p>Move from intake to trusted output with transparent processing, precise validation, and configurable infrastructure.</p>
+        </div>
+        <div className="marketing-card-grid">
+          <article><div className="marketing-card-icon"><TextSelect size={22} /></div><span>VALIDATION</span><h3>Select from the source</h3><p>Copy, replace, or append selectable document text and Excel cell ranges while retaining source bounding boxes or cell references.</p></article>
+          <article><div className="marketing-card-icon"><BrainCircuit size={22} /></div><span>AI & CLASSIFICATION</span><h3>Choose the right intelligence</h3><p>Use vector, LLM, or RAG classification with OpenAI, custom endpoints, or self-hosted Ollama models.</p></article>
+          <article><div className="marketing-card-icon"><KeyRound size={22} /></div><span>INTEGRATION</span><h3>External ingestion API</h3><p>Accept files, category and type, and business metadata through API-key authentication with idempotent retries.</p></article>
+          <article><div className="marketing-card-icon"><ShieldCheck size={22} /></div><span>SECURITY</span><h3>Encrypted processing</h3><p>Apply configurable storage and database encryption to originals, extracted values, OCR text, spatial text, and workbook artifacts.</p></article>
+          <article><div className="marketing-card-icon"><Activity size={22} /></div><span>OPERATIONS</span><h3>Health and cost visibility</h3><p>Monitor application dependencies, provider readiness, processing stages, token usage, model cost, and OpenAI credit information.</p></article>
+          <article><div className="marketing-card-icon"><Plus size={22} /></div><span>INSTANCE CONTROL</span><h3>Adapt during review</h3><p>Add instance-only entities without changing the extraction template, and save reviewer edits with 100% confidence.</p></article>
         </div>
       </section>
 
@@ -1654,7 +1711,7 @@ function MarketingSite() {
             <div className="marketing-card-icon"><ShieldCheck size={22} /></div>
             <span>COMPLIANCE</span>
             <h3>Review with confidence</h3>
-            <p>Validate extracted fields beside the original PDF and maintain clear visibility into every processing step.</p>
+            <p>Validate extracted fields beside the original PDF, scanned image, or Excel sheet and maintain visibility into every processing step.</p>
             <a href="#demo-request-form">Strengthen review workflows <ChevronRight size={15} /></a>
           </article>
           <article>
@@ -1901,6 +1958,34 @@ function LoginScreen({
   );
 }
 
+function PasswordStrength({ password }: { password: string }) {
+  if (!password) return null;
+
+  const checks = [
+    password.length >= 8,
+    password.length >= 12,
+    /[a-z]/.test(password) && /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ];
+  const score = Math.min(4, checks.filter(Boolean).length);
+  const labels = ['Weak', 'Weak', 'Fair', 'Good', 'Strong'];
+  const label = labels[score];
+
+  return (
+    <div className={`password-strength strength-${score}`} role="meter" aria-label="Password strength" aria-valuemin={0} aria-valuemax={4} aria-valuenow={score} aria-valuetext={label}>
+      <div className="password-strength-heading">
+        <span>Password strength</span>
+        <strong>{label}</strong>
+      </div>
+      <div className="password-strength-bars" aria-hidden="true">
+        {[1, 2, 3, 4].map((level) => <span key={level} className={score >= level ? 'active' : ''} />)}
+      </div>
+      <small>{password.length < 8 ? `${8 - password.length} more character${8 - password.length === 1 ? '' : 's'} required` : 'Use 12+ characters with uppercase, lowercase, numbers, and symbols.'}</small>
+    </div>
+  );
+}
+
 function PasswordResetScreen({
   currentUser,
   onUserChange,
@@ -1994,6 +2079,7 @@ function PasswordResetScreen({
           New password
           <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
         </label>
+        <PasswordStrength password={newPassword} />
         <label className="full-label">
           Confirm new password
           <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
@@ -2365,6 +2451,7 @@ function UserManagementScreen({
                 Initial password
                 <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
               </label>
+              <PasswordStrength password={newPassword} />
               <label>
                 Role
                 <select value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
@@ -2392,6 +2479,7 @@ function UserManagementScreen({
                 New password for {resetTarget.username}
                 <input type="password" autoComplete="new-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
               </label>
+              <PasswordStrength password={resetPassword} />
               <label>
                 Confirm new password
                 <input
@@ -2796,13 +2884,17 @@ function ReviewMetric({ label, value, helper, icon }: { label: string; value: st
 function MonthlyCostProjectionChart({
   averageCostPerDocument,
   formatReviewCurrency,
+  monthlyVolume,
+  onMonthlyVolumeChange,
 }: {
   averageCostPerDocument: number;
   formatReviewCurrency: (value: number) => string;
+  monthlyVolume: number;
+  onMonthlyVolumeChange: (value: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maxFiles = 1_000_000;
-  const projectedCost = maxFiles * averageCostPerDocument;
+  const maxFiles = Math.max(monthlyVolume, 1);
+  const projectedCost = monthlyVolume * averageCostPerDocument;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2813,7 +2905,7 @@ function MonthlyCostProjectionChart({
     const muted = styles.getPropertyValue('--muted').trim() || '#64748b';
     const border = styles.getPropertyValue('--border').trim() || '#e2e8f0';
     const surface = styles.getPropertyValue('--surface').trim() || '#ffffff';
-    const volumePoints = Array.from({ length: 21 }, (_item, index) => index * 50_000);
+    const volumePoints = Array.from({ length: 21 }, (_item, index) => Math.round((maxFiles * index) / 20));
     const chart = new Chart(canvas, {
       type: 'line',
       data: {
@@ -2827,7 +2919,7 @@ function MonthlyCostProjectionChart({
             borderColor: primary,
             backgroundColor: 'rgba(79, 70, 229, 0.12)',
             borderWidth: 1.5,
-            pointRadius: 2,
+              pointRadius: (context) => context.dataIndex === volumePoints.length - 1 ? 5 : 2,
             pointHoverRadius: 4,
             pointBackgroundColor: surface,
             pointBorderColor: primary,
@@ -2878,8 +2970,9 @@ function MonthlyCostProjectionChart({
               callback: (value) => {
                 const files = Number(value);
                 if (files === 0) return '0';
-                if (files === maxFiles) return '1M';
-                return `${files / 1000}k`;
+                if (files >= 1_000_000) return `${Number((files / 1_000_000).toFixed(1))}M`;
+                if (files >= 1000) return `${Number((files / 1000).toFixed(1))}k`;
+                return String(Math.round(files));
               },
             },
             title: {
@@ -2916,16 +3009,40 @@ function MonthlyCostProjectionChart({
     });
 
     return () => chart.destroy();
-  }, [averageCostPerDocument, formatReviewCurrency]);
+  }, [averageCostPerDocument, formatReviewCurrency, maxFiles]);
 
   return (
     <section className="review-chart-card" aria-label="Monthly files and cost projection">
       <div className="review-chart-heading">
         <div>
           <h3>Monthly Volume Projection</h3>
-          <p>Estimated cost from current average cost per file, scaled up to 1,000,000 files/month.</p>
+          <p>Estimated cost using the current average cost per processed file.</p>
         </div>
-        <strong>{formatReviewCurrency(projectedCost)}</strong>
+        <div className="review-projection-result">
+          <span>{formatNumber(monthlyVolume)} files/month</span>
+          <strong>{formatReviewCurrency(projectedCost)}</strong>
+        </div>
+      </div>
+      <div className="review-volume-control">
+        <label htmlFor="monthly-volume">Monthly volume</label>
+        <input
+          id="monthly-volume"
+          type="number"
+          min="0"
+          max="10000000"
+          step="1000"
+          value={monthlyVolume}
+          onChange={(event) => onMonthlyVolumeChange(Math.min(10_000_000, Math.max(0, Number(event.target.value) || 0)))}
+        />
+        <input
+          type="range"
+          aria-label="Monthly volume slider"
+          min="0"
+          max="1000000"
+          step="1000"
+          value={Math.min(monthlyVolume, 1_000_000)}
+          onChange={(event) => onMonthlyVolumeChange(Number(event.target.value))}
+        />
       </div>
       <div className="review-chart-wrap">
         <canvas ref={canvasRef} aria-label="Cost projection by monthly file volume" role="img" />
@@ -2946,6 +3063,15 @@ function BusinessReviewScreen({
   const [summary, setSummary] = useState<BusinessReviewSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [monthlyVolume, setMonthlyVolume] = useState(() => {
+    const stored = Number(localStorage.getItem('xtract-business-review-monthly-volume'));
+    return Number.isFinite(stored) && stored >= 0 ? Math.min(10_000_000, stored) : 1_000_000;
+  });
+
+  function updateMonthlyVolume(value: number) {
+    setMonthlyVolume(value);
+    localStorage.setItem('xtract-business-review-monthly-volume', String(value));
+  }
 
   async function loadSummary() {
     setLoadingSummary(true);
@@ -3034,6 +3160,8 @@ function BusinessReviewScreen({
         <MonthlyCostProjectionChart
           averageCostPerDocument={averageCostPerDocument}
           formatReviewCurrency={formatReviewCurrency}
+          monthlyVolume={monthlyVolume}
+          onMonthlyVolumeChange={updateMonthlyVolume}
         />
       </section>
 
@@ -3212,6 +3340,7 @@ function ConfigurationScreen({
   ] as const;
   const pdfIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.includes('application/pdf'));
   const imageIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.startsWith('image/')));
+  const excelIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.includes('spreadsheetml') || mimeType.includes('ms-excel')));
   const pendingChanges = useMemo(() => pendingConfigurationFields.flatMap((field) => {
     const previous = persistedConfig[field.key];
     const current = config[field.key];
@@ -3756,8 +3885,8 @@ function ConfigurationScreen({
                 )}
               </div>
               <div className="document-processing-option-card ingestion-file-types-card">
-                <strong>API ingestion file types</strong>
-                <p className="help-text">Choose which file types the external document ingestion endpoint accepts.</p>
+                <strong>Processing file types</strong>
+                <p className="help-text">Choose which uploaded and blob-ingested file types enter document processing.</p>
                 <div className="ingestion-file-type-grid">
                   <label className="checkbox-row">
                     <input
@@ -3773,6 +3902,24 @@ function ConfigurationScreen({
                     <span>
                       PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
                       <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                    </span>
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={excelIngestionTypes.length > 0 && excelIngestionTypes.every((fileType) => fileType.enabled)}
+                      onChange={(event) => onConfigChange({
+                        ...config,
+                        ingestionFileTypes: config.ingestionFileTypes.map((candidate) => (
+                          candidate.mimeTypes.some((mimeType) => mimeType.includes('spreadsheetml') || mimeType.includes('ms-excel'))
+                            ? { ...candidate, enabled: event.target.checked }
+                            : candidate
+                        )),
+                      })}
+                    />
+                    <span>
+                      Excel <strong>{excelIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                      <small>{excelIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
                     </span>
                   </label>
                   <label className="checkbox-row">
@@ -3868,6 +4015,127 @@ function classifierStatus(type: DocumentType) {
   return type.classifierTrainingStatus || 'untrained';
 }
 
+function ClassificationTestPanel() {
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<IncomingDocument | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function clearTest() {
+    if (running) return;
+    setFile(null);
+    setResult(null);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function runTest() {
+    if (!file || running) return;
+    setRunning(true);
+    setError('');
+    setResult(null);
+    let testDocument: IncomingDocument | undefined;
+    try {
+      const [uploaded] = await api.uploadDocuments({ isModelTest: true, files: [file] });
+      if (!uploaded) throw new Error('The classification test file could not be uploaded.');
+      testDocument = uploaded;
+      const terminalStatuses: IncomingDocument['status'][] = ['extraction_completed', 'failed', 'unsupported_format'];
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (!terminalStatuses.includes(testDocument.status) && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        testDocument = await api.consumeModelTestResult(testDocument._id, true);
+      }
+      if (!terminalStatuses.includes(testDocument.status)) throw new Error('The classification test timed out.');
+      if (testDocument.status !== 'extraction_completed') {
+        throw new Error(testDocument.error || 'The file could not be classified.');
+      }
+      setResult(testDocument);
+    } catch (testError) {
+      setError(testError instanceof Error ? testError.message : 'The classification test failed.');
+    } finally {
+      if (testDocument && ['extraction_completed', 'failed', 'unsupported_format'].includes(testDocument.status)) {
+        void api.deleteDocument(testDocument._id).catch(() => undefined);
+      }
+      setRunning(false);
+    }
+  }
+
+  const rankedCandidates = [...(result?.classificationCandidates || [])]
+    .sort((left, right) => right.score - left.score);
+  const runnerUp = rankedCandidates.find((candidate) => candidate.documentTypeId !== result?.documentTypeId);
+  const score = Number(result?.classificationScore || 0);
+  const scoreMargin = runnerUp ? Math.max(0, score - runnerUp.score) : undefined;
+  const confidenceBand = score >= 0.85 ? 'High confidence' : score >= 0.65 ? 'Moderate confidence' : 'Review recommended';
+
+  return (
+    <section className="panel classification-test-panel">
+      <div className="panel-heading">
+        <div>
+          <span className="section-kicker">Classifier workspace</span>
+          <h2>Test Classification</h2>
+          <p>Upload a file to see the selected document type, confidence score, and classification description.</p>
+        </div>
+      </div>
+      <div className="classification-test-upload">
+        <label className="file-picker">
+          <Upload size={17} />
+          <span>{file ? file.name : 'Choose a file'}</span>
+          <input ref={fileInputRef} type="file" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+        </label>
+        <button className="primary-button" disabled={!file || running} onClick={runTest}>
+          {running ? <Loader2 className="spin" size={16} /> : <BrainCircuit size={16} />}
+          {running ? 'Classifying…' : 'Run classification'}
+        </button>
+        <button className="secondary-button" disabled={running || (!file && !result && !error)} onClick={clearTest}>
+          <Eraser size={16} />
+          Clear
+        </button>
+      </div>
+      {error && <div className="test-model-error"><AlertTriangle size={17} /> {error}</div>}
+      {result && (
+        <div className="classification-test-result">
+          <div className="classification-test-score">
+            <span>Classification score</span>
+            <strong>{formatScore(result.classificationScore)}</strong>
+          </div>
+          <div><span>Document type</span><strong>{result.documentTypeName || 'No type selected'}</strong></div>
+          <div><span>Category</span><strong>{result.category || '—'}</strong></div>
+          <div className="classification-test-analysis">
+            <span>Classification analysis</span>
+            <div className="classification-test-analysis-grid">
+              <div><small>Confidence</small><strong>{confidenceBand}</strong></div>
+              <div><small>Method</small><strong>{result.classificationMethod?.toUpperCase() || '—'}</strong></div>
+              <div><small>Model</small><strong>{displayModel(result.classificationModel)}</strong></div>
+              <div><small>Candidates</small><strong>{rankedCandidates.length || '—'}</strong></div>
+              <div><small>Score lead</small><strong>{scoreMargin === undefined ? '—' : formatScore(scoreMargin)}</strong></div>
+            </div>
+          </div>
+          <div className="classification-test-description">
+            <span>Description</span>
+            <p>{result.classificationJustification || 'No classification description was returned.'}</p>
+          </div>
+          {rankedCandidates.length > 0 && (
+            <div className="classification-test-candidates">
+              <span>Candidate ranking</span>
+              <div className="classification-test-candidate-list">
+                {rankedCandidates.map((candidate, index) => (
+                  <div key={candidate.documentTypeId} className={candidate.documentTypeId === result.documentTypeId ? 'selected' : ''}>
+                    <em>#{index + 1}</em>
+                    <strong>{candidate.name}</strong>
+                    <small>{candidate.category}</small>
+                    <b>{formatScore(candidate.score)}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ClassificationScreen({
   documentTypes,
   config,
@@ -3883,12 +4151,25 @@ function ClassificationScreen({
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
+  const [classificationTab, setClassificationTab] = useState<'configuration' | 'document-types' | 'test'>('configuration');
   const includedTypes = documentTypes.filter((type) => type.includeInClassification);
   const trainableTypes = includedTypes.filter((type) => type.finalized && type.sampleFiles.length > 0);
   const trainingCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'training').length;
   const failedCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'failed').length;
   const trainedCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'trained').length;
   const includedFileCount = includedTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
+  const vectorProfileCount = includedTypes.filter((type) => Boolean(type.classifierProfile?.trim())).length;
+  const sampleReadyTypes = includedTypes.filter((type) => type.sampleFiles.length >= 3).length;
+  const sampleGaps = includedTypes.filter((type) => type.sampleFiles.length < 3).length;
+  const averageSamples = includedTypes.length ? includedFileCount / includedTypes.length : 0;
+  const vectorCoverage = includedTypes.length ? Math.round((vectorProfileCount / includedTypes.length) * 100) : 0;
+  const sampleQuality = !includedTypes.length
+    ? 'No samples'
+    : sampleGaps === 0
+      ? 'Strong'
+      : averageSamples >= 2
+        ? 'Developing'
+        : 'Needs samples';
   const overallStatus = trainingCount
     ? 'training'
     : failedCount
@@ -3907,7 +4188,12 @@ function ClassificationScreen({
 
   return (
     <div className="classification-layout">
-      <section className="panel classification-training-panel">
+      <div className="classification-tabs" role="tablist" aria-label="Classification workspace">
+        <button className={classificationTab === 'configuration' ? 'active' : ''} onClick={() => setClassificationTab('configuration')}>Configuration</button>
+        <button className={classificationTab === 'document-types' ? 'active' : ''} onClick={() => setClassificationTab('document-types')}>Classification Collection</button>
+        <button className={classificationTab === 'test' ? 'active' : ''} onClick={() => setClassificationTab('test')}>Test Classification</button>
+      </div>
+      <section className="panel classification-training-panel" hidden={classificationTab !== 'configuration'}>
         <div className="panel-heading">
           <div>
             <span className="section-kicker">Classifier workspace</span>
@@ -3967,7 +4253,7 @@ function ClassificationScreen({
           </div>
         </div>
 
-        <div className="classification-settings">
+        <div className="classification-settings" hidden={classificationTab !== 'configuration'}>
           <div className="classification-settings-heading">
             <div>
               <span>Classification configuration</span>
@@ -4095,13 +4381,13 @@ function ClassificationScreen({
         </div>
       </section>
 
-      <section className="panel classification-types-card">
+      <section className="panel classification-types-card" hidden={classificationTab !== 'document-types'}>
         <div className="classification-types-heading">
           <div className="classification-types-title">
             <span><Files size={18} /></span>
             <div>
-              <strong>Document Types</strong>
-              <small>Types currently included in classifier training.</small>
+              <strong>Classification Collection</strong>
+              <small>Document types, vector profiles, and sample readiness.</small>
             </div>
           </div>
           <div className="classification-type-counts" aria-label="Document type summary">
@@ -4117,6 +4403,35 @@ function ClassificationScreen({
             <span className="classification-types-count samples">
               <strong>{includedFileCount}</strong> Sample files
             </span>
+          </div>
+        </div>
+        <div className="classification-health-matrix">
+          <div className="classification-health-heading">
+            <div>
+              <span>Classifier readiness</span>
+              <strong>Vector collection and sample quality</strong>
+            </div>
+            <small>Sample quality targets at least 3 samples per included document type.</small>
+          </div>
+          <div className="classification-health-grid">
+            <section>
+              <span>Vector collection</span>
+              <div className="classification-health-metric"><strong>{vectorCoverage}%</strong><em>Profile coverage</em></div>
+              <dl>
+                <div><dt>Included types</dt><dd>{includedTypes.length}</dd></div>
+                <div><dt>Vector profiles</dt><dd>{vectorProfileCount}</dd></div>
+                <div><dt>Trained types</dt><dd>{trainedCount}</dd></div>
+              </dl>
+            </section>
+            <section>
+              <span>Sample quality</span>
+              <div className="classification-health-metric"><strong>{sampleQuality}</strong><em>{averageSamples.toFixed(1)} avg/type</em></div>
+              <dl>
+                <div><dt>Total samples</dt><dd>{includedFileCount}</dd></div>
+                <div><dt>Ready types</dt><dd>{sampleReadyTypes}</dd></div>
+                <div><dt>Below target</dt><dd>{sampleGaps}</dd></div>
+              </dl>
+            </section>
           </div>
         </div>
         <div className="classification-table">
@@ -4139,6 +4454,7 @@ function ClassificationScreen({
           {!includedTypes.length && <EmptyState text="No document types are included in classification." />}
         </div>
       </section>
+      {classificationTab === 'test' && <ClassificationTestPanel />}
     </div>
   );
 }
@@ -4168,20 +4484,123 @@ function DocumentTypeManagement({
   const [sample, setSample] = useState<File | null>(null);
   const [fields, setFields] = useState<ExtractionField[]>([]);
   const [schemaEditing, setSchemaEditing] = useState(false);
+  const [schemaOrdering, setSchemaOrdering] = useState(false);
+  const [documentTypeTab, setDocumentTypeTab] = useState<'configuration' | 'files' | 'schema' | 'test'>('schema');
+  const [testFile, setTestFile] = useState<File | null>(null);
+  const [testDocument, setTestDocument] = useState<IncomingDocument | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testError, setTestError] = useState('');
+  const [testActiveFieldKey, setTestActiveFieldKey] = useState<string | null>(null);
+  const testDocumentRef = useRef<IncomingDocument | null>(null);
+  const testFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [draggedFieldIndex, setDraggedFieldIndex] = useState<number | null>(null);
+  const [draggedColumn, setDraggedColumn] = useState<{ fieldIndex: number; columnIndex: number } | null>(null);
+  const [fieldDropSlot, setFieldDropSlot] = useState<number | null>(null);
+  const [columnDropSlot, setColumnDropSlot] = useState<{ fieldIndex: number; slotIndex: number } | null>(null);
+  const draggedFieldIndexRef = useRef<number | null>(null);
+  const draggedColumnRef = useRef<{ fieldIndex: number; columnIndex: number } | null>(null);
+  const schemaOrderListRef = useRef<HTMLDivElement | null>(null);
+  const previousOrderPositionsRef = useRef<Map<string, DOMRect> | null>(null);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  const [isFileListExpanded, setIsFileListExpanded] = useState(false);
-  const [isSchemaExpanded, setIsSchemaExpanded] = useState(true);
+  const [visibleSchemaDescriptions, setVisibleSchemaDescriptions] = useState<Record<string, boolean>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
+  const [samplePreview, setSamplePreview] = useState<{ fileName: string; url: string } | null>(null);
+  const [loadingSamplePreview, setLoadingSamplePreview] = useState<string | null>(null);
+
+  function cleanupRetainedTest() {
+    const document = testDocumentRef.current;
+    testDocumentRef.current = null;
+    if (!document || !['extraction_completed', 'failed', 'unsupported_format'].includes(document.status)) return;
+    void api.deleteDocument(document._id).catch(() => undefined);
+  }
+
+  function clearModelTest() {
+    cleanupRetainedTest();
+    setTestFile(null);
+    setTestDocument(null);
+    setTestError('');
+    setTestActiveFieldKey(null);
+    if (testFileInputRef.current) testFileInputRef.current.value = '';
+  }
+
+  useEffect(() => () => {
+    cleanupRetainedTest();
+  }, [activeType?._id]);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
     setPrompt(activeType?.prompt || prompt);
     setSchemaEditing(false);
+    setSchemaOrdering(false);
+    setDocumentTypeTab('schema');
+    setDraggedFieldIndex(null);
+    setDraggedColumn(null);
+    setFieldDropSlot(null);
+    setColumnDropSlot(null);
+    draggedFieldIndexRef.current = null;
+    draggedColumnRef.current = null;
     setExpandedTables({});
-    setIsFileListExpanded(false);
-    setIsSchemaExpanded(true);
+    setVisibleSchemaDescriptions({});
+    setTestFile(null);
+    setTestDocument(null);
+    setTestRunning(false);
+    setTestError('');
+    setTestActiveFieldKey(null);
   }, [activeType?._id]);
+
+  useEffect(() => {
+    if (documentTypeTab !== 'test') cleanupRetainedTest();
+  }, [documentTypeTab]);
+
+  useLayoutEffect(() => {
+    const previousPositions = previousOrderPositionsRef.current;
+    const list = schemaOrderListRef.current;
+    if (!previousPositions || !list) return;
+
+    list.querySelectorAll<HTMLElement>('[data-order-key]').forEach((element) => {
+      const key = element.dataset.orderKey;
+      const previous = key ? previousPositions.get(key) : undefined;
+      if (!previous) return;
+      const current = element.getBoundingClientRect();
+      const deltaY = previous.top - current.top;
+      if (Math.abs(deltaY) < 1) return;
+      element.animate(
+        [{ transform: `translateY(${deltaY}px)` }, { transform: 'translateY(0)' }],
+        { duration: 420, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+      );
+    });
+    previousOrderPositionsRef.current = null;
+  }, [fields]);
+
+  function captureOrderPositions() {
+    const positions = new Map<string, DOMRect>();
+    schemaOrderListRef.current?.querySelectorAll<HTMLElement>('[data-order-key]').forEach((element) => {
+      if (element.dataset.orderKey) positions.set(element.dataset.orderKey, element.getBoundingClientRect());
+    });
+    previousOrderPositionsRef.current = positions;
+  }
+
+  function closeSamplePreview() {
+    if (samplePreview?.url) URL.revokeObjectURL(samplePreview.url);
+    setSamplePreview(null);
+  }
+
+  useEffect(() => () => {
+    if (samplePreview?.url) URL.revokeObjectURL(samplePreview.url);
+  }, [samplePreview?.url]);
+
+  async function previewSample(fileName: string) {
+    if (!activeType || loadingSamplePreview) return;
+    setLoadingSamplePreview(fileName);
+    try {
+      const blob = await api.documentTypeSample(activeType._id, fileName);
+      closeSamplePreview();
+      setSamplePreview({ fileName: displaySampleName(fileName), url: URL.createObjectURL(blob) });
+    } finally {
+      setLoadingSamplePreview(null);
+    }
+  }
 
   function addSchemaField() {
     const nextNumber = fields.length + 1;
@@ -4202,6 +4621,60 @@ function DocumentTypeManagement({
   function removeSchemaField(index: number) {
     setFields(fields.filter((_, fieldIndex) => fieldIndex !== index));
   }
+
+  async function runModelTest() {
+    if (!activeType || !testFile || testRunning) return;
+    cleanupRetainedTest();
+    setTestRunning(true);
+    setTestDocument(null);
+    setTestActiveFieldKey(null);
+    setTestError('');
+    try {
+      const [uploadedDocument] = await api.uploadDocuments({
+        category: activeType.category,
+        documentTypeId: activeType._id,
+        isModelTest: true,
+        files: [testFile],
+      });
+      if (!uploadedDocument) throw new Error('The test document could not be uploaded.');
+      let document = await api.consumeModelTestResult(uploadedDocument._id, true);
+      testDocumentRef.current = document;
+      setTestDocument(document);
+
+      const terminalStatuses: IncomingDocument['status'][] = ['extraction_completed', 'failed', 'unsupported_format'];
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (!terminalStatuses.includes(document.status) && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        document = await api.consumeModelTestResult(document._id, true);
+        testDocumentRef.current = document;
+        setTestDocument(document);
+      }
+
+      if (!terminalStatuses.includes(document.status)) {
+        throw new Error('The model test timed out before a result was available.');
+      }
+      if (document.status !== 'extraction_completed') {
+        throw new Error(document.error || (document.status === 'unsupported_format'
+          ? 'This file format is not enabled for processing.'
+          : 'The extraction failed.'));
+      }
+    } catch (error) {
+      setTestError(error instanceof Error ? error.message : 'The model test failed.');
+    } finally {
+      setTestRunning(false);
+    }
+  }
+
+  const testValues = testDocument ? normalizeExtractedDataToSchema(testDocument.extractedData, activeType) : [];
+  const testPdfHighlights = testValues.flatMap((item, index) => {
+    const hue = (index * 47 + 12) % 360;
+    return (item.boundingBoxes || []).map((box) => ({
+      ...box,
+      fieldKey: item.key,
+      color: `hsl(${hue}, 88%, 47%)`,
+      activeFill: `hsla(${hue}, 95%, 70%, 0.42)`,
+    }));
+  });
 
   return (
     <div className="document-type-layout">
@@ -4282,7 +4755,147 @@ function DocumentTypeManagement({
               </span>
             </div>
 
+            <div className="document-type-tabs" role="tablist" aria-label="Document type sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'schema'}
+                className={documentTypeTab === 'schema' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('schema')}
+              >
+                <ScanText size={16} /> Schema
+                <span>{fields.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'files'}
+                className={documentTypeTab === 'files' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('files')}
+              >
+                <Files size={16} /> Training Files
+                <span>{activeType.sampleFiles.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'configuration'}
+                className={documentTypeTab === 'configuration' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('configuration')}
+              >
+                <BrainCircuit size={16} /> Configuration
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={documentTypeTab === 'test'}
+                className={documentTypeTab === 'test' ? 'active' : ''}
+                onClick={() => setDocumentTypeTab('test')}
+              >
+                <Sparkles size={16} /> Test Model
+              </button>
+            </div>
+
             <div className="document-type-config-grid">
+            {documentTypeTab === 'test' && (
+              <section className="document-type-config-card test-model-card">
+                <div className="document-type-card-heading">
+                  <span><Sparkles size={18} /></span>
+                  <div>
+                    <strong>Test extraction model</strong>
+                    <small>Upload one document and extract it using {activeType.name} and its current schema. Test files and results are deleted when you clear the test or leave this screen.</small>
+                  </div>
+                </div>
+                <div className="classification-test-upload test-model-upload">
+                  <label className="file-picker">
+                    <Upload size={17} />
+                    <span>{testFile?.name || 'Choose a document to test'}</span>
+                    <input
+                      type="file"
+                      ref={testFileInputRef}
+                      disabled={testRunning}
+                      onChange={(event) => {
+                        cleanupRetainedTest();
+                        setTestFile(event.target.files?.[0] || null);
+                        setTestDocument(null);
+                        setTestActiveFieldKey(null);
+                        setTestError('');
+                      }}
+                    />
+                  </label>
+                  <button className="primary-button" type="button" disabled={!testFile || testRunning || !activeType.fields.length} onClick={runModelTest}>
+                    {testRunning ? <Loader2 size={16} className="spin" /> : <ScanText size={16} />}
+                    {testRunning ? 'Extracting…' : 'Run Extraction'}
+                  </button>
+                  <button className="secondary-button" type="button" disabled={testRunning || (!testFile && !testDocument && !testError)} onClick={clearModelTest}>
+                    <Eraser size={16} /> Clear
+                  </button>
+                  {!activeType.fields.length && <p className="warning-text">Create and save an extraction schema before testing this model.</p>}
+                </div>
+
+                {(testDocument || testError) && (
+                  <div className="test-model-results" aria-live="polite">
+                    <div className="test-model-status">
+                      <div>
+                        <span className="section-kicker">Test result</span>
+                        <strong>{testDocument?.originalName || testFile?.name}</strong>
+                      </div>
+                      {testDocument && (
+                        <span className={`test-model-status-badge ${testDocument.status}`}>
+                          <i aria-hidden="true" />
+                          {testDocument.status.replace(/_/g, ' ')}
+                        </span>
+                      )}
+                    </div>
+                    {testError && <div className="test-model-error"><AlertTriangle size={17} /> {testError}</div>}
+                    {testDocument?.status === 'extraction_completed' && (
+                      <div className="test-model-workspace">
+                        <section className="pdf-pane test-model-file-pane">
+                          {testDocument.processingMode === 'spreadsheet' || Boolean(testDocument.workbookArtifactBlobName) ? (
+                            <SpreadsheetViewer
+                              documentId={testDocument._id}
+                              activeReferences={testValues.find((item) => item.key === testActiveFieldKey)?.cellReferences || []}
+                              selectionMode={false}
+                              onReplaceSelection={() => undefined}
+                              onAppendSelection={() => undefined}
+                              onNotify={() => undefined}
+                            />
+                          ) : (
+                            <PdfViewer
+                              documentId={testDocument._id}
+                              highlights={testPdfHighlights}
+                              activeFieldKey={testActiveFieldKey}
+                              selectionMode={false}
+                              onReplaceSelection={() => undefined}
+                              onAppendSelection={() => undefined}
+                              onNotify={() => undefined}
+                            />
+                          )}
+                        </section>
+                        <section className="test-model-data-pane">
+                          <div className="test-extraction-fields">
+                            {testValues.map((item) => (
+                              <div className={`test-extraction-field${item.key === testActiveFieldKey ? ' active' : ''}`} key={item.key}>
+                                <div className="field-label">
+                                  <button type="button" className="value-link" onClick={() => setTestActiveFieldKey(item.key)}>{item.label}</button>
+                              {confidenceBadge(item) && <em>{confidenceBadge(item)}</em>}
+                            </div>
+                            {item.type === 'table'
+                              ? <TableValuePreview item={item} canEdit={false} onEdit={() => undefined} />
+                              : <div className="test-extraction-value">{hasExtractedValue(item) ? coerceValue(item.value) : <span>Not extracted</span>}</div>}
+                          </div>
+                        ))}
+                            {!testDocument.extractedData.length && <div className="empty-table">No values were extracted.</div>}
+                          </div>
+                        </section>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+            {documentTypeTab === 'configuration' && (
+            <>
             <section className="document-type-config-card model-card">
               <div className="document-type-card-heading">
                 <span><BrainCircuit size={18} /></span>
@@ -4426,7 +5039,10 @@ function DocumentTypeManagement({
               </label>
               </div>
             </section>
+            </>
+            )}
 
+            {documentTypeTab === 'files' && (
             <section className="document-type-config-card files-card">
               <div className="document-type-card-heading">
                 <span><Files size={18} /></span>
@@ -4455,43 +5071,50 @@ function DocumentTypeManagement({
               </div>
 
               <div className="sample-file-list">
-              <button
-                className="collapsible-section-heading"
-                type="button"
-                onClick={() => setIsFileListExpanded((current) => !current)}
-              >
+              <div className="collapsible-section-heading">
                 <span>
-                  {isFileListExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                   Uploaded Documents
                 </span>
                 <span>{activeType.sampleFiles.length} file{activeType.sampleFiles.length === 1 ? '' : 's'}</span>
-              </button>
-              {isFileListExpanded && (
-                activeType.sampleFiles.length ? (
+              </div>
+              {activeType.sampleFiles.length ? (
                   activeType.sampleFiles.map((fileName) => (
                     <div className="sample-file-row" key={fileName}>
                       <span title={fileName}>{displaySampleName(fileName)}</span>
-                      <button
-                        className="icon-button danger"
-                        title="Delete sample file"
-                        onClick={() =>
-                          onRun(async () => {
-                            await api.deleteSample(activeType._id, fileName);
-                            await onRefresh();
-                          }, 'Sample deleted')
-                        }
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="sample-file-actions">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="View sample file"
+                          aria-label={`View ${displaySampleName(fileName)}`}
+                          disabled={loadingSamplePreview === fileName}
+                          onClick={() => onRun(() => previewSample(fileName), 'Sample opened')}
+                        >
+                          {loadingSamplePreview === fileName ? <Loader2 size={15} className="spin" /> : <Eye size={15} />}
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          title="Delete sample file"
+                          onClick={() =>
+                            onRun(async () => {
+                              await api.deleteSample(activeType._id, fileName);
+                              await onRefresh();
+                            }, 'Sample deleted')
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (
                   <div className="empty-table">No documents uploaded for this type.</div>
-                )
               )}
               </div>
             </section>
+            )}
 
+            {documentTypeTab === 'schema' && (
             <section className="document-type-config-card schema-card">
               <div className="document-type-card-heading">
                 <span><ScanText size={18} /></span>
@@ -4499,6 +5122,92 @@ function DocumentTypeManagement({
                   <strong>Extraction Schema</strong>
                   <small>Define the fields and tables extracted from this document type.</small>
                 </div>
+                {!!fields.length && (
+                  !schemaEditing && !schemaOrdering ? (
+                    <div className="schema-actions">
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          const showAll = !fields.every((field) => visibleSchemaDescriptions[field.uiId || field.key]);
+                          setVisibleSchemaDescriptions(showAll
+                            ? Object.fromEntries(fields.map((field) => [field.uiId || field.key, true]))
+                            : {});
+                        }}
+                      >
+                        {fields.every((field) => visibleSchemaDescriptions[field.uiId || field.key])
+                          ? <EyeOff size={16} />
+                          : <Eye size={16} />}
+                        {fields.every((field) => visibleSchemaDescriptions[field.uiId || field.key])
+                          ? 'Hide All Descriptions'
+                          : 'Show All Descriptions'}
+                      </button>
+                      <button className="secondary-button" onClick={() => setSchemaOrdering(true)}>
+                        <ListOrdered size={16} />
+                        Arrange
+                      </button>
+                      <button className="secondary-button" onClick={() => setSchemaEditing(true)}>
+                        <Pencil size={16} />
+                        Edit Schema
+                      </button>
+                    </div>
+                  ) : schemaOrdering ? (
+                    <div className="schema-actions">
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          setFields(withUiIds(activeType.fields));
+                          setSchemaOrdering(false);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="primary-button"
+                        onClick={() =>
+                          onRun(async () => {
+                            const updated = await api.finalizeTemplate(activeType._id, fields);
+                            onDocumentTypeSaved(updated);
+                            setFields(withUiIds(updated.fields));
+                            setSchemaOrdering(false);
+                            await onRefresh();
+                          }, 'Schema order saved')
+                        }
+                      >
+                        <Save size={16} />
+                        Save Order
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="schema-actions">
+                      <button className="secondary-button" onClick={addSchemaField}>
+                        <Plus size={16} />
+                        Add Field
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          setFields(withUiIds(activeType.fields));
+                          setSchemaEditing(false);
+                        }}
+                      >
+                        Cancel Edit
+                      </button>
+                      <button
+                        className="primary-button"
+                        onClick={() =>
+                          onRun(async () => {
+                            await api.finalizeTemplate(activeType._id, fields);
+                            setSchemaEditing(false);
+                            await onRefresh();
+                          }, 'Schema saved')
+                        }
+                      >
+                        <Save size={16} />
+                        Save Schema
+                      </button>
+                    </div>
+                  )
+                )}
               </div>
             {!fields.length && (
               <>
@@ -4527,48 +5236,188 @@ function DocumentTypeManagement({
 
             {!!fields.length && (
               <div className="collapsible-section schema-card-content">
-                <div className="schema-toolbar">
-                  <button
-                    className="collapsible-section-title"
-                    type="button"
-                    onClick={() => setIsSchemaExpanded((current) => !current)}
-                  >
-                    {isSchemaExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                    <span>Extraction Schema</span>
-                  </button>
-                  {isSchemaExpanded && (
-                    !schemaEditing ? (
-                      <button className="secondary-button" onClick={() => setSchemaEditing(true)}>
-                        <Pencil size={16} />
-                        Edit Schema
-                      </button>
-                    ) : (
-                      <div className="schema-actions">
-                        <button className="secondary-button" onClick={addSchemaField}>
-                          <Plus size={16} />
-                          Add Field
-                        </button>
-                        <button
-                          className="primary-button"
-                          onClick={() =>
-                            onRun(async () => {
-                              await api.finalizeTemplate(activeType._id, fields);
-                              setSchemaEditing(false);
-                              await onRefresh();
-                            }, 'Schema saved')
-                          }
-                        >
-                          <Save size={16} />
-                          Save Schema
-                        </button>
-                      </div>
-                    )
-                  )}
-                </div>
-
-                {isSchemaExpanded && (
                   <div className="fields-table">
-                    {fields.map((field, index) => (
+                    {schemaOrdering ? (
+                      <div
+                        className="schema-order-list"
+                        ref={schemaOrderListRef}
+                        onDragOver={(event) => {
+                          if (draggedFieldIndexRef.current !== null && !draggedColumnRef.current) event.preventDefault();
+                        }}
+                        onDrop={(event) => {
+                          const sourceIndex = draggedFieldIndexRef.current;
+                          if (sourceIndex === null || fieldDropSlot === null || draggedColumnRef.current) return;
+                          event.preventDefault();
+                          captureOrderPositions();
+                          setFields((current) => moveArrayItemToSlot(current, sourceIndex, fieldDropSlot));
+                          draggedFieldIndexRef.current = null;
+                          setDraggedFieldIndex(null);
+                          setFieldDropSlot(null);
+                        }}
+                      >
+                        {fields.map((field, fieldIndex) => (
+                          <div
+                            className={`schema-order-field${draggedFieldIndex === fieldIndex ? ' dragging' : ''}${fieldDropSlot === fieldIndex && fieldDropSlot !== draggedFieldIndex && fieldDropSlot !== (draggedFieldIndex ?? -2) + 1 ? ' drop-before' : ''}${fieldIndex === fields.length - 1 && fieldDropSlot === fields.length && fieldDropSlot !== (draggedFieldIndex ?? -2) + 1 ? ' drop-after' : ''}`}
+                            key={field.uiId || field.key}
+                            data-order-key={`field:${field.uiId || field.key}`}
+                            draggable
+                            onDragStart={(event) => {
+                              draggedFieldIndexRef.current = fieldIndex;
+                              setDraggedFieldIndex(fieldIndex);
+                              setFieldDropSlot(null);
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', `field:${fieldIndex}`);
+                            }}
+                            onDragOver={(event) => {
+                              const sourceIndex = draggedFieldIndexRef.current;
+                              if (sourceIndex === null || draggedColumnRef.current) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                              const bounds = event.currentTarget.getBoundingClientRect();
+                              setFieldDropSlot(event.clientY < bounds.top + bounds.height / 2 ? fieldIndex : fieldIndex + 1);
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const sourceIndex = draggedFieldIndexRef.current;
+                              if (sourceIndex !== null && fieldDropSlot !== null) {
+                                captureOrderPositions();
+                                setFields((current) => moveArrayItemToSlot(current, sourceIndex, fieldDropSlot));
+                              }
+                              draggedFieldIndexRef.current = null;
+                              setDraggedFieldIndex(null);
+                              setFieldDropSlot(null);
+                            }}
+                            onDragEnd={() => {
+                              draggedFieldIndexRef.current = null;
+                              setDraggedFieldIndex(null);
+                              setFieldDropSlot(null);
+                            }}
+                          >
+                            <div className="schema-order-field-name">
+                              <GripVertical size={18} aria-hidden="true" />
+                              <strong>{field.label}</strong>
+                              {field.type === 'table' && <span>Table</span>}
+                            </div>
+                            {field.type === 'table' && Boolean(field.columns?.length) && (
+                              <div
+                                className="schema-order-columns"
+                                onDragOver={(event) => {
+                                  if (draggedColumnRef.current?.fieldIndex === fieldIndex) {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                  }
+                                }}
+                                onDrop={(event) => {
+                                  const source = draggedColumnRef.current;
+                                  if (!source || source.fieldIndex !== fieldIndex || columnDropSlot?.fieldIndex !== fieldIndex) return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  captureOrderPositions();
+                                  setFields((current) => current.map((currentField, index) => index === fieldIndex
+                                    ? { ...currentField, columns: moveArrayItemToSlot(currentField.columns || [], source.columnIndex, columnDropSlot.slotIndex) }
+                                    : currentField));
+                                  draggedColumnRef.current = null;
+                                  setDraggedColumn(null);
+                                  setColumnDropSlot(null);
+                                }}
+                              >
+                                {(field.columns || []).map((column, columnIndex) => (
+                                  <div
+                                    className={`schema-order-column${draggedColumn?.fieldIndex === fieldIndex && draggedColumn.columnIndex === columnIndex ? ' dragging' : ''}${columnDropSlot?.fieldIndex === fieldIndex && columnDropSlot.slotIndex === columnIndex && columnDropSlot.slotIndex !== draggedColumn?.columnIndex && columnDropSlot.slotIndex !== (draggedColumn?.columnIndex ?? -2) + 1 ? ' drop-before' : ''}${columnIndex === (field.columns?.length || 0) - 1 && columnDropSlot?.fieldIndex === fieldIndex && columnDropSlot.slotIndex === (field.columns?.length || 0) && columnDropSlot.slotIndex !== (draggedColumn?.columnIndex ?? -2) + 1 ? ' drop-after' : ''}`}
+                                    key={`${field.uiId || field.key}-${column.key}-${columnIndex}`}
+                                    data-order-key={`column:${field.uiId || field.key}:${column.key}`}
+                                    draggable
+                                    onDragStart={(event) => {
+                                      event.stopPropagation();
+                                      draggedColumnRef.current = { fieldIndex, columnIndex };
+                                      setDraggedColumn({ fieldIndex, columnIndex });
+                                      setColumnDropSlot(null);
+                                      event.dataTransfer.effectAllowed = 'move';
+                                      event.dataTransfer.setData('text/plain', `column:${fieldIndex}:${columnIndex}`);
+                                    }}
+                                    onDragOver={(event) => {
+                                      const source = draggedColumnRef.current;
+                                      if (!source || source.fieldIndex !== fieldIndex) return;
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      event.dataTransfer.dropEffect = 'move';
+                                      const bounds = event.currentTarget.getBoundingClientRect();
+                                      setColumnDropSlot({ fieldIndex, slotIndex: event.clientY < bounds.top + bounds.height / 2 ? columnIndex : columnIndex + 1 });
+                                    }}
+                                    onDrop={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      const source = draggedColumnRef.current;
+                                      if (source?.fieldIndex === fieldIndex && columnDropSlot?.fieldIndex === fieldIndex) {
+                                        captureOrderPositions();
+                                        setFields((current) => current.map((currentField, index) => index === fieldIndex
+                                          ? { ...currentField, columns: moveArrayItemToSlot(currentField.columns || [], source.columnIndex, columnDropSlot.slotIndex) }
+                                          : currentField));
+                                      }
+                                      draggedColumnRef.current = null;
+                                      setDraggedColumn(null);
+                                      setColumnDropSlot(null);
+                                    }}
+                                    onDragEnd={(event) => {
+                                      event.stopPropagation();
+                                      draggedColumnRef.current = null;
+                                      setDraggedColumn(null);
+                                      setColumnDropSlot(null);
+                                    }}
+                                  >
+                                    <GripVertical size={16} aria-hidden="true" />
+                                    <span>{column.label}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : !schemaEditing ? (
+                      <div className="schema-summary-list">
+                        {fields.map((field) => {
+                          const fieldId = field.uiId || field.key;
+                          const descriptionVisible = Boolean(visibleSchemaDescriptions[fieldId]);
+                          return (
+                            <div className="schema-summary-field" key={fieldId}>
+                              <div className="schema-summary-field-heading">
+                                <strong>{field.label}</strong>
+                                {field.type === 'table' && <span>Table</span>}
+                                <button
+                                  type="button"
+                                  className="icon-button"
+                                  title={`${descriptionVisible ? 'Hide' : 'Show'} description for ${field.label}`}
+                                  aria-label={`${descriptionVisible ? 'Hide' : 'Show'} description for ${field.label}`}
+                                  aria-expanded={descriptionVisible}
+                                  onClick={() => setVisibleSchemaDescriptions((current) => ({
+                                    ...current,
+                                    [fieldId]: !current[fieldId],
+                                  }))}
+                                >
+                                  {descriptionVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                              </div>
+                              {descriptionVisible && (
+                                <div className="schema-summary-description">
+                                  <p>{field.description || 'No description provided.'}</p>
+                                </div>
+                              )}
+                              {field.type === 'table' && Boolean(field.columns?.length) && (
+                                <div className="schema-summary-columns">
+                                  {(field.columns || []).map((column, columnIndex) => (
+                                    <div key={`${fieldId}-${column.key}-${columnIndex}`}>
+                                      <strong>{column.label}</strong>
+                                      {descriptionVisible && <p>{column.description || 'No description provided.'}</p>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : fields.map((field, index) => (
                 <div className="schema-field" key={field.uiId || `${field.key}-${index}`}>
                   <div className={schemaEditing ? 'field-row editable' : 'field-row readonly'}>
                     <input
@@ -4614,13 +5463,16 @@ function DocumentTypeManagement({
                       ))}
                     </select>
                     {schemaEditing && (
-                      <button
-                        className="icon-button danger"
-                        title="Remove field"
-                        onClick={() => removeSchemaField(index)}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="schema-row-actions">
+                        <button
+                          className="icon-button danger"
+                          type="button"
+                          title="Remove field"
+                          onClick={() => removeSchemaField(index)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className={schemaEditing ? 'field-description' : 'field-description readonly'}>
@@ -4718,19 +5570,22 @@ function DocumentTypeManagement({
                                 ))}
                               </select>
                               {schemaEditing && (
-                                <button
-                                  className="icon-button danger"
-                                  title="Remove table field"
-                                  onClick={() => {
-                                    const next = [...fields];
-                                    const columns = [...(next[index].columns || [])];
-                                    columns.splice(columnIndex, 1);
-                                    next[index] = { ...field, columns };
-                                    setFields(next);
-                                  }}
-                                >
-                                  <Trash2 size={15} />
-                                </button>
+                                <div className="schema-row-actions">
+                                  <button
+                                    className="icon-button danger"
+                                    type="button"
+                                    title="Remove table field"
+                                    onClick={() => {
+                                      const next = [...fields];
+                                      const columns = [...(next[index].columns || [])];
+                                      columns.splice(columnIndex, 1);
+                                      next[index] = { ...field, columns };
+                                      setFields(next);
+                                    }}
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                </div>
                               )}
                             </div>
                             <div className={schemaEditing ? 'column-description' : 'column-description readonly'}>
@@ -4755,10 +5610,10 @@ function DocumentTypeManagement({
                 </div>
                     ))}
                   </div>
-                )}
               </div>
             )}
             </section>
+            )}
             </div>
           </>
         ) : (
@@ -4778,6 +5633,22 @@ function DocumentTypeManagement({
           }}
           onRun={onRun}
         />
+      )}
+      {samplePreview && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeSamplePreview()}>
+          <section className="modal sample-preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${samplePreview.fileName}`}>
+            <div className="sample-preview-heading">
+              <div>
+                <span className="section-kicker">Training file</span>
+                <h3>{samplePreview.fileName}</h3>
+              </div>
+              <button className="icon-button" type="button" title="Close preview" aria-label="Close preview" onClick={closeSamplePreview}>
+                <X size={18} />
+              </button>
+            </div>
+            <iframe src={samplePreview.url} title={samplePreview.fileName} />
+          </section>
+        </div>
       )}
       {deleteTypeTarget && (
         <ConfirmDialog
@@ -5352,9 +6223,12 @@ function DocumentList({
             <option value="">All</option>
             <option value="in-progress">In progress</option>
             <option value="received">Received</option>
-            <option value="preprocessed">Preprocessed</option>
-            <option value="classified">Classified</option>
-            <option value="extracted">Extracted</option>
+            <option value="preprocessing_started">Preprocessing - Started</option>
+            <option value="preprocessing_completed">Preprocessing - Completed</option>
+            <option value="classification_started">Classification - Started</option>
+            <option value="classification_completed">Classification - Completed</option>
+            <option value="extraction_started">Extraction - Started</option>
+            <option value="extraction_completed">Extraction - Completed</option>
             <option value="validated">Validated</option>
             <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
@@ -5497,7 +6371,7 @@ function DocumentList({
                 )}
               </span>
               <span
-                className={`pill ${doc.status} clickable-status`}
+                className="clickable-status"
                 role="button"
                 tabIndex={0}
                 title="View document processing flow"
@@ -5512,7 +6386,7 @@ function DocumentList({
                   setFlowTarget(doc);
                 }}
               >
-                {doc.status === 'unsupported_format' ? 'Unsupported' : doc.status.replace(/_/g, ' ')}
+                <DocumentStatusIndicator document={doc} />
               </span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
@@ -5809,6 +6683,55 @@ function formatDurationMilliseconds(duration: number) {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function documentStatusLabel(status: IncomingDocument['status']) {
+  if (status === 'unsupported_format') return 'Unsupported';
+  if (status === 'preprocessing_started') return 'Preprocessing - Started';
+  if (status === 'preprocessing_completed') return 'Preprocessing - Completed';
+  if (status === 'classification_started') return 'Classification - Started';
+  if (status === 'classification_completed') return 'Classification - Completed';
+  if (status === 'extraction_started') return 'Extraction - Started';
+  if (status === 'extraction_completed') return 'Extraction - Completed';
+  return status.replace(/_/g, ' ');
+}
+
+function documentProcessingPercentage(document: IncomingDocument) {
+  switch (document.status) {
+    case 'received': return 0;
+    case 'preprocessing_started': return 15;
+    case 'preprocessing_completed': return 30;
+    case 'classification_started': return 45;
+    case 'classification_completed': return 60;
+    case 'extraction_started': return 75;
+    case 'extraction_completed':
+    case 'validated':
+    case 'rejected': return 100;
+    case 'failed': {
+      const statuses = new Set((document.stageTimings || []).map((timing) => timing.status));
+      if (statuses.has('extraction_started')) return 75;
+      if (statuses.has('classification_started')) return 45;
+      if (statuses.has('preprocessing_started')) return 15;
+      return 0;
+    }
+    default: return 0;
+  }
+}
+
+function DocumentStatusIndicator({ document }: { document: IncomingDocument }) {
+  const percentage = documentProcessingPercentage(document);
+  return (
+    <span className="document-status-indicator">
+      <span className={`pill ${document.status}`}>{documentStatusLabel(document.status)}</span>
+      <span
+        className={`document-progress ${document.status}`}
+        style={{ '--progress': `${percentage}%` } as CSSProperties}
+        aria-label={`Processing ${percentage}% complete`}
+      >
+        <span>{percentage}%</span>
+      </span>
+    </span>
+  );
+}
+
 function DocumentFlowDialog({
   document,
   onClose,
@@ -5816,17 +6739,29 @@ function DocumentFlowDialog({
   document: IncomingDocument;
   onClose: () => void;
 }) {
-  const baseStatuses: IncomingDocument['status'][] = ['received', 'preprocessed', 'classified', 'extracted'];
+  const baseStages = [
+    { key: 'received', label: 'Received', startedStatus: 'received', completedStatus: 'received' },
+    { key: 'preprocessed', label: 'Preprocessed', startedStatus: 'preprocessing_started', completedStatus: 'preprocessing_completed' },
+    { key: 'classified', label: 'Classified', startedStatus: 'classification_started', completedStatus: 'classification_completed' },
+    { key: 'extracted', label: 'Extracted', startedStatus: 'extraction_started', completedStatus: 'extraction_completed' },
+  ] as const satisfies ReadonlyArray<{
+    key: string;
+    label: string;
+    startedStatus: IncomingDocument['status'];
+    completedStatus: IncomingDocument['status'];
+  }>;
   const isUnsupported = document.status === 'unsupported_format';
   const recordedTimings = document.stageTimings || [];
-  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed', 'unsupported_format'];
-  const statuses = isUnsupported ? ['unsupported_format'] as IncomingDocument['status'][] : [
-    ...baseStatuses,
-    ...optionalStatuses.filter((status) =>
-      status === document.status || recordedTimings.some((timing) => timing.status === status)),
-  ];
-  const processingTimings = baseStatuses
-    .map((status) => [...recordedTimings].reverse().find((timing) => timing.status === status))
+  const stageDetails = baseStages.map((stage) => ({
+    ...stage,
+    timing: [...recordedTimings].reverse().find((timing) => timing.status === stage.startedStatus),
+  }));
+  const visibleStages = isUnsupported ? [] : stageDetails;
+  const terminalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed', 'unsupported_format'];
+  const visibleTerminalStatuses = terminalStatuses.filter((status) =>
+    status === document.status || recordedTimings.some((timing) => timing.status === status));
+  const processingTimings = stageDetails
+    .map((stage) => stage.timing)
     .filter((timing): timing is NonNullable<typeof timing> => Boolean(timing?.startTime));
   const now = Date.now();
   const processingTimeExcludingQueue = processingTimings.reduce((total, timing) => {
@@ -5841,15 +6776,15 @@ function DocumentFlowDialog({
   const processingStart = processingTimings.length
     ? Math.min(...processingTimings.map((timing) => new Date(timing.startTime).getTime()))
     : now;
-  const extractedTiming = [...recordedTimings].reverse().find((timing) => timing.status === 'extracted');
   const latestRecordedTime = recordedTimings.length
     ? Math.max(...recordedTimings.flatMap((timing) => [
       new Date(timing.startTime).getTime(),
       timing.endTime ? new Date(timing.endTime).getTime() : now,
     ]))
     : now;
-  const processingEnd = extractedTiming?.endTime
-    ? new Date(extractedTiming.endTime).getTime()
+  const extractionTiming = stageDetails.find((stage) => stage.key === 'extracted')?.timing;
+  const processingEnd = extractionTiming?.endTime
+    ? new Date(extractionTiming.endTime).getTime()
     : latestRecordedTime;
   const processingTimeIncludingQueue = Math.max(0, processingEnd - processingStart);
 
@@ -5880,27 +6815,23 @@ function DocumentFlowDialog({
           )}
         </div>
         <div className="document-flow">
-          {statuses.map((status, index) => {
-            const timing = [...recordedTimings].reverse().find((item) => item.status === status);
-            const nextStatus = statuses[index + 1];
-            const nextTiming = nextStatus
-              ? [...recordedTimings].reverse().find((item) => item.status === nextStatus)
-              : undefined;
-            const showQueueWait = !isUnsupported && Boolean(nextStatus) && index < baseStatuses.length - 1
-              && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
-            const isCurrent = status === document.status;
-            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed' || status === 'unsupported_format';
-            const completed = Boolean(timing?.endTime) || (isCurrent && isTerminalStatus);
+          {visibleStages.map((stage, index) => {
+            const timing = stage.timing;
+            const nextStage = visibleStages[index + 1];
+            const nextTiming = nextStage?.timing;
+            const isCurrent = document.status === stage.startedStatus;
+            const completed = Boolean(timing?.endTime);
+            const showQueueWait = Boolean(nextStage && timing?.endTime && nextTiming?.startTime);
             return (
-              <Fragment key={status}>
-                <div className={`document-flow-stage ${status}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+              <Fragment key={stage.key}>
+                <div className={`document-flow-stage ${isCurrent ? stage.startedStatus : stage.completedStatus}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
                   <div className="document-flow-marker">
                     {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
-                    {index < statuses.length - 1 && <span />}
+                    {index < visibleStages.length - 1 || visibleTerminalStatuses.length > 0 ? <span /> : null}
                   </div>
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
-                      <strong>{status === 'unsupported_format' ? 'Unsupported' : status}</strong>
+                      <strong>{stage.label}</strong>
                       <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
                     </div>
                     <dl>
@@ -5925,7 +6856,7 @@ function DocumentFlowDialog({
                       <Clock3 size={16} />
                     </div>
                     <div>
-                      <strong>Queue wait for {nextStatus}</strong>
+                      <strong>Queue wait for {nextStage.label}</strong>
                       <span>
                         {formatStageTimestamp(timing?.endTime)}
                         {' → '}
@@ -5936,6 +6867,28 @@ function DocumentFlowDialog({
                   </div>
                 )}
               </Fragment>
+            );
+          })}
+          {visibleTerminalStatuses.map((status, index) => {
+            const timing = [...recordedTimings].reverse().find((item) => item.status === status);
+            return (
+              <div className={`document-flow-stage ${status} completed`} key={status}>
+                <div className="document-flow-marker">
+                  <CheckCircle2 size={18} />
+                  {index < visibleTerminalStatuses.length - 1 && <span />}
+                </div>
+                <div className="document-flow-stage-card">
+                  <div className="document-flow-stage-heading">
+                    <strong>{documentStatusLabel(status)}</strong>
+                    <span>Completed</span>
+                  </div>
+                  <dl>
+                    <div><dt>Start time</dt><dd>{formatStageTimestamp(timing?.startTime)}</dd></div>
+                    <div><dt>End time</dt><dd>{formatStageTimestamp(timing?.endTime)}</dd></div>
+                    <div><dt>Duration</dt><dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd></div>
+                  </dl>
+                </div>
+              </div>
             );
           })}
         </div>
@@ -5960,7 +6913,7 @@ function ReprocessDialog({
   onConfirm: (payload: ReprocessDocumentPayload) => Promise<void> | void;
 }) {
   const initialMode: ReprocessProcessingMode =
-    document.processingMode || (config.useOcrForDocumentProcessing
+    (document.processingMode === 'spreadsheet' ? 'ocr' : document.processingMode) || (config.useOcrForDocumentProcessing
       ? config.documentTextMode === 'markdown' ? 'markdown' : 'ocr'
       : 'pdf');
   const [extractionModel, setExtractionModel] = useState(
@@ -6065,9 +7018,14 @@ function ValidationScreen({
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
   const [tableEditIndex, setTableEditIndex] = useState<number | null>(null);
+  const [tableEditRows, setTableEditRows] = useState<Record<string, unknown>[]>([]);
+  const [tableEditBoundingBoxes, setTableEditBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
+  const [tableEditCellReferences, setTableEditCellReferences] = useState<NonNullable<ExtractedValue['cellReferences']>>([]);
+  const [tableSelectionTarget, setTableSelectionTarget] = useState<{ rowIndex: number; column: string } | null>(null);
   const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
   const [editingValueDraft, setEditingValueDraft] = useState('');
   const [editingValueBoundingBoxes, setEditingValueBoundingBoxes] = useState<NonNullable<ExtractedValue['boundingBoxes']>>([]);
+  const [editingValueCellReferences, setEditingValueCellReferences] = useState<NonNullable<ExtractedValue['cellReferences']>>([]);
   const [savingValueKey, setSavingValueKey] = useState<string | null>(null);
   const [copyFromDocumentKey, setCopyFromDocumentKey] = useState<string | null>(null);
   const [showAddEntityDialog, setShowAddEntityDialog] = useState(false);
@@ -6117,26 +7075,33 @@ function ValidationScreen({
   }, [values]);
 
   const pdfHighlights = useMemo(() => {
-    return values.flatMap((item) => {
+    return values.flatMap((item, index) => {
       const styles = fieldStyles[item.key];
-      return (item.boundingBoxes || []).map((box) => ({
+      const boundingBoxes = tableEditIndex === index ? tableEditBoundingBoxes : item.boundingBoxes || [];
+      return boundingBoxes.map((box) => ({
         ...box,
         fieldKey: item.key,
         color: styles?.border || 'rgba(59, 130, 246, 0.8)',
         activeFill: styles?.activeFill || 'rgba(59, 130, 246, 0.25)',
       }));
     });
-  }, [fieldStyles, values]);
+  }, [fieldStyles, tableEditBoundingBoxes, tableEditIndex, values]);
 
   useEffect(() => {
     if (!documentId) return;
     let cancelled = false;
     setDocument(null);
     setValues([]);
+    setTableEditIndex(null);
+    setTableEditRows([]);
+    setTableEditBoundingBoxes([]);
+    setTableEditCellReferences([]);
+    setTableSelectionTarget(null);
     setActiveFieldKey(null);
     setEditingValueKey(null);
     setEditingValueDraft('');
     setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
     setSavingValueKey(null);
     setCopyFromDocumentKey(null);
     api.getDocument(documentId).then((doc) => {
@@ -6170,11 +7135,52 @@ function ValidationScreen({
   }
 
   function startValueEdit(item: ExtractedValue) {
+    setTableEditIndex(null);
+    setTableEditRows([]);
+    setTableEditBoundingBoxes([]);
+    setTableEditCellReferences([]);
+    setTableSelectionTarget(null);
     setCopyFromDocumentKey(null);
     setActiveFieldKey(item.key);
     setEditingValueKey(item.key);
     setEditingValueDraft(coerceValue(item.value));
     setEditingValueBoundingBoxes(item.boundingBoxes || []);
+    setEditingValueCellReferences(item.cellReferences || []);
+  }
+
+  function startTableEdit(index: number, item: ExtractedValue) {
+    setEditingValueKey(null);
+    setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
+    setActiveFieldKey(item.key);
+    setTableEditIndex(index);
+    setTableEditRows(asTableRows(item.value));
+    setTableEditBoundingBoxes(item.boundingBoxes || []);
+    setTableEditCellReferences(item.cellReferences || []);
+    setTableSelectionTarget(null);
+    setCopyFromDocumentKey(null);
+  }
+
+  function cancelTableEdit() {
+    setTableEditIndex(null);
+    setTableEditRows([]);
+    setTableEditBoundingBoxes([]);
+    setTableEditCellReferences([]);
+    setTableSelectionTarget(null);
+    setCopyFromDocumentKey(null);
+  }
+
+  function updateSelectedTableCell(text: string, append: boolean) {
+    if (!tableSelectionTarget) return;
+    setTableEditRows((current) => current.map((row, rowIndex) => rowIndex === tableSelectionTarget.rowIndex
+      ? {
+          ...row,
+          [tableSelectionTarget.column]: append
+            ? [coerceValue(row[tableSelectionTarget.column]).trim(), text].filter(Boolean).join(' ')
+            : text,
+        }
+      : row));
   }
 
   function cancelValueEdit() {
@@ -6182,6 +7188,14 @@ function ValidationScreen({
     setEditingValueKey(null);
     setEditingValueDraft('');
     setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
+  }
+
+  function clearValueEdit() {
+    setCopyFromDocumentKey(null);
+    setEditingValueDraft('');
+    setEditingValueBoundingBoxes([]);
+    setEditingValueCellReferences([]);
   }
 
   async function persistExtractedData(nextValues: ExtractedValue[]) {
@@ -6198,7 +7212,7 @@ function ValidationScreen({
     if (!current) return;
 
     const next = [...values];
-    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes };
+    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes, cellReferences: editingValueCellReferences };
 
     setSavingValueKey(current.key);
     try {
@@ -6214,7 +7228,13 @@ function ValidationScreen({
 
   async function updateTableValue(index: number, value: Record<string, unknown>[]) {
     const next = [...values];
-    next[index] = { ...next[index], value, confidence: 1 };
+    next[index] = {
+      ...next[index],
+      value,
+      confidence: 1,
+      boundingBoxes: tableEditBoundingBoxes,
+      cellReferences: tableEditCellReferences,
+    };
     await persistExtractedData(next);
   }
 
@@ -6235,11 +7255,11 @@ function ValidationScreen({
     };
     setAddingEntity(true);
     try {
-      await persistExtractedData([...values, entity]);
+      await persistExtractedData([entity, ...values]);
       setShowAddEntityDialog(false);
       setNewEntityLabel('');
       startValueEdit(entity);
-      if (document?.spatialTextArtifactBlobName) setCopyFromDocumentKey(entity.key);
+      if (document?.spatialTextArtifactBlobName || document?.workbookArtifactBlobName) setCopyFromDocumentKey(entity.key);
       onNotify(`${label} added to this document`, 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to add entity', 'error');
@@ -6319,13 +7339,15 @@ function ValidationScreen({
     onNotify('JSON downloaded', 'success');
   }
 
-  async function downloadPdf() {
+  async function downloadSourceDocument() {
     if (!document) return;
     try {
-      const displayName = document.originalName || document.fileName || 'document.pdf';
-      const processingPdfName = `${displayName.replace(/\.[^.]+$/, '') || 'document'}.pdf`;
-      downloadBlobFile(processingPdfName, await api.documentFile(document._id));
-      onNotify('Processing PDF downloaded', 'success');
+      const displayName = document.originalName || document.fileName || 'document';
+      const downloadName = document.processingMode === 'spreadsheet'
+        ? displayName
+        : `${displayName.replace(/\.[^.]+$/, '') || 'document'}.pdf`;
+      downloadBlobFile(downloadName, await api.documentFile(document._id));
+      onNotify(document.processingMode === 'spreadsheet' ? 'Workbook downloaded' : 'Processing PDF downloaded', 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to download PDF', 'error');
     }
@@ -6352,24 +7374,65 @@ function ValidationScreen({
   return (
     <div className="validation-layout">
       <section className="pdf-pane">
+        {document.processingMode === 'spreadsheet' || Boolean(document.workbookArtifactBlobName) ? (
+          <SpreadsheetViewer
+            documentId={document._id}
+            activeReferences={tableEditIndex !== null && values[tableEditIndex]?.key === activeFieldKey
+              ? tableEditCellReferences
+              : values.find((item) => item.key === activeFieldKey)?.cellReferences || []}
+            selectionMode={copyFromDocumentKey !== null}
+            onReplaceSelection={({ text, reference }) => {
+              if (tableSelectionTarget) {
+                updateSelectedTableCell(text, false);
+                setTableEditCellReferences((current) => [...current, reference].filter((item, index, references) =>
+                  references.findIndex((candidate) => candidate.sheetIndex === item.sheetIndex && candidate.startCell === item.startCell && candidate.endCell === item.endCell) === index));
+              } else {
+                setEditingValueDraft(text);
+                setEditingValueCellReferences([reference]);
+              }
+            }}
+            onAppendSelection={({ text, reference }) => {
+              if (tableSelectionTarget) {
+                updateSelectedTableCell(text, true);
+                setTableEditCellReferences((current) => [...current, reference]);
+              } else {
+                setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+                setEditingValueCellReferences((current) => [...current, reference]);
+              }
+            }}
+            onNotify={onNotify}
+          />
+        ) : (
         <PdfViewer
           documentId={document._id}
           highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
           selectionMode={copyFromDocumentKey !== null}
           onReplaceSelection={({ text, boundingBoxes }) => {
-            setEditingValueDraft(text);
-            setEditingValueBoundingBoxes(boundingBoxes);
+            if (tableSelectionTarget) {
+              updateSelectedTableCell(text, false);
+              setTableEditBoundingBoxes((current) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
+                boxes.findIndex((candidate) => candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
+                  candidate.width === box.width && candidate.height === box.height) === index
+              )));
+            } else {
+              setEditingValueDraft(text);
+              setEditingValueBoundingBoxes(boundingBoxes);
+            }
           }}
           onAppendSelection={({ text, boundingBoxes }) => {
-            setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
-            setEditingValueBoundingBoxes((current) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
+            if (tableSelectionTarget) updateSelectedTableCell(text, true);
+            else setEditingValueDraft((draft) => [draft.trim(), text].filter(Boolean).join(' '));
+            const updateBoxes = (current: NonNullable<ExtractedValue['boundingBoxes']>) => [...current, ...boundingBoxes].filter((box, index, boxes) => (
               boxes.findIndex((candidate) => candidate.page === box.page && candidate.x === box.x && candidate.y === box.y &&
                 candidate.width === box.width && candidate.height === box.height) === index
-            )));
+            ));
+            if (tableSelectionTarget) setTableEditBoundingBoxes(updateBoxes);
+            else setEditingValueBoundingBoxes(updateBoxes);
           }}
           onNotify={onNotify}
         />
+        )}
       </section>
       <section className="panel extraction-pane">
         <div className="extraction-pane-content">
@@ -6434,8 +7497,8 @@ function ValidationScreen({
               <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
-              <button className="icon-button" title="Download processing PDF" onClick={downloadPdf}>
-                <FileText size={16} />
+              <button className="icon-button" title={document.processingMode === 'spreadsheet' ? 'Download workbook' : 'Download processing PDF'} onClick={downloadSourceDocument}>
+                {document.processingMode === 'spreadsheet' ? <FileSpreadsheet size={16} /> : <FileText size={16} />}
               </button>
               <button
                 className="icon-button"
@@ -6511,7 +7574,42 @@ function ValidationScreen({
                       </span>
                     )}
                   </div>
-                  <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => setTableEditIndex(index)} />
+                  {tableEditIndex === index ? (
+                    <InlineTableEditor
+                      rows={tableEditRows}
+                      selectionTarget={tableSelectionTarget}
+                      selectingFromDocument={copyFromDocumentKey === item.key}
+                      saving={isSavingValue}
+                      onRowsChange={setTableEditRows}
+                      onSelectCell={(target) => {
+                        if (!document.spatialTextArtifactBlobName && !document.workbookArtifactBlobName) {
+                          onNotify('Selectable document content is unavailable. Reprocess this document to generate it.', 'info');
+                          return;
+                        }
+                        setTableSelectionTarget(target);
+                        setCopyFromDocumentKey(item.key);
+                      }}
+                      onStopSelecting={() => {
+                        setTableSelectionTarget(null);
+                        setCopyFromDocumentKey(null);
+                      }}
+                      onCancel={cancelTableEdit}
+                      onSave={async () => {
+                        setSavingValueKey(item.key);
+                        try {
+                          await updateTableValue(index, tableEditRows);
+                          cancelTableEdit();
+                          onNotify(`${item.label} saved`, 'success');
+                        } catch (error) {
+                          onNotify(error instanceof Error ? error.message : 'Failed to save table', 'error');
+                        } finally {
+                          setSavingValueKey(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => startTableEdit(index, item)} />
+                  )}
                 </div>
               ) : (
                 <div
@@ -6559,14 +7657,24 @@ function ValidationScreen({
                             aria-label={copyFromDocumentKey === item.key ? 'Stop copying from document' : 'Copy from document'}
                             aria-pressed={copyFromDocumentKey === item.key}
                             onClick={() => {
-                              if (!document.spatialTextArtifactBlobName) {
-                                onNotify('Selectable text is unavailable. Reprocess this document to generate it.', 'info');
+                              if (!document.spatialTextArtifactBlobName && !document.workbookArtifactBlobName) {
+                                onNotify('Selectable document content is unavailable. Reprocess this document to generate it.', 'info');
                                 return;
                               }
                               setCopyFromDocumentKey((key) => key === item.key ? null : item.key);
                             }}
                           >
                             <TextSelect size={15} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Clear value and bounding box"
+                            aria-label={`Clear ${item.label} value and bounding box`}
+                            disabled={isSavingValue}
+                            onClick={clearValueEdit}
+                          >
+                            <Eraser size={15} />
                           </button>
                           <button
                             className="icon-button"
@@ -6704,22 +7812,6 @@ function ValidationScreen({
             </div>
           </div>
       </section>
-      {tableEditIndex !== null && values[tableEditIndex] && (
-        <TableEditDialog
-          item={values[tableEditIndex]}
-          onClose={() => setTableEditIndex(null)}
-          onSave={async (rows) => {
-            try {
-              const label = values[tableEditIndex].label;
-              await updateTableValue(tableEditIndex, rows);
-              setTableEditIndex(null);
-              onNotify(`${label} saved`, 'success');
-            } catch (error) {
-              onNotify(error instanceof Error ? error.message : 'Failed to save table', 'error');
-            }
-          }}
-        />
-      )}
       {pendingValidationAction && document && (
         <ConfirmDialog
           title={pendingValidationAction === 'validate' ? 'Validate Document' : 'Reject Document'}
@@ -6801,6 +7893,126 @@ function ValidationScreen({
       )}
     </div>
   );
+}
+
+function spreadsheetColumnName(index: number) {
+  let value = index + 1;
+  let name = '';
+  while (value > 0) {
+    name = String.fromCharCode(65 + ((value - 1) % 26)) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+  return name;
+}
+
+function spreadsheetCellCoordinates(address: string) {
+  const match = /^([A-Z]+)(\d+)$/i.exec(address);
+  if (!match) return null;
+  const column = [...match[1].toUpperCase()].reduce((value, character) => value * 26 + character.charCodeAt(0) - 64, 0) - 1;
+  return { row: Number(match[2]) - 1, column };
+}
+
+function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onReplaceSelection, onAppendSelection, onNotify }: {
+  documentId: string;
+  activeReferences: NonNullable<ExtractedValue['cellReferences']>;
+  selectionMode: boolean;
+  onReplaceSelection: (selection: { text: string; reference: NonNullable<ExtractedValue['cellReferences']>[number] }) => void;
+  onAppendSelection: (selection: { text: string; reference: NonNullable<ExtractedValue['cellReferences']>[number] }) => void;
+  onNotify: (message: string, tone?: 'success' | 'error' | 'info') => void;
+}) {
+  const [metadata, setMetadata] = useState<WorkbookMetadata | null>(null);
+  const [sheet, setSheet] = useState<WorkbookSheet | null>(null);
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [viewport, setViewport] = useState({ row: 0, column: 0 });
+  const [selection, setSelection] = useState<{ startRow: number; startColumn: number; endRow: number; endColumn: number } | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const rowHeight = 32;
+  const columnWidth = 140;
+
+  useEffect(() => {
+    let cancelled = false;
+    setMetadata(null); setSheet(null); setSelection(null);
+    api.documentWorkbook(documentId).then((result) => {
+      if (cancelled) return;
+      setMetadata(result);
+      setSheetIndex(result.sheets[0]?.index ?? 0);
+    }).catch((error) => !cancelled && onNotify(error instanceof Error ? error.message : 'Failed to load workbook', 'error'));
+    return () => { cancelled = true; };
+  }, [documentId]);
+
+  useEffect(() => {
+    if (!metadata?.sheets.some((candidate) => candidate.index === sheetIndex)) return;
+    let cancelled = false;
+    setSheet(null); setSelection(null); setViewport({ row: 0, column: 0 });
+    api.documentWorkbookSheet(documentId, sheetIndex).then((result) => !cancelled && setSheet(result))
+      .catch((error) => !cancelled && onNotify(error instanceof Error ? error.message : 'Failed to load worksheet', 'error'));
+    return () => { cancelled = true; };
+  }, [documentId, metadata, sheetIndex]);
+
+  const cellMap = useMemo(() => new Map((sheet?.cells || []).map((cell) => [`${cell.row}:${cell.column}`, cell.value])), [sheet]);
+  const range = selection ? {
+    top: Math.min(selection.startRow, selection.endRow), bottom: Math.max(selection.startRow, selection.endRow),
+    left: Math.min(selection.startColumn, selection.endColumn), right: Math.max(selection.startColumn, selection.endColumn),
+  } : null;
+  const selectedPayload = () => {
+    if (!sheet || !range) return null;
+    const rows = [];
+    for (let row = range.top; row <= range.bottom; row += 1) {
+      const values = [];
+      for (let column = range.left; column <= range.right; column += 1) values.push(cellMap.get(`${row}:${column}`) || '');
+      rows.push(values.join('\t'));
+    }
+    return {
+      text: rows.join('\n').trim(),
+      reference: {
+        sheetIndex: sheet.index, sheetName: sheet.name,
+        startCell: `${spreadsheetColumnName(range.left)}${range.top + 1}`,
+        endCell: `${spreadsheetColumnName(range.right)}${range.bottom + 1}`,
+      },
+    };
+  };
+  const rows = sheet ? Array.from({ length: Math.min(35, Math.max(0, sheet.rowCount - viewport.row)) }, (_, index) => viewport.row + index) : [];
+  const columns = sheet ? Array.from({ length: Math.min(12, Math.max(0, sheet.columnCount - viewport.column)) }, (_, index) => viewport.column + index) : [];
+
+  return <div className="spreadsheet-viewer">
+    <div className="spreadsheet-tabs">
+      {(metadata?.sheets || []).map((candidate) => <button key={candidate.index} className={candidate.index === sheetIndex ? 'active' : ''} onClick={() => setSheetIndex(candidate.index)}>{candidate.name}</button>)}
+    </div>
+    {!sheet && <div className="pdf-page-state">Loading worksheet.</div>}
+    {sheet && sheet.rowCount === 0 && <div className="pdf-page-state">This worksheet is empty.</div>}
+    {sheet && sheet.rowCount > 0 && <div className="spreadsheet-scroll" onScroll={(event) => {
+      setViewport({ row: Math.floor(event.currentTarget.scrollTop / rowHeight), column: Math.floor(event.currentTarget.scrollLeft / columnWidth) });
+    }} onPointerUp={() => setSelecting(false)}>
+      <div className="spreadsheet-canvas" style={{ width: 52 + sheet.columnCount * columnWidth, height: 32 + sheet.rowCount * rowHeight }}>
+        {columns.map((column) => <div className="spreadsheet-column-heading" key={column} style={{ left: 52 + column * columnWidth, top: viewport.row * rowHeight }}>{spreadsheetColumnName(column)}</div>)}
+        {rows.map((row) => <Fragment key={row}>
+          <div className="spreadsheet-row-heading" style={{ left: viewport.column * columnWidth, top: 32 + row * rowHeight }}>{row + 1}</div>
+          {columns.map((column) => {
+            const selected = Boolean(range && row >= range.top && row <= range.bottom && column >= range.left && column <= range.right);
+            const address = `${spreadsheetColumnName(column)}${row + 1}`;
+            const active = activeReferences.some((reference) => {
+              if (reference.sheetIndex !== sheet.index) return false;
+              const start = spreadsheetCellCoordinates(reference.startCell);
+              const end = spreadsheetCellCoordinates(reference.endCell);
+              return Boolean(start && end && row >= Math.min(start.row, end.row) && row <= Math.max(start.row, end.row)
+                && column >= Math.min(start.column, end.column) && column <= Math.max(start.column, end.column));
+            });
+            return <div key={column} className={`spreadsheet-cell${selected ? ' selected' : ''}${active ? ' active' : ''}`}
+              style={{ left: 52 + column * columnWidth, top: 32 + row * rowHeight }}
+              onPointerDown={() => { if (selectionMode) { setSelecting(true); setSelection({ startRow: row, startColumn: column, endRow: row, endColumn: column }); } }}
+              onPointerEnter={() => { if (selectionMode && selecting) setSelection((current) => current ? { ...current, endRow: row, endColumn: column } : current); }}>
+              {cellMap.get(`${row}:${column}`) || ''}
+            </div>;
+          })}
+        </Fragment>)}
+      </div>
+    </div>}
+    {selectionMode && range && <div className="spreadsheet-selection-actions">
+      <button onClick={async () => { const payload = selectedPayload(); if (!payload?.text) return; try { await navigator.clipboard.writeText(payload.text); onNotify('Selected cells copied', 'success'); } catch { onNotify('Clipboard access failed', 'error'); } }}>Copy</button>
+      <button onClick={() => { const payload = selectedPayload(); if (payload?.text) onReplaceSelection(payload); }}>Replace</button>
+      <button onClick={() => { const payload = selectedPayload(); if (payload?.text) onAppendSelection(payload); }}>Append</button>
+    </div>}
+  </div>;
 }
 
 function PdfViewer({
@@ -7294,57 +8506,60 @@ function TableValuePreview({ item, canEdit, onEdit }: { item: ExtractedValue; ca
   );
 }
 
-function TableEditDialog({
-  item,
-  onClose,
+function InlineTableEditor({
+  rows,
+  selectionTarget,
+  selectingFromDocument,
+  saving,
+  onRowsChange,
+  onSelectCell,
+  onStopSelecting,
+  onCancel,
   onSave,
 }: {
-  item: ExtractedValue;
-  onClose: () => void;
-  onSave: (rows: Record<string, unknown>[]) => void;
+  rows: Record<string, unknown>[];
+  selectionTarget: { rowIndex: number; column: string } | null;
+  selectingFromDocument: boolean;
+  saving: boolean;
+  onRowsChange: (rows: Record<string, unknown>[]) => void;
+  onSelectCell: (target: { rowIndex: number; column: string }) => void;
+  onStopSelecting: () => void;
+  onCancel: () => void;
+  onSave: () => void;
 }) {
-  const [rows, setRows] = useState<Record<string, unknown>[]>(() => asTableRows(item.value));
   const columns = tableColumns(rows);
   const editableColumns = columns.length ? columns : ['value'];
 
   function updateCell(rowIndex: number, column: string, value: string) {
     const next = [...rows];
     next[rowIndex] = { ...next[rowIndex], [column]: value };
-    setRows(next);
+    onRowsChange(next);
   }
 
   function addRow() {
     const nextRow = Object.fromEntries(editableColumns.map((column) => [column, '']));
-    setRows([...rows, nextRow]);
+    onRowsChange([...rows, nextRow]);
   }
 
   function addColumn() {
     const label = `column_${editableColumns.length + 1}`;
-    setRows(rows.length ? rows.map((row) => ({ ...row, [label]: '' })) : [{ [label]: '' }]);
+    onRowsChange(rows.length ? rows.map((row) => ({ ...row, [label]: '' })) : [{ [label]: '' }]);
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="modal">
-        <div className="modal-heading">
+    <div className="inline-table-editor">
+        <div className="inline-table-editor-toolbar">
+          <span>Select a cell, then choose text from the source document.</span>
           <div>
-            <h2>Edit {item.label}</h2>
-            <p>Update extracted table cells before validation.</p>
-          </div>
-          <button className="icon-button" title="Close" onClick={onClose}>
-            <X size={17} />
-          </button>
-        </div>
-
-        <div className="modal-actions">
-          <button className="secondary-button" onClick={addRow}>
+          <button className="secondary-button compact" type="button" onClick={addRow} disabled={saving}>
             <PlusCircle size={16} />
             Row
           </button>
-          <button className="secondary-button" onClick={addColumn}>
+          <button className="secondary-button compact" type="button" onClick={addColumn} disabled={saving}>
             <PlusCircle size={16} />
             Column
           </button>
+          </div>
         </div>
 
         <div className="editable-table">
@@ -7361,15 +8576,37 @@ function TableEditDialog({
               {rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {editableColumns.map((column) => (
-                    <td key={column}>
-                      <input value={coerceValue(row[column] ?? '')} onChange={(event) => updateCell(rowIndex, column, event.target.value)} />
+                    <td key={column} className={selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column ? 'source-selection-target' : undefined}>
+                      <div className="editable-table-cell">
+                        <input
+                          aria-label={`Row ${rowIndex + 1}, ${column}`}
+                          value={coerceValue(row[column] ?? '')}
+                          disabled={saving}
+                          onFocus={() => onSelectCell({ rowIndex, column })}
+                          onChange={(event) => updateCell(rowIndex, column, event.target.value)}
+                        />
+                        <button
+                          className={`icon-button${selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column && selectingFromDocument ? ' active' : ''}`}
+                          type="button"
+                          title="Select value from source document"
+                          aria-label={`Select row ${rowIndex + 1}, ${column} from source document`}
+                          aria-pressed={selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column && selectingFromDocument}
+                          disabled={saving}
+                          onClick={() => selectionTarget?.rowIndex === rowIndex && selectionTarget.column === column && selectingFromDocument
+                            ? onStopSelecting()
+                            : onSelectCell({ rowIndex, column })}
+                        >
+                          <TextSelect size={14} />
+                        </button>
+                      </div>
                     </td>
                   ))}
                   <td>
                     <button
                       className="icon-button danger"
                       title="Remove row"
-                      onClick={() => setRows(rows.filter((_, index) => index !== rowIndex))}
+                      disabled={saving}
+                      onClick={() => onRowsChange(rows.filter((_, index) => index !== rowIndex))}
                     >
                       <Trash2 size={15} />
                     </button>
@@ -7380,16 +8617,15 @@ function TableEditDialog({
           </table>
         </div>
 
-        <div className="modal-footer">
-          <button className="secondary-button" onClick={onClose}>
+        <div className="inline-table-editor-footer">
+          <button className="secondary-button compact" type="button" disabled={saving} onClick={onCancel}>
             Cancel
           </button>
-          <button className="primary-button" onClick={() => onSave(rows)}>
-            <Save size={16} />
+          <button className="primary-button compact" type="button" disabled={saving} onClick={onSave}>
+            {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
             Save Table
           </button>
         </div>
-      </section>
     </div>
   );
 }

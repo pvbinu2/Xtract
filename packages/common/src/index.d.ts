@@ -47,6 +47,8 @@ export class MongoDatabase {
 export class AzureBlobStorage {
   constructor(options?: { connectionString?: string; errorFactory?: (message: string) => Error });
   connectionString(): string | undefined;
+  useManagedIdentity(): boolean;
+  blobServiceUrl(): string | undefined;
   isConfigured(): boolean;
   safeFolderName(value: string): string;
   createBlobName(originalName: string, folder?: string): string;

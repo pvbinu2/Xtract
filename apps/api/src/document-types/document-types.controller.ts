@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { DocumentTypesService } from './document-types.service';
 import { Roles } from '../auth/auth.decorators';
@@ -31,6 +32,18 @@ export class DocumentTypesController {
   @Delete(':id/samples/:fileName')
   removeSample(@Param('id') id: string, @Param('fileName') fileName: string) {
     return this.service.removeSample(id, decodeURIComponent(fileName));
+  }
+
+  @Get(':id/samples/:fileName')
+  async getSample(
+    @Param('id') id: string,
+    @Param('fileName') fileName: string,
+    @Res() response: Response,
+  ) {
+    const sample = await this.service.getSample(id, decodeURIComponent(fileName));
+    response.contentType(sample.contentType);
+    response.setHeader('Content-Disposition', `inline; filename="${sample.fileName.replace(/["\r\n]/g, '_')}"`);
+    return response.send(sample.buffer);
   }
 
   @Delete(':id')

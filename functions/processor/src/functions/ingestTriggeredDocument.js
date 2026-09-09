@@ -32,6 +32,10 @@ const IMAGE_MIME_TYPES = {
   '.tiff': 'image/tiff',
   '.webp': 'image/webp',
 };
+const EXCEL_MIME_TYPES = {
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel',
+};
 let triggerEventIndexReady;
 
 function ensureTriggerEventIndex(documents) {
@@ -46,7 +50,7 @@ function ensureTriggerEventIndex(documents) {
 
 function mimeTypeForFileName(fileName) {
   const extension = path.extname(fileName).toLowerCase();
-  return extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension];
+  return extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension] || EXCEL_MIME_TYPES[extension];
 }
 
 function documentIdForEvent(eventId) {
@@ -74,7 +78,16 @@ async function ingestBlob(details, context, configuration) {
   const existingDocument = await documents.findOne({ triggerEventId: details.event.id });
   if (existingDocument) {
     context.info(`Trigger blob ${triggerBlobName} was already ingested as document ${existingDocument._id}.`);
-    if (['received', 'preprocessed', 'classified', 'uploaded', 'processing'].includes(existingDocument.status)) {
+    if ([
+      'received',
+      'preprocessing_started',
+      'preprocessing_completed',
+      'classification_started',
+      'classification_completed',
+      'extraction_started',
+      'uploaded',
+      'processing',
+    ].includes(existingDocument.status)) {
       context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(existingDocument._id) }));
     }
     return;

@@ -43,7 +43,7 @@ export class DocumentsController {
   @UseInterceptors(FilesInterceptor('files', 50, { storage }))
   upload(
     @UploadedFiles() files: Express.Multer.File[],
-    @Body() body: { category?: string; documentTypeId?: string },
+    @Body() body: { category?: string; documentTypeId?: string; isModelTest?: string },
   ) {
     return this.service.upload(
       files.map((file) => ({
@@ -53,8 +53,15 @@ export class DocumentsController {
         mimeType: file.mimetype,
         category: body.category,
         documentTypeId: body.documentTypeId,
+        isModelTest: body.isModelTest === 'true',
       })),
     );
+  }
+
+  @Post(':id/model-test-result')
+  @Roles('admin', 'validator')
+  modelTestResult(@Param('id') id: string, @Body() body: { retain?: boolean }) {
+    return this.service.consumeModelTestResult(id, Boolean(body.retain));
   }
 
   @Get(':id')
@@ -104,6 +111,18 @@ export class DocumentsController {
   @Roles('admin', 'validator')
   pageText(@Param('id') id: string, @Param('pageNumber') pageNumber: string) {
     return this.service.getSpatialTextPage(id, pageNumber);
+  }
+
+  @Get(':id/workbook')
+  @Roles('admin', 'validator')
+  workbook(@Param('id') id: string) {
+    return this.service.getWorkbook(id);
+  }
+
+  @Get(':id/workbook/sheets/:sheetIndex')
+  @Roles('admin', 'validator')
+  workbookSheet(@Param('id') id: string, @Param('sheetIndex') sheetIndex: string) {
+    return this.service.getWorkbookSheet(id, sheetIndex);
   }
 
   @Post(':id/extracted-data')

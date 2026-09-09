@@ -5,8 +5,6 @@ const { publishDocumentChanged } = require('../documentEvents');
 const { getConfiguration } = require('../configurationCache');
 const {
   ObjectId,
-  beginDocumentStage,
-  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -40,7 +38,8 @@ async function classifyQueuedDocument(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
-  await beginDocumentStage(documents, document._id, 'classified');
+  await transitionDocumentStatus(documents, document._id, 'classification_started');
+  await publishDocumentChanged(documents, document._id, ['status'], context);
 
   const configuration = await getConfiguration();
   const {
@@ -127,7 +126,7 @@ async function classifyQueuedDocument(message, context) {
       }
     }
 
-    await completeDocumentStage(documents, document._id, 'classified');
+    await transitionDocumentStatus(documents, document._id, 'classification_completed', {}, [], { completed: true });
     await publishDocumentChanged(
       documents,
       document._id,

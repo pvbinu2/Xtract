@@ -283,6 +283,7 @@ async function transitionDocumentStatus(
 }
 
 async function recordBusinessReviewProcessing(db, document, documentType, metrics) {
+  if (document.isModelTest) return;
   const processedAt = metrics?.processedAt || new Date();
   const extractionCostUsd = Number(metrics?.extractionCostUsd ?? metrics?.estimatedCostUsd ?? 0);
   const classificationCostUsd = Number(metrics?.classificationCostUsd || 0);
@@ -324,7 +325,7 @@ async function recordBusinessReviewProcessing(db, document, documentType, metric
     fileName: document.originalName,
     documentTypeName: documentType?.name || document.documentTypeName,
     category: documentType?.category || document.category,
-    status: 'extracted',
+    status: 'extraction_completed',
     classificationModel: document.classificationModel,
     extractionModel: normalizedMetrics.model,
     ...normalizedMetrics,
