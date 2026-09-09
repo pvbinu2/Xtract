@@ -4061,6 +4061,13 @@ function ClassificationTestPanel() {
     }
   }
 
+  const rankedCandidates = [...(result?.classificationCandidates || [])]
+    .sort((left, right) => right.score - left.score);
+  const runnerUp = rankedCandidates.find((candidate) => candidate.documentTypeId !== result?.documentTypeId);
+  const score = Number(result?.classificationScore || 0);
+  const scoreMargin = runnerUp ? Math.max(0, score - runnerUp.score) : undefined;
+  const confidenceBand = score >= 0.85 ? 'High confidence' : score >= 0.65 ? 'Moderate confidence' : 'Review recommended';
+
   return (
     <section className="panel classification-test-panel">
       <div className="panel-heading">
@@ -4094,10 +4101,35 @@ function ClassificationTestPanel() {
           </div>
           <div><span>Document type</span><strong>{result.documentTypeName || 'No type selected'}</strong></div>
           <div><span>Category</span><strong>{result.category || '—'}</strong></div>
+          <div className="classification-test-analysis">
+            <span>Classification analysis</span>
+            <div className="classification-test-analysis-grid">
+              <div><small>Confidence</small><strong>{confidenceBand}</strong></div>
+              <div><small>Method</small><strong>{result.classificationMethod?.toUpperCase() || '—'}</strong></div>
+              <div><small>Model</small><strong>{displayModel(result.classificationModel)}</strong></div>
+              <div><small>Candidates</small><strong>{rankedCandidates.length || '—'}</strong></div>
+              <div><small>Score lead</small><strong>{scoreMargin === undefined ? '—' : formatScore(scoreMargin)}</strong></div>
+            </div>
+          </div>
           <div className="classification-test-description">
             <span>Description</span>
             <p>{result.classificationJustification || 'No classification description was returned.'}</p>
           </div>
+          {rankedCandidates.length > 0 && (
+            <div className="classification-test-candidates">
+              <span>Candidate ranking</span>
+              <div className="classification-test-candidate-list">
+                {rankedCandidates.map((candidate, index) => (
+                  <div key={candidate.documentTypeId} className={candidate.documentTypeId === result.documentTypeId ? 'selected' : ''}>
+                    <em>#{index + 1}</em>
+                    <strong>{candidate.name}</strong>
+                    <small>{candidate.category}</small>
+                    <b>{formatScore(candidate.score)}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>

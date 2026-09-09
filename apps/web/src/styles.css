@@ -4709,6 +4709,93 @@ textarea {
   line-height: 1.55;
 }
 
+.classification-test-analysis,
+.classification-test-candidates {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+}
+
+.classification-test-analysis > span,
+.classification-test-candidates > span {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.classification-test-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.classification-test-analysis-grid > div {
+  display: grid;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 9px;
+}
+
+.classification-test-analysis-grid small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.classification-test-analysis-grid strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.classification-test-candidate-list {
+  display: grid;
+  gap: 6px;
+}
+
+.classification-test-candidate-list > div {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e9d5ff;
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 8px 10px;
+}
+
+.classification-test-candidate-list > div.selected {
+  border-color: #8b5cf6;
+  background: #ede9fe;
+}
+
+.classification-test-candidate-list em {
+  color: #6d28d9;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.classification-test-candidate-list strong,
+.classification-test-candidate-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.classification-test-candidate-list small {
+  color: var(--muted);
+}
+
+.classification-test-candidate-list b {
+  color: #4c1d95;
+  font-size: 12px;
+}
+
 .classification-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
