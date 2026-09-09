@@ -326,7 +326,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ documentTypeId }),
     }),
-  consumeModelTestResult: (id: string) => request<IncomingDocument>(`/documents/${id}/model-test-result`, { method: 'POST' }),
+  consumeModelTestResult: (id: string, retain = false) => request<IncomingDocument>(`/documents/${id}/model-test-result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ retain }),
+  }),
   getDocument: (id: string) => request<IncomingDocument>(`/documents/${id}`),
   updateExtractedData: (id: string, extractedData: ExtractedValue[]) =>
     request<IncomingDocument>(`/documents/${id}/extracted-data`, {

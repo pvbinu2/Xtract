@@ -60,8 +60,8 @@ export class DocumentsController {
 
   @Post(':id/model-test-result')
   @Roles('admin', 'validator')
-  modelTestResult(@Param('id') id: string) {
-    return this.service.consumeModelTestResult(id);
+  modelTestResult(@Param('id') id: string, @Body() body: { retain?: boolean }) {
+    return this.service.consumeModelTestResult(id, Boolean(body.retain));
   }
 
   @Get(':id')

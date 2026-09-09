@@ -34,6 +34,13 @@ test('processing tests are retained until a result is ready; ordinary documents 
   await assert.rejects(service.consumeModelTestResult('id'), /not a model test/);
 });
 
+test('completed tests can be retained while their source is displayed', async () => {
+  const service = Object.create(DocumentsService.prototype);
+  service.remove = async () => assert.fail('must not delete while retained');
+  service.findById = async () => ({ isModelTest: true, status: 'extracted' });
+  assert.equal((await service.consumeModelTestResult('id', true)).status, 'extracted');
+});
+
 test('cleanup failures preserve the database record for retry and do not return a completed result', async () => {
   const document = { isModelTest: true, status: 'extracted', storageContainer: 'processing', storageBlobName: 'source' };
   const service = Object.create(DocumentsService.prototype);

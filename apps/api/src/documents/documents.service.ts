@@ -394,10 +394,10 @@ export class DocumentsService {
     return { ...document, extractedData: this.decryptExtractedData(document, settings), encryptedExtractedData: undefined };
   }
 
-  async consumeModelTestResult(id: string) {
+  async consumeModelTestResult(id: string, retain = false) {
     const document = await this.findById(id);
     if (!document.isModelTest) throw new BadRequestException('Document is not a model test');
-    if (['extracted', 'failed', 'unsupported_format'].includes(document.status)) {
+    if (!retain && ['extracted', 'failed', 'unsupported_format'].includes(document.status)) {
       // Keep the result only in the response; delete storage before the database record.
       await this.remove(id);
     }

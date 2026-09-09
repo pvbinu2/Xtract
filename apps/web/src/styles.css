@@ -4953,6 +4953,11 @@ textarea {
   min-height: 150px;
 }
 
+.test-model-upload-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .test-model-upload .warning-text {
   grid-column: 1 / -1;
   margin: 0;
@@ -4965,6 +4970,27 @@ textarea {
   padding-top: 14px;
 }
 
+.test-model-workspace {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.1fr) minmax(320px, 0.9fr);
+  gap: 14px;
+  min-height: 620px;
+}
+
+.test-model-file-pane {
+  min-height: 0;
+  padding: 12px;
+}
+
+.test-model-data-pane {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
 .test-model-status,
 .test-model-status > div,
 .test-extraction-fields {
@@ -4975,6 +5001,72 @@ textarea {
 .test-model-status {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+}
+
+.test-model-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 7px 11px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.test-model-status-badge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.test-model-status-badge.uploaded,
+.test-model-status-badge.received,
+.test-model-status-badge.preprocessed,
+.test-model-status-badge.classified,
+.test-model-status-badge.extracting {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #a16207;
+}
+
+.test-model-status-badge.uploaded i,
+.test-model-status-badge.received i,
+.test-model-status-badge.preprocessed i,
+.test-model-status-badge.classified i,
+.test-model-status-badge.extracting i {
+  animation: test-model-status-pulse 1.2s ease-in-out infinite;
+}
+
+.test-model-status-badge.extracted {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.test-model-status-badge.failed {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.test-model-status-badge.unsupported_format {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+@keyframes test-model-status-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
 }
 
 .test-model-error {
@@ -4995,6 +5087,11 @@ textarea {
   border-radius: 9px;
   background: var(--surface);
   padding: 12px;
+}
+
+.test-extraction-field.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
 .test-extraction-field > .field-label {
@@ -5022,6 +5119,19 @@ textarea {
 @media (max-width: 720px) {
   .test-model-upload {
     grid-template-columns: 1fr;
+  }
+
+  .test-model-workspace {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .test-model-file-pane {
+    min-height: 520px;
+  }
+
+  .test-model-data-pane {
+    max-height: none;
   }
 }
 

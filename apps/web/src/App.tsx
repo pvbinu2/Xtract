@@ -4321,6 +4321,9 @@ function DocumentTypeManagement({
   const [testDocument, setTestDocument] = useState<IncomingDocument | null>(null);
   const [testRunning, setTestRunning] = useState(false);
   const [testError, setTestError] = useState('');
+  const [testActiveFieldKey, setTestActiveFieldKey] = useState<string | null>(null);
+  const testDocumentRef = useRef<IncomingDocument | null>(null);
+  const testFileInputRef = useRef<HTMLInputElement | null>(null);
   const [draggedFieldIndex, setDraggedFieldIndex] = useState<number | null>(null);
   const [draggedColumn, setDraggedColumn] = useState<{ fieldIndex: number; columnIndex: number } | null>(null);
   const [fieldDropSlot, setFieldDropSlot] = useState<number | null>(null);
@@ -4335,6 +4338,26 @@ function DocumentTypeManagement({
   const [deleteTypeTarget, setDeleteTypeTarget] = useState<DocumentType | null>(null);
   const [samplePreview, setSamplePreview] = useState<{ fileName: string; url: string } | null>(null);
   const [loadingSamplePreview, setLoadingSamplePreview] = useState<string | null>(null);
+
+  function cleanupRetainedTest() {
+    const document = testDocumentRef.current;
+    testDocumentRef.current = null;
+    if (!document || !['extracted', 'failed', 'unsupported_format'].includes(document.status)) return;
+    void api.deleteDocument(document._id).catch(() => undefined);
+  }
+
+  function clearModelTest() {
+    cleanupRetainedTest();
+    setTestFile(null);
+    setTestDocument(null);
+    setTestError('');
+    setTestActiveFieldKey(null);
+    if (testFileInputRef.current) testFileInputRef.current.value = '';
+  }
+
+  useEffect(() => () => {
+    cleanupRetainedTest();
+  }, [activeType?._id]);
 
   useEffect(() => {
     setFields(withUiIds(activeType?.fields ?? []));
@@ -4354,7 +4377,12 @@ function DocumentTypeManagement({
     setTestDocument(null);
     setTestRunning(false);
     setTestError('');
+    setTestActiveFieldKey(null);
   }, [activeType?._id]);
+
+  useEffect(() => {
+    if (documentTypeTab !== 'test') cleanupRetainedTest();
+  }, [documentTypeTab]);
 
   useLayoutEffect(() => {
     const previousPositions = previousOrderPositionsRef.current;
@@ -4427,8 +4455,10 @@ function DocumentTypeManagement({
 
   async function runModelTest() {
     if (!activeType || !testFile || testRunning) return;
+    cleanupRetainedTest();
     setTestRunning(true);
     setTestDocument(null);
+    setTestActiveFieldKey(null);
     setTestError('');
     try {
       const [uploadedDocument] = await api.uploadDocuments({
@@ -4438,14 +4468,16 @@ function DocumentTypeManagement({
         files: [testFile],
       });
       if (!uploadedDocument) throw new Error('The test document could not be uploaded.');
-      let document = await api.consumeModelTestResult(uploadedDocument._id);
+      let document = await api.consumeModelTestResult(uploadedDocument._id, true);
+      testDocumentRef.current = document;
       setTestDocument(document);
 
       const terminalStatuses: IncomingDocument['status'][] = ['extracted', 'failed', 'unsupported_format'];
       const deadline = Date.now() + 5 * 60 * 1000;
       while (!terminalStatuses.includes(document.status) && Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 1200));
-        document = await api.consumeModelTestResult(document._id);
+        document = await api.consumeModelTestResult(document._id, true);
+        testDocumentRef.current = document;
         setTestDocument(document);
       }
 
@@ -4463,6 +4495,17 @@ function DocumentTypeManagement({
       setTestRunning(false);
     }
   }
+
+  const testValues = testDocument ? normalizeExtractedDataToSchema(testDocument.extractedData, activeType) : [];
+  const testPdfHighlights = testValues.flatMap((item, index) => {
+    const hue = (index * 47 + 12) % 360;
+    return (item.boundingBoxes || []).map((box) => ({
+      ...box,
+      fieldKey: item.key,
+      color: `hsl(${hue}, 88%, 47%)`,
+      activeFill: `hsla(${hue}, 95%, 70%, 0.42)`,
+    }));
+  });
 
   return (
     <div className="document-type-layout">
@@ -4591,7 +4634,7 @@ function DocumentTypeManagement({
                   <span><Sparkles size={18} /></span>
                   <div>
                     <strong>Test extraction model</strong>
-                    <small>Upload one document and extract it using {activeType.name} and its current schema. Test files and results are deleted from the server when the result is returned.</small>
+                    <small>Upload one document and extract it using {activeType.name} and its current schema. Test files and results are deleted when you clear the test or leave this screen.</small>
                   </div>
                 </div>
                 <div className="test-model-upload">
@@ -4601,18 +4644,26 @@ function DocumentTypeManagement({
                     <span>{testFile ? 'Ready to extract' : 'Drop a file here or click to browse'}</span>
                     <input
                       type="file"
+                      ref={testFileInputRef}
                       disabled={testRunning}
                       onChange={(event) => {
+                        cleanupRetainedTest();
                         setTestFile(event.target.files?.[0] || null);
                         setTestDocument(null);
+                        setTestActiveFieldKey(null);
                         setTestError('');
                       }}
                     />
                   </label>
-                  <button className="primary-button" type="button" disabled={!testFile || testRunning || !activeType.fields.length} onClick={runModelTest}>
-                    {testRunning ? <Loader2 size={16} className="spin" /> : <ScanText size={16} />}
-                    {testRunning ? 'Extracting…' : 'Run Extraction'}
-                  </button>
+                  <div className="test-model-upload-actions">
+                    <button className="primary-button" type="button" disabled={!testFile || testRunning || !activeType.fields.length} onClick={runModelTest}>
+                      {testRunning ? <Loader2 size={16} className="spin" /> : <ScanText size={16} />}
+                      {testRunning ? 'Extracting…' : 'Run Extraction'}
+                    </button>
+                    <button className="secondary-button compact" type="button" disabled={testRunning || (!testFile && !testDocument && !testError)} onClick={clearModelTest}>
+                      <X size={15} /> Clear
+                    </button>
+                  </div>
                   {!activeType.fields.length && <p className="warning-text">Create and save an extraction schema before testing this model.</p>}
                 </div>
 
@@ -4623,15 +4674,44 @@ function DocumentTypeManagement({
                         <span className="section-kicker">Test result</span>
                         <strong>{testDocument?.originalName || testFile?.name}</strong>
                       </div>
-                      {testDocument && <span className={`status-badge ${testDocument.status}`}>{testDocument.status.replace(/_/g, ' ')}</span>}
+                      {testDocument && (
+                        <span className={`test-model-status-badge ${testDocument.status}`}>
+                          <i aria-hidden="true" />
+                          {testDocument.status.replace(/_/g, ' ')}
+                        </span>
+                      )}
                     </div>
                     {testError && <div className="test-model-error"><AlertTriangle size={17} /> {testError}</div>}
                     {testDocument?.status === 'extracted' && (
-                      <div className="test-extraction-fields">
-                        {normalizeExtractedDataToSchema(testDocument.extractedData, activeType).map((item) => (
-                          <div className="test-extraction-field" key={item.key}>
-                            <div className="field-label">
-                              <strong>{item.label}</strong>
+                      <div className="test-model-workspace">
+                        <section className="pdf-pane test-model-file-pane">
+                          {testDocument.processingMode === 'spreadsheet' || Boolean(testDocument.workbookArtifactBlobName) ? (
+                            <SpreadsheetViewer
+                              documentId={testDocument._id}
+                              activeReferences={testValues.find((item) => item.key === testActiveFieldKey)?.cellReferences || []}
+                              selectionMode={false}
+                              onReplaceSelection={() => undefined}
+                              onAppendSelection={() => undefined}
+                              onNotify={() => undefined}
+                            />
+                          ) : (
+                            <PdfViewer
+                              documentId={testDocument._id}
+                              highlights={testPdfHighlights}
+                              activeFieldKey={testActiveFieldKey}
+                              selectionMode={false}
+                              onReplaceSelection={() => undefined}
+                              onAppendSelection={() => undefined}
+                              onNotify={() => undefined}
+                            />
+                          )}
+                        </section>
+                        <section className="test-model-data-pane">
+                          <div className="test-extraction-fields">
+                            {testValues.map((item) => (
+                              <div className={`test-extraction-field${item.key === testActiveFieldKey ? ' active' : ''}`} key={item.key}>
+                                <div className="field-label">
+                                  <button type="button" className="value-link" onClick={() => setTestActiveFieldKey(item.key)}>{item.label}</button>
                               {confidenceBadge(item) && <em>{confidenceBadge(item)}</em>}
                             </div>
                             {item.type === 'table'
@@ -4639,7 +4719,9 @@ function DocumentTypeManagement({
                               : <div className="test-extraction-value">{hasExtractedValue(item) ? coerceValue(item.value) : <span>Not extracted</span>}</div>}
                           </div>
                         ))}
-                        {!testDocument.extractedData.length && <div className="empty-table">No values were extracted.</div>}
+                            {!testDocument.extractedData.length && <div className="empty-table">No values were extracted.</div>}
+                          </div>
+                        </section>
                       </div>
                     )}
                   </div>
