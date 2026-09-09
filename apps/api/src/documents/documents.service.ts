@@ -110,7 +110,7 @@ export class DocumentsService {
   }): Promise<any> {
     const filter: Record<string, unknown> = { isModelTest: { $ne: true } };
     if (query.status === 'in-progress') {
-      filter.status = { $in: ['received', 'preprocessed', 'classified', 'uploaded', 'processing'] };
+      filter.status = { $in: ['received', 'preprocessing_started', 'preprocessing_completed', 'classification_started', 'classification_completed', 'extraction_started', 'uploaded', 'processing'] };
     } else if (query.status) {
       filter.status = query.status;
     }
@@ -397,7 +397,7 @@ export class DocumentsService {
   async consumeModelTestResult(id: string, retain = false) {
     const document = await this.findById(id);
     if (!document.isModelTest) throw new BadRequestException('Document is not a model test');
-    if (!retain && ['extracted', 'failed', 'unsupported_format'].includes(document.status)) {
+    if (!retain && ['extraction_completed', 'failed', 'unsupported_format'].includes(document.status)) {
       // Keep the result only in the response; delete storage before the database record.
       await this.remove(id);
     }
@@ -626,7 +626,7 @@ export class DocumentsService {
     const [totalFiles, filesProcessing, filesFailed, persistedSummary, recentDocuments] = await Promise.all([
       this.documentModel.countDocuments(),
       this.documentModel.countDocuments({
-        status: { $in: ['received', 'preprocessed', 'classified', 'uploaded', 'processing'] },
+        status: { $in: ['received', 'preprocessing_started', 'preprocessing_completed', 'classification_started', 'classification_completed', 'extraction_started', 'uploaded', 'processing'] },
       }),
       this.documentModel.countDocuments({ status: 'failed' }),
       this.businessReviewSummaryModel.findOneAndUpdate(
@@ -659,7 +659,7 @@ export class DocumentsService {
       recentDocuments: recentDocuments.map((doc) => ({
         id: doc.documentId,
         name: doc.fileName,
-        status: doc.status || 'extracted',
+        status: doc.status || 'extraction_completed',
         tokens: doc.totalTokens || 0,
         estimatedCostUsd: doc.estimatedCostUsd || 0,
         extractionCostUsd: doc.extractionCostUsd ?? doc.estimatedCostUsd ?? 0,

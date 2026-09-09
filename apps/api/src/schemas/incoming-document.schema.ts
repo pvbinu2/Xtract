@@ -4,9 +4,12 @@ import { HydratedDocument, Types } from 'mongoose';
 export type IncomingDocumentDocument = HydratedDocument<IncomingDocument>;
 export type DocumentStatus =
   | 'received'
-  | 'preprocessed'
-  | 'classified'
-  | 'extracted'
+  | 'preprocessing_started'
+  | 'preprocessing_completed'
+  | 'classification_started'
+  | 'classification_completed'
+  | 'extraction_started'
+  | 'extraction_completed'
   | 'validated'
   | 'rejected'
   | 'failed'

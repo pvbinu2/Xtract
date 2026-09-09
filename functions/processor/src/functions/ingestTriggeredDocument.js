@@ -78,7 +78,16 @@ async function ingestBlob(details, context, configuration) {
   const existingDocument = await documents.findOne({ triggerEventId: details.event.id });
   if (existingDocument) {
     context.info(`Trigger blob ${triggerBlobName} was already ingested as document ${existingDocument._id}.`);
-    if (['received', 'preprocessed', 'classified', 'uploaded', 'processing'].includes(existingDocument.status)) {
+    if ([
+      'received',
+      'preprocessing_started',
+      'preprocessing_completed',
+      'classification_started',
+      'classification_completed',
+      'extraction_started',
+      'uploaded',
+      'processing',
+    ].includes(existingDocument.status)) {
       context.extraOutputs.set(processingQueueOutput, JSON.stringify({ documentId: String(existingDocument._id) }));
     }
     return;

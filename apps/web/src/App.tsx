@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
+import { ChangeEvent, CSSProperties, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import Chart from 'chart.js/auto';
 import {
@@ -857,7 +857,7 @@ function OperationsApp() {
       api.getBusinessReviewSummary(),
       api.listDocuments(
         new URLSearchParams({
-          status: 'extracted',
+          status: 'extraction_completed',
           page: '1',
           pageSize: '5',
         }),
@@ -1306,7 +1306,7 @@ function OperationsApp() {
                 <StatusMetric
                   label="Extracted"
                   value={operationsMetrics.filesReady}
-                  onClick={() => openDocuments('extracted')}
+                  onClick={() => openDocuments('extraction_completed')}
                 />
               </div>
             )}
@@ -4015,6 +4015,95 @@ function classifierStatus(type: DocumentType) {
   return type.classifierTrainingStatus || 'untrained';
 }
 
+function ClassificationTestPanel() {
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<IncomingDocument | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function clearTest() {
+    if (running) return;
+    setFile(null);
+    setResult(null);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function runTest() {
+    if (!file || running) return;
+    setRunning(true);
+    setError('');
+    setResult(null);
+    let testDocument: IncomingDocument | undefined;
+    try {
+      const [uploaded] = await api.uploadDocuments({ isModelTest: true, files: [file] });
+      if (!uploaded) throw new Error('The classification test file could not be uploaded.');
+      testDocument = uploaded;
+      const terminalStatuses: IncomingDocument['status'][] = ['extraction_completed', 'failed', 'unsupported_format'];
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (!terminalStatuses.includes(testDocument.status) && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        testDocument = await api.consumeModelTestResult(testDocument._id, true);
+      }
+      if (!terminalStatuses.includes(testDocument.status)) throw new Error('The classification test timed out.');
+      if (testDocument.status !== 'extraction_completed') {
+        throw new Error(testDocument.error || 'The file could not be classified.');
+      }
+      setResult(testDocument);
+    } catch (testError) {
+      setError(testError instanceof Error ? testError.message : 'The classification test failed.');
+    } finally {
+      if (testDocument && ['extraction_completed', 'failed', 'unsupported_format'].includes(testDocument.status)) {
+        void api.deleteDocument(testDocument._id).catch(() => undefined);
+      }
+      setRunning(false);
+    }
+  }
+
+  return (
+    <section className="panel classification-test-panel">
+      <div className="panel-heading">
+        <div>
+          <span className="section-kicker">Classifier workspace</span>
+          <h2>Test Classification</h2>
+          <p>Upload a file to see the selected document type, confidence score, and classification description.</p>
+        </div>
+      </div>
+      <div className="classification-test-upload">
+        <label className="file-picker">
+          <Upload size={17} />
+          <span>{file ? file.name : 'Choose a file'}</span>
+          <input ref={fileInputRef} type="file" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+        </label>
+        <button className="primary-button" disabled={!file || running} onClick={runTest}>
+          {running ? <Loader2 className="spin" size={16} /> : <BrainCircuit size={16} />}
+          {running ? 'Classifying…' : 'Run classification'}
+        </button>
+        <button className="secondary-button" disabled={running || (!file && !result && !error)} onClick={clearTest}>
+          <Eraser size={16} />
+          Clear
+        </button>
+      </div>
+      {error && <div className="test-model-error"><AlertTriangle size={17} /> {error}</div>}
+      {result && (
+        <div className="classification-test-result">
+          <div className="classification-test-score">
+            <span>Classification score</span>
+            <strong>{formatScore(result.classificationScore)}</strong>
+          </div>
+          <div><span>Document type</span><strong>{result.documentTypeName || 'No type selected'}</strong></div>
+          <div><span>Category</span><strong>{result.category || '—'}</strong></div>
+          <div className="classification-test-description">
+            <span>Description</span>
+            <p>{result.classificationJustification || 'No classification description was returned.'}</p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ClassificationScreen({
   documentTypes,
   config,
@@ -4030,12 +4119,25 @@ function ClassificationScreen({
   onRun: (action: () => Promise<void>, success: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
+  const [classificationTab, setClassificationTab] = useState<'configuration' | 'document-types' | 'test'>('configuration');
   const includedTypes = documentTypes.filter((type) => type.includeInClassification);
   const trainableTypes = includedTypes.filter((type) => type.finalized && type.sampleFiles.length > 0);
   const trainingCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'training').length;
   const failedCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'failed').length;
   const trainedCount = includedTypes.filter((type) => type.classifierTrainingStatus === 'trained').length;
   const includedFileCount = includedTypes.reduce((total, type) => total + type.sampleFiles.length, 0);
+  const vectorProfileCount = includedTypes.filter((type) => Boolean(type.classifierProfile?.trim())).length;
+  const sampleReadyTypes = includedTypes.filter((type) => type.sampleFiles.length >= 3).length;
+  const sampleGaps = includedTypes.filter((type) => type.sampleFiles.length < 3).length;
+  const averageSamples = includedTypes.length ? includedFileCount / includedTypes.length : 0;
+  const vectorCoverage = includedTypes.length ? Math.round((vectorProfileCount / includedTypes.length) * 100) : 0;
+  const sampleQuality = !includedTypes.length
+    ? 'No samples'
+    : sampleGaps === 0
+      ? 'Strong'
+      : averageSamples >= 2
+        ? 'Developing'
+        : 'Needs samples';
   const overallStatus = trainingCount
     ? 'training'
     : failedCount
@@ -4054,7 +4156,12 @@ function ClassificationScreen({
 
   return (
     <div className="classification-layout">
-      <section className="panel classification-training-panel">
+      <div className="classification-tabs" role="tablist" aria-label="Classification workspace">
+        <button className={classificationTab === 'configuration' ? 'active' : ''} onClick={() => setClassificationTab('configuration')}>Configuration</button>
+        <button className={classificationTab === 'document-types' ? 'active' : ''} onClick={() => setClassificationTab('document-types')}>Classification Collection</button>
+        <button className={classificationTab === 'test' ? 'active' : ''} onClick={() => setClassificationTab('test')}>Test Classification</button>
+      </div>
+      <section className="panel classification-training-panel" hidden={classificationTab !== 'configuration'}>
         <div className="panel-heading">
           <div>
             <span className="section-kicker">Classifier workspace</span>
@@ -4114,7 +4221,7 @@ function ClassificationScreen({
           </div>
         </div>
 
-        <div className="classification-settings">
+        <div className="classification-settings" hidden={classificationTab !== 'configuration'}>
           <div className="classification-settings-heading">
             <div>
               <span>Classification configuration</span>
@@ -4242,13 +4349,13 @@ function ClassificationScreen({
         </div>
       </section>
 
-      <section className="panel classification-types-card">
+      <section className="panel classification-types-card" hidden={classificationTab !== 'document-types'}>
         <div className="classification-types-heading">
           <div className="classification-types-title">
             <span><Files size={18} /></span>
             <div>
-              <strong>Document Types</strong>
-              <small>Types currently included in classifier training.</small>
+              <strong>Classification Collection</strong>
+              <small>Document types, vector profiles, and sample readiness.</small>
             </div>
           </div>
           <div className="classification-type-counts" aria-label="Document type summary">
@@ -4264,6 +4371,35 @@ function ClassificationScreen({
             <span className="classification-types-count samples">
               <strong>{includedFileCount}</strong> Sample files
             </span>
+          </div>
+        </div>
+        <div className="classification-health-matrix">
+          <div className="classification-health-heading">
+            <div>
+              <span>Classifier readiness</span>
+              <strong>Vector collection and sample quality</strong>
+            </div>
+            <small>Sample quality targets at least 3 samples per included document type.</small>
+          </div>
+          <div className="classification-health-grid">
+            <section>
+              <span>Vector collection</span>
+              <div className="classification-health-metric"><strong>{vectorCoverage}%</strong><em>Profile coverage</em></div>
+              <dl>
+                <div><dt>Included types</dt><dd>{includedTypes.length}</dd></div>
+                <div><dt>Vector profiles</dt><dd>{vectorProfileCount}</dd></div>
+                <div><dt>Trained types</dt><dd>{trainedCount}</dd></div>
+              </dl>
+            </section>
+            <section>
+              <span>Sample quality</span>
+              <div className="classification-health-metric"><strong>{sampleQuality}</strong><em>{averageSamples.toFixed(1)} avg/type</em></div>
+              <dl>
+                <div><dt>Total samples</dt><dd>{includedFileCount}</dd></div>
+                <div><dt>Ready types</dt><dd>{sampleReadyTypes}</dd></div>
+                <div><dt>Below target</dt><dd>{sampleGaps}</dd></div>
+              </dl>
+            </section>
           </div>
         </div>
         <div className="classification-table">
@@ -4286,6 +4422,7 @@ function ClassificationScreen({
           {!includedTypes.length && <EmptyState text="No document types are included in classification." />}
         </div>
       </section>
+      {classificationTab === 'test' && <ClassificationTestPanel />}
     </div>
   );
 }
@@ -4342,7 +4479,7 @@ function DocumentTypeManagement({
   function cleanupRetainedTest() {
     const document = testDocumentRef.current;
     testDocumentRef.current = null;
-    if (!document || !['extracted', 'failed', 'unsupported_format'].includes(document.status)) return;
+    if (!document || !['extraction_completed', 'failed', 'unsupported_format'].includes(document.status)) return;
     void api.deleteDocument(document._id).catch(() => undefined);
   }
 
@@ -4472,7 +4609,7 @@ function DocumentTypeManagement({
       testDocumentRef.current = document;
       setTestDocument(document);
 
-      const terminalStatuses: IncomingDocument['status'][] = ['extracted', 'failed', 'unsupported_format'];
+      const terminalStatuses: IncomingDocument['status'][] = ['extraction_completed', 'failed', 'unsupported_format'];
       const deadline = Date.now() + 5 * 60 * 1000;
       while (!terminalStatuses.includes(document.status) && Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 1200));
@@ -4484,7 +4621,7 @@ function DocumentTypeManagement({
       if (!terminalStatuses.includes(document.status)) {
         throw new Error('The model test timed out before a result was available.');
       }
-      if (document.status !== 'extracted') {
+      if (document.status !== 'extraction_completed') {
         throw new Error(document.error || (document.status === 'unsupported_format'
           ? 'This file format is not enabled for processing.'
           : 'The extraction failed.'));
@@ -4682,7 +4819,7 @@ function DocumentTypeManagement({
                       )}
                     </div>
                     {testError && <div className="test-model-error"><AlertTriangle size={17} /> {testError}</div>}
-                    {testDocument?.status === 'extracted' && (
+                    {testDocument?.status === 'extraction_completed' && (
                       <div className="test-model-workspace">
                         <section className="pdf-pane test-model-file-pane">
                           {testDocument.processingMode === 'spreadsheet' || Boolean(testDocument.workbookArtifactBlobName) ? (
@@ -6057,9 +6194,12 @@ function DocumentList({
             <option value="">All</option>
             <option value="in-progress">In progress</option>
             <option value="received">Received</option>
-            <option value="preprocessed">Preprocessed</option>
-            <option value="classified">Classified</option>
-            <option value="extracted">Extracted</option>
+            <option value="preprocessing_started">Preprocessing - Started</option>
+            <option value="preprocessing_completed">Preprocessing - Completed</option>
+            <option value="classification_started">Classification - Started</option>
+            <option value="classification_completed">Classification - Completed</option>
+            <option value="extraction_started">Extraction - Started</option>
+            <option value="extraction_completed">Extraction - Completed</option>
             <option value="validated">Validated</option>
             <option value="rejected">Rejected</option>
             <option value="failed">Failed</option>
@@ -6202,7 +6342,7 @@ function DocumentList({
                 )}
               </span>
               <span
-                className={`pill ${doc.status} clickable-status`}
+                className="clickable-status"
                 role="button"
                 tabIndex={0}
                 title="View document processing flow"
@@ -6217,7 +6357,7 @@ function DocumentList({
                   setFlowTarget(doc);
                 }}
               >
-                {doc.status === 'unsupported_format' ? 'Unsupported' : doc.status.replace(/_/g, ' ')}
+                <DocumentStatusIndicator document={doc} />
               </span>
               <span className={`score-badge${scoreToneClass(doc.classificationScore)}`}>
                 {formatScore(doc.classificationScore)}
@@ -6514,6 +6654,55 @@ function formatDurationMilliseconds(duration: number) {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function documentStatusLabel(status: IncomingDocument['status']) {
+  if (status === 'unsupported_format') return 'Unsupported';
+  if (status === 'preprocessing_started') return 'Preprocessing - Started';
+  if (status === 'preprocessing_completed') return 'Preprocessing - Completed';
+  if (status === 'classification_started') return 'Classification - Started';
+  if (status === 'classification_completed') return 'Classification - Completed';
+  if (status === 'extraction_started') return 'Extraction - Started';
+  if (status === 'extraction_completed') return 'Extraction - Completed';
+  return status.replace(/_/g, ' ');
+}
+
+function documentProcessingPercentage(document: IncomingDocument) {
+  switch (document.status) {
+    case 'received': return 0;
+    case 'preprocessing_started': return 15;
+    case 'preprocessing_completed': return 30;
+    case 'classification_started': return 45;
+    case 'classification_completed': return 60;
+    case 'extraction_started': return 75;
+    case 'extraction_completed':
+    case 'validated':
+    case 'rejected': return 100;
+    case 'failed': {
+      const statuses = new Set((document.stageTimings || []).map((timing) => timing.status));
+      if (statuses.has('extraction_started')) return 75;
+      if (statuses.has('classification_started')) return 45;
+      if (statuses.has('preprocessing_started')) return 15;
+      return 0;
+    }
+    default: return 0;
+  }
+}
+
+function DocumentStatusIndicator({ document }: { document: IncomingDocument }) {
+  const percentage = documentProcessingPercentage(document);
+  return (
+    <span className="document-status-indicator">
+      <span className={`pill ${document.status}`}>{documentStatusLabel(document.status)}</span>
+      <span
+        className={`document-progress ${document.status}`}
+        style={{ '--progress': `${percentage}%` } as CSSProperties}
+        aria-label={`Processing ${percentage}% complete`}
+      >
+        <span>{percentage}%</span>
+      </span>
+    </span>
+  );
+}
+
 function DocumentFlowDialog({
   document,
   onClose,
@@ -6521,17 +6710,29 @@ function DocumentFlowDialog({
   document: IncomingDocument;
   onClose: () => void;
 }) {
-  const baseStatuses: IncomingDocument['status'][] = ['received', 'preprocessed', 'classified', 'extracted'];
+  const baseStages = [
+    { key: 'received', label: 'Received', startedStatus: 'received', completedStatus: 'received' },
+    { key: 'preprocessed', label: 'Preprocessed', startedStatus: 'preprocessing_started', completedStatus: 'preprocessing_completed' },
+    { key: 'classified', label: 'Classified', startedStatus: 'classification_started', completedStatus: 'classification_completed' },
+    { key: 'extracted', label: 'Extracted', startedStatus: 'extraction_started', completedStatus: 'extraction_completed' },
+  ] as const satisfies ReadonlyArray<{
+    key: string;
+    label: string;
+    startedStatus: IncomingDocument['status'];
+    completedStatus: IncomingDocument['status'];
+  }>;
   const isUnsupported = document.status === 'unsupported_format';
   const recordedTimings = document.stageTimings || [];
-  const optionalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed', 'unsupported_format'];
-  const statuses = isUnsupported ? ['unsupported_format'] as IncomingDocument['status'][] : [
-    ...baseStatuses,
-    ...optionalStatuses.filter((status) =>
-      status === document.status || recordedTimings.some((timing) => timing.status === status)),
-  ];
-  const processingTimings = baseStatuses
-    .map((status) => [...recordedTimings].reverse().find((timing) => timing.status === status))
+  const stageDetails = baseStages.map((stage) => ({
+    ...stage,
+    timing: [...recordedTimings].reverse().find((timing) => timing.status === stage.startedStatus),
+  }));
+  const visibleStages = isUnsupported ? [] : stageDetails;
+  const terminalStatuses: IncomingDocument['status'][] = ['validated', 'rejected', 'failed', 'unsupported_format'];
+  const visibleTerminalStatuses = terminalStatuses.filter((status) =>
+    status === document.status || recordedTimings.some((timing) => timing.status === status));
+  const processingTimings = stageDetails
+    .map((stage) => stage.timing)
     .filter((timing): timing is NonNullable<typeof timing> => Boolean(timing?.startTime));
   const now = Date.now();
   const processingTimeExcludingQueue = processingTimings.reduce((total, timing) => {
@@ -6546,15 +6747,15 @@ function DocumentFlowDialog({
   const processingStart = processingTimings.length
     ? Math.min(...processingTimings.map((timing) => new Date(timing.startTime).getTime()))
     : now;
-  const extractedTiming = [...recordedTimings].reverse().find((timing) => timing.status === 'extracted');
   const latestRecordedTime = recordedTimings.length
     ? Math.max(...recordedTimings.flatMap((timing) => [
       new Date(timing.startTime).getTime(),
       timing.endTime ? new Date(timing.endTime).getTime() : now,
     ]))
     : now;
-  const processingEnd = extractedTiming?.endTime
-    ? new Date(extractedTiming.endTime).getTime()
+  const extractionTiming = stageDetails.find((stage) => stage.key === 'extracted')?.timing;
+  const processingEnd = extractionTiming?.endTime
+    ? new Date(extractionTiming.endTime).getTime()
     : latestRecordedTime;
   const processingTimeIncludingQueue = Math.max(0, processingEnd - processingStart);
 
@@ -6585,27 +6786,23 @@ function DocumentFlowDialog({
           )}
         </div>
         <div className="document-flow">
-          {statuses.map((status, index) => {
-            const timing = [...recordedTimings].reverse().find((item) => item.status === status);
-            const nextStatus = statuses[index + 1];
-            const nextTiming = nextStatus
-              ? [...recordedTimings].reverse().find((item) => item.status === nextStatus)
-              : undefined;
-            const showQueueWait = !isUnsupported && Boolean(nextStatus) && index < baseStatuses.length - 1
-              && Boolean(timing?.endTime && (nextTiming?.startTime || document.status === status));
-            const isCurrent = status === document.status;
-            const isTerminalStatus = status === 'validated' || status === 'rejected' || status === 'failed' || status === 'unsupported_format';
-            const completed = Boolean(timing?.endTime) || (isCurrent && isTerminalStatus);
+          {visibleStages.map((stage, index) => {
+            const timing = stage.timing;
+            const nextStage = visibleStages[index + 1];
+            const nextTiming = nextStage?.timing;
+            const isCurrent = document.status === stage.startedStatus;
+            const completed = Boolean(timing?.endTime);
+            const showQueueWait = Boolean(nextStage && timing?.endTime && nextTiming?.startTime);
             return (
-              <Fragment key={status}>
-                <div className={`document-flow-stage ${status}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+              <Fragment key={stage.key}>
+                <div className={`document-flow-stage ${isCurrent ? stage.startedStatus : stage.completedStatus}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
                   <div className="document-flow-marker">
                     {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
-                    {index < statuses.length - 1 && <span />}
+                    {index < visibleStages.length - 1 || visibleTerminalStatuses.length > 0 ? <span /> : null}
                   </div>
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
-                      <strong>{status === 'unsupported_format' ? 'Unsupported' : status}</strong>
+                      <strong>{stage.label}</strong>
                       <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
                     </div>
                     <dl>
@@ -6630,7 +6827,7 @@ function DocumentFlowDialog({
                       <Clock3 size={16} />
                     </div>
                     <div>
-                      <strong>Queue wait for {nextStatus}</strong>
+                      <strong>Queue wait for {nextStage.label}</strong>
                       <span>
                         {formatStageTimestamp(timing?.endTime)}
                         {' → '}
@@ -6641,6 +6838,28 @@ function DocumentFlowDialog({
                   </div>
                 )}
               </Fragment>
+            );
+          })}
+          {visibleTerminalStatuses.map((status, index) => {
+            const timing = [...recordedTimings].reverse().find((item) => item.status === status);
+            return (
+              <div className={`document-flow-stage ${status} completed`} key={status}>
+                <div className="document-flow-marker">
+                  <CheckCircle2 size={18} />
+                  {index < visibleTerminalStatuses.length - 1 && <span />}
+                </div>
+                <div className="document-flow-stage-card">
+                  <div className="document-flow-stage-heading">
+                    <strong>{documentStatusLabel(status)}</strong>
+                    <span>Completed</span>
+                  </div>
+                  <dl>
+                    <div><dt>Start time</dt><dd>{formatStageTimestamp(timing?.startTime)}</dd></div>
+                    <div><dt>End time</dt><dd>{formatStageTimestamp(timing?.endTime)}</dd></div>
+                    <div><dt>Duration</dt><dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd></div>
+                  </dl>
+                </div>
+              </div>
             );
           })}
         </div>

@@ -87,9 +87,12 @@ export type IncomingDocument = {
   };
   status:
     | 'received'
-    | 'preprocessed'
-    | 'classified'
-    | 'extracted'
+    | 'preprocessing_started'
+    | 'preprocessing_completed'
+    | 'classification_started'
+    | 'classification_completed'
+    | 'extraction_started'
+    | 'extraction_completed'
     | 'validated'
     | 'rejected'
     | 'failed'

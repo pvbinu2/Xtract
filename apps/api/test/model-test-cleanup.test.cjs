@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const { DocumentsService } = require('../dist/documents/documents.service');
 const { recordBusinessReviewProcessing } = require('../../../functions/processor/src/documentProcessingCommon');
 
-for (const status of ['extracted', 'failed', 'unsupported_format']) {
+for (const status of ['extraction_completed', 'failed', 'unsupported_format']) {
   test(`consuming ${status} test removes all artifacts before returning result`, async () => {
     const document = {
       _id: 'test-id', isModelTest: true, status, extractedData: [{ value: 'result' }],
@@ -28,21 +28,21 @@ for (const status of ['extracted', 'failed', 'unsupported_format']) {
 test('processing tests are retained until a result is ready; ordinary documents are protected', async () => {
   const service = Object.create(DocumentsService.prototype);
   service.remove = async () => assert.fail('must not delete');
-  service.findById = async () => ({ isModelTest: true, status: 'extracting' });
-  assert.equal((await service.consumeModelTestResult('id')).status, 'extracting');
-  service.findById = async () => ({ status: 'extracted' });
+  service.findById = async () => ({ isModelTest: true, status: 'extraction_started' });
+  assert.equal((await service.consumeModelTestResult('id')).status, 'extraction_started');
+  service.findById = async () => ({ status: 'extraction_completed' });
   await assert.rejects(service.consumeModelTestResult('id'), /not a model test/);
 });
 
 test('completed tests can be retained while their source is displayed', async () => {
   const service = Object.create(DocumentsService.prototype);
   service.remove = async () => assert.fail('must not delete while retained');
-  service.findById = async () => ({ isModelTest: true, status: 'extracted' });
-  assert.equal((await service.consumeModelTestResult('id', true)).status, 'extracted');
+  service.findById = async () => ({ isModelTest: true, status: 'extraction_completed' });
+  assert.equal((await service.consumeModelTestResult('id', true)).status, 'extraction_completed');
 });
 
 test('cleanup failures preserve the database record for retry and do not return a completed result', async () => {
-  const document = { isModelTest: true, status: 'extracted', storageContainer: 'processing', storageBlobName: 'source' };
+  const document = { isModelTest: true, status: 'extraction_completed', storageContainer: 'processing', storageBlobName: 'source' };
   const service = Object.create(DocumentsService.prototype);
   service.findById = async () => document;
   service.documentModel = { findById: async () => document, deleteOne: async () => assert.fail('must retain record') };

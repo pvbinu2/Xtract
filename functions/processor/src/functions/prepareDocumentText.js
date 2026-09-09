@@ -4,8 +4,6 @@ const { app, output } = require('@azure/functions');
 const { withPreprocessingConcurrency } = require('../aiConcurrency');
 const {
   ObjectId,
-  beginDocumentStage,
-  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -13,6 +11,7 @@ const {
   removeTempFile,
   resolveDocumentFile,
   resolveDocumentId,
+  transitionDocumentStatus,
 } = require('../documentProcessingCommon');
 const { extractDocumentContent, extractDocumentSpatialItems } = require('../documentText');
 const { publishDocumentChanged } = require('../documentEvents');
@@ -76,7 +75,8 @@ async function prepareDocumentText(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
-  await beginDocumentStage(documents, document._id, 'preprocessed');
+  await transitionDocumentStatus(documents, document._id, 'preprocessing_started');
+  await publishDocumentChanged(documents, document._id, ['status'], context);
   if (!hasResolvableDocumentFile(document)) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
@@ -206,10 +206,10 @@ async function prepareDocumentText(message, context) {
     ) {
       await deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
     }
-    await completeDocumentStage(
+    await transitionDocumentStatus(
       documents,
       document._id,
-      'preprocessed',
+      'preprocessing_completed',
       {
         textArtifactContainer: PROCESSING_CONTAINER,
         textArtifactBlobName: artifactBlobName,
@@ -222,6 +222,8 @@ async function prepareDocumentText(message, context) {
           processingMode: 'spreadsheet',
         } : {}),
       },
+      [],
+      { completed: true },
     );
     await publishDocumentChanged(
       documents,

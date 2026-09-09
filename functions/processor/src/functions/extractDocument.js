@@ -11,8 +11,6 @@ const { extractDocumentContent, extractDocumentSpatialItems, extractDocumentText
 const { withOpenAIRetry } = require('../openaiRetry');
 const {
   ObjectId,
-  beginDocumentStage,
-  completeDocumentStage,
   getClient,
   hasResolvableDocumentFile,
   markDocumentFailed,
@@ -450,7 +448,8 @@ async function extractQueuedDocument(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
-  await beginDocumentStage(documents, document._id, 'extracted');
+  await transitionDocumentStatus(documents, document._id, 'extraction_started');
+  await publishDocumentChanged(documents, document._id, ['status'], context);
 
   const configuration = await getConfiguration();
   const {
@@ -589,10 +588,10 @@ async function extractQueuedDocument(message, context) {
     ).toFixed(8));
 
     const protectedExtractedData = extractedDataUpdate(document, extractedData, configuration);
-    await completeDocumentStage(
+    await transitionDocumentStatus(
       documents,
       document._id,
-      'extracted',
+      'extraction_completed',
       {
         ...(payload.classificationUpdate || {}),
         ...protectedExtractedData.$set,
@@ -602,6 +601,7 @@ async function extractQueuedDocument(message, context) {
         error: null,
       },
       ['reprocessOptions', ...Object.keys(protectedExtractedData.$unset || {})],
+      { completed: true },
     );
     await publishDocumentChanged(
       documents,

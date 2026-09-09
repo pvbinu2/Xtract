@@ -325,7 +325,7 @@ async function recordBusinessReviewProcessing(db, document, documentType, metric
     fileName: document.originalName,
     documentTypeName: documentType?.name || document.documentTypeName,
     category: documentType?.category || document.category,
-    status: 'extracted',
+    status: 'extraction_completed',
     classificationModel: document.classificationModel,
     extractionModel: normalizedMetrics.model,
     ...normalizedMetrics,
