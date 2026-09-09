@@ -2321,6 +2321,9 @@ nav {
 }
 
 .marketing-nav-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 40px;
   border: 0;
   border-radius: 9px;
@@ -2328,6 +2331,7 @@ nav {
   color: #0b1729;
   padding: 0 15px;
   font-weight: 900;
+  text-decoration: none;
 }
 
 .marketing-hero-content {
@@ -3207,6 +3211,202 @@ nav {
   color: #0f766e;
   font-size: 12px;
   font-weight: 900;
+}
+
+.marketing-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.technical-stack-hero {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 78% 18%, rgb(45 212 191 / 0.2), transparent 25%),
+    radial-gradient(circle at 16% 70%, rgb(59 130 246 / 0.18), transparent 30%),
+    linear-gradient(145deg, #0b1729, #10243a);
+  color: white;
+  padding: 28px clamp(20px, 5vw, 80px) clamp(74px, 11vw, 142px);
+}
+
+.technical-stack-hero .marketing-nav {
+  max-width: 1240px;
+  margin: 0 auto clamp(58px, 9vh, 102px);
+}
+
+.technical-stack-hero .marketing-brand,
+.technical-stack-hero .marketing-nav-links a {
+  color: white;
+  text-decoration: none;
+}
+
+.technical-stack-hero-copy {
+  max-width: 900px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.technical-stack-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(44px, 6.4vw, 82px);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.technical-stack-hero-copy h1 em {
+  color: #5eead4;
+  font-style: normal;
+}
+
+.technical-stack-hero-copy p {
+  max-width: 720px;
+  margin: 24px auto 0;
+  color: #c8d5e5;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.65;
+}
+
+.technical-stack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.technical-stack-grid article {
+  display: grid;
+  min-height: 258px;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid #dfe5ee;
+  border-radius: 13px;
+  background: white;
+  padding: 26px;
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.technical-stack-grid article:hover {
+  border-color: rgb(20 184 166 / 0.42);
+  box-shadow: 0 22px 54px rgb(15 23 42 / 0.09);
+  transform: translateY(-4px);
+}
+
+.technical-stack-grid article > span {
+  margin-top: 22px;
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.technical-stack-grid h3 {
+  margin: 0;
+  font-size: 21px;
+}
+
+.technical-stack-grid p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.technical-stack-processing {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.7fr) minmax(0, 1.3fr);
+  gap: clamp(32px, 7vw, 100px);
+  max-width: 1168px;
+  margin: 0 auto 90px;
+  border-radius: 18px;
+  background: #f0fdfa;
+  padding: clamp(30px, 5vw, 60px);
+}
+
+.technical-stack-processing h2 {
+  margin: 6px 0 0;
+  color: #0f172a;
+  font-size: clamp(30px, 3.5vw, 46px);
+  letter-spacing: -0.045em;
+}
+
+.technical-stack-processing p {
+  color: #475569;
+  line-height: 1.65;
+}
+
+.technical-stack-processing ol {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.technical-stack-processing li {
+  display: grid;
+  grid-template-columns: 34px minmax(100px, 0.6fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #ccfbf1;
+  border-radius: 10px;
+  background: white;
+  padding: 12px 14px;
+}
+
+.technical-stack-processing li > span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.technical-stack-processing li strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.technical-stack-processing li small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .technical-stack-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .technical-stack-processing {
+    grid-template-columns: 1fr;
+    margin-right: 20px;
+    margin-left: 20px;
+  }
+}
+
+@media (max-width: 620px) {
+  .technical-stack-hero .marketing-nav {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .technical-stack-hero .marketing-nav-links {
+    order: 3;
+    width: 100%;
+  }
+
+  .technical-stack-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .technical-stack-processing li {
+    grid-template-columns: 30px 1fr;
+  }
+
+  .technical-stack-processing li small {
+    grid-column: 2;
+  }
 }
 
 .two-column {

@@ -603,6 +603,9 @@ function confidenceBadge(item: ExtractedValue) {
 }
 
 export function App() {
+  if (window.location.pathname === '/xtractor/technical-stack') {
+    return <TechnicalStackSite />;
+  }
   if (window.location.pathname === '/xtractor') {
     return <MarketingSite />;
   }
@@ -1519,6 +1522,7 @@ function MarketingSite() {
             <a href="#how-it-works">How it works</a>
             <a href="#supported-formats">File support</a>
             <a href="#platform-features">Features</a>
+            <a href="/xtractor/technical-stack">Technical stack</a>
             <a href="#business-applications">Solutions</a>
             <a href="#demo-request-form">Contact</a>
           </div>
@@ -1787,7 +1791,115 @@ function MarketingSite() {
       <footer className="marketing-footer">
         <div className="marketing-brand"><img src="/icon-192.png" alt="" /><strong>Xtractor</strong></div>
         <p>Intelligent document operations, built for trusted outcomes.</p>
+        <a href="/xtractor/technical-stack">Technical stack</a>
         <button type="button" onClick={() => { window.location.href = '/'; }}>Sign in to Xtractor <ChevronRight size={15} /></button>
+      </footer>
+    </main>
+  );
+}
+
+function TechnicalStackSite() {
+  const layers = [
+    {
+      icon: Files,
+      label: 'Experience layer',
+      title: 'React + TypeScript + Vite',
+      text: 'A fast, typed web application for document intake, classifier configuration, extraction review, and operational reporting.',
+    },
+    {
+      icon: Network,
+      label: 'API & workflow',
+      title: 'NestJS + Azure Functions',
+      text: 'NestJS provides the application API while independently scalable Azure Functions process preparation, classification, extraction, and training work.',
+    },
+    {
+      icon: Database,
+      label: 'Data & retrieval',
+      title: 'MongoDB + Qdrant',
+      text: 'MongoDB stores document state, schemas, and review records. Qdrant powers vector retrieval for trained document-type matching and RAG.',
+    },
+    {
+      icon: BrainCircuit,
+      label: 'AI services',
+      title: 'OpenAI, custom endpoints, or Ollama',
+      text: 'Choose hosted OpenAI models, compatible private endpoints, or self-hosted Ollama for classification, extraction, reasoning, and embeddings.',
+    },
+    {
+      icon: HardDrive,
+      label: 'Storage & messaging',
+      title: 'Azure Blob Storage + Service Bus',
+      text: 'Source files and prepared artifacts are stored separately from application records, while queues isolate every processing stage for resilient scaling.',
+    },
+    {
+      icon: ShieldCheck,
+      label: 'Security & control',
+      title: 'Encrypted artifacts and human review',
+      text: 'Configurable encryption protects stored files and extracted values. Role-based review keeps people in control before downstream delivery.',
+    },
+  ];
+
+  return (
+    <main className="marketing-site technical-stack-site">
+      <section className="technical-stack-hero">
+        <div className="marketing-nav">
+          <a className="marketing-brand" href="/xtractor">
+            <img src="/icon-192.png" alt="" />
+            <strong>Xtractor</strong>
+          </a>
+          <div className="marketing-nav-links">
+            <a href="/xtractor">Overview</a>
+            <a href="#architecture">Architecture</a>
+            <a href="#processing">Processing</a>
+          </div>
+          <div className="marketing-nav-actions">
+            <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>Sign in</button>
+            <a className="marketing-nav-cta" href="/xtractor#demo-request-form">Book a demo</a>
+          </div>
+        </div>
+        <div className="technical-stack-hero-copy">
+          <span className="marketing-kicker"><Network size={14} /> Technical stack</span>
+          <h1>Built for reliable, <em>observable</em> document intelligence.</h1>
+          <p>Xtractor combines a modern web workspace, independently scalable workers, vector retrieval, and configurable AI providers into one controlled document-processing platform.</p>
+        </div>
+      </section>
+
+      <section className="marketing-section technical-stack-architecture" id="architecture">
+        <div className="marketing-section-heading centered">
+          <span className="marketing-kicker">Platform architecture</span>
+          <h2>Each layer has one clear job.</h2>
+          <p>The stack separates user experience, orchestration, storage, retrieval, and AI work so teams can scale and govern each concern independently.</p>
+        </div>
+        <div className="technical-stack-grid">
+          {layers.map(({ icon: Icon, label, title, text }) => (
+            <article key={title}>
+              <div className="marketing-card-icon"><Icon size={22} /></div>
+              <span>{label}</span>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="technical-stack-processing" id="processing">
+        <div>
+          <span className="marketing-kicker">Processing path</span>
+          <h2>From upload to trusted data.</h2>
+          <p>Every stage records live status, persists useful artifacts, and hands work to the next independently scalable service.</p>
+        </div>
+        <ol>
+          <li><span>01</span><strong>Intake</strong><small>Web, API, or Blob Storage</small></li>
+          <li><span>02</span><strong>Prepare</strong><small>OCR, markdown, or workbook text</small></li>
+          <li><span>03</span><strong>Classify</strong><small>Vector, LLM, or RAG selection</small></li>
+          <li><span>04</span><strong>Extract</strong><small>Structured values and source references</small></li>
+          <li><span>05</span><strong>Validate</strong><small>Human review and downstream delivery</small></li>
+        </ol>
+      </section>
+
+      <footer className="marketing-footer">
+        <div className="marketing-brand"><img src="/icon-192.png" alt="" /><strong>Xtractor</strong></div>
+        <p>Intelligent document operations, built for trusted outcomes.</p>
+        <a href="/xtractor">Back to overview <ChevronRight size={15} /></a>
       </footer>
     </main>
   );
