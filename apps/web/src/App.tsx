@@ -4806,11 +4806,10 @@ function DocumentTypeManagement({
                     <small>Upload one document and extract it using {activeType.name} and its current schema. Test files and results are deleted when you clear the test or leave this screen.</small>
                   </div>
                 </div>
-                <div className="test-model-upload">
-                  <label className={`file-drop${testFile ? ' has-files' : ''}`}>
-                    <span className="file-drop-icon"><Upload size={28} /></span>
-                    <strong>{testFile?.name || 'Choose a document to test'}</strong>
-                    <span>{testFile ? 'Ready to extract' : 'Drop a file here or click to browse'}</span>
+                <div className="classification-test-upload test-model-upload">
+                  <label className="file-picker">
+                    <Upload size={17} />
+                    <span>{testFile?.name || 'Choose a document to test'}</span>
                     <input
                       type="file"
                       ref={testFileInputRef}
@@ -4824,15 +4823,13 @@ function DocumentTypeManagement({
                       }}
                     />
                   </label>
-                  <div className="test-model-upload-actions">
-                    <button className="primary-button" type="button" disabled={!testFile || testRunning || !activeType.fields.length} onClick={runModelTest}>
-                      {testRunning ? <Loader2 size={16} className="spin" /> : <ScanText size={16} />}
-                      {testRunning ? 'Extracting…' : 'Run Extraction'}
-                    </button>
-                    <button className="secondary-button compact" type="button" disabled={testRunning || (!testFile && !testDocument && !testError)} onClick={clearModelTest}>
-                      <X size={15} /> Clear
-                    </button>
-                  </div>
+                  <button className="primary-button" type="button" disabled={!testFile || testRunning || !activeType.fields.length} onClick={runModelTest}>
+                    {testRunning ? <Loader2 size={16} className="spin" /> : <ScanText size={16} />}
+                    {testRunning ? 'Extracting…' : 'Run Extraction'}
+                  </button>
+                  <button className="secondary-button" type="button" disabled={testRunning || (!testFile && !testDocument && !testError)} onClick={clearModelTest}>
+                    <Eraser size={16} /> Clear
+                  </button>
                   {!activeType.fields.length && <p className="warning-text">Create and save an extraction schema before testing this model.</p>}
                 </div>
 

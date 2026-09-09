@@ -5251,23 +5251,14 @@ textarea {
 }
 
 .test-model-upload {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
-.test-model-upload .file-drop {
-  min-height: 150px;
-}
-
-.test-model-upload-actions {
-  display: grid;
-  gap: 8px;
-}
-
 .test-model-upload .warning-text {
-  grid-column: 1 / -1;
+  width: 100%;
   margin: 0;
 }
 
