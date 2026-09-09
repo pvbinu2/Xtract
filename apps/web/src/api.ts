@@ -1,6 +1,9 @@
-import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, UserRole } from './types';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, UserRole } from './types';
 
 export type AppConfigPayload = {
+  subscriptionPlanName: string;
+  subscriptionIncludedPages: number;
+  subscriptionOverageRateInr: number;
   storageEncryptionEnabled: boolean;
   databaseEncryptionEnabled: boolean;
   storageEncryptionKeyConfigured?: boolean;
@@ -304,6 +307,7 @@ export const api = {
   listDocuments: (params: URLSearchParams) =>
     request<PagedResult<IncomingDocument>>(`/documents?${params.toString()}`),
   getBusinessReviewSummary: () => request<BusinessReviewSummary>('/documents/business-review/summary'),
+  getSubscriptionSummary: () => request<SubscriptionSummary>('/documents/subscription/summary'),
   resetBusinessReview: () => request<{ reset: boolean }>('/documents/business-review', { method: 'DELETE' }),
   getDemoRequestSettings: () => request<{ turnstileEnabled: boolean; turnstileSiteKey: string; turnstileAction: string }>('/demo-requests/settings'),
   createDemoRequest: (payload: { email: string; phone?: string; turnstileToken?: string; website?: string }) =>

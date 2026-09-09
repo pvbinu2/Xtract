@@ -158,6 +158,9 @@ export class IncomingDocument {
   @Prop()
   mimeType?: string;
 
+  @Prop({ default: 1, min: 1 })
+  pageCount!: number;
+
   @Prop({ default: false })
   convertedToPdf?: boolean;
 

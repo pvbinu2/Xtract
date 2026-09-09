@@ -148,6 +148,19 @@ export type BusinessReviewSummary = {
   }>;
 };
 
+export type SubscriptionSummary = {
+  planName: string;
+  periodStart: string;
+  periodEnd: string;
+  includedPages: number;
+  pagesProcessed: number;
+  additionalPages: number;
+  remainingPages: number;
+  documentsProcessed: number;
+  overageRateInr: number;
+  estimatedOverageInr: number;
+};
+
 export type DemoRequest = {
   _id: string;
   email: string;

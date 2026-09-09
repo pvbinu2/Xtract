@@ -17,6 +17,7 @@ import {
   Copy,
   Calculator,
   CircleDollarSign,
+  CreditCard,
   Clock3,
   Coins,
   Moon,
@@ -66,11 +67,11 @@ import {
 } from 'lucide-react';
 import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
-import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users' | 'health';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'subscription' | 'business-review' | 'demo-requests' | 'password-reset' | 'users' | 'health';
 
 type AppConfig = AppConfigPayload;
 type AiProvider = AppConfig['aiProvider'];
@@ -652,6 +653,9 @@ function OperationsApp() {
     filesReady: 0,
   });
   const [config, setConfig] = useState<AppConfig>({
+    subscriptionPlanName: 'Growth',
+    subscriptionIncludedPages: 8000,
+    subscriptionOverageRateInr: 4,
     storageEncryptionEnabled: false,
     databaseEncryptionEnabled: false,
     storageEncryptionKeyConfigured: false,
@@ -706,6 +710,9 @@ function OperationsApp() {
     try {
       const saved = await api.getConfiguration();
       const loadedConfig: AppConfig = {
+        subscriptionPlanName: saved.subscriptionPlanName || 'Growth',
+        subscriptionIncludedPages: Math.max(0, Number(saved.subscriptionIncludedPages) || 8000),
+        subscriptionOverageRateInr: Math.max(0, Number(saved.subscriptionOverageRateInr) || 4),
         storageEncryptionEnabled: Boolean(saved.storageEncryptionEnabled),
         databaseEncryptionEnabled: Boolean(saved.databaseEncryptionEnabled),
         storageEncryptionKeyConfigured: Boolean(saved.storageEncryptionKeyConfigured),
@@ -762,6 +769,9 @@ function OperationsApp() {
         try {
           const parsed = JSON.parse(storedConfig);
           const loadedConfig: AppConfig = {
+            subscriptionPlanName: parsed.subscriptionPlanName || 'Growth',
+            subscriptionIncludedPages: Math.max(0, Number(parsed.subscriptionIncludedPages) || 8000),
+            subscriptionOverageRateInr: Math.max(0, Number(parsed.subscriptionOverageRateInr) || 4),
             storageEncryptionEnabled: Boolean(parsed.storageEncryptionEnabled),
             databaseEncryptionEnabled: Boolean(parsed.databaseEncryptionEnabled),
             storageEncryptionKeyConfigured: Boolean(parsed.storageEncryptionKeyConfigured),
@@ -1179,6 +1189,7 @@ function OperationsApp() {
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
+    { id: 'subscription' as View, label: 'Subscription', icon: CreditCard },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
     { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
     { id: 'users' as View, label: 'User Management', icon: UsersIcon },
@@ -1398,6 +1409,9 @@ function OperationsApp() {
             onCurrencyChange={updateDisplayCurrency}
             onNotify={showToast}
           />
+        )}
+        {!selectedPageLoading && isAdmin && view === 'subscription' && (
+          <SubscriptionScreen onNotify={showToast} />
         )}
         {!selectedPageLoading && isAdmin && view === 'demo-requests' && (
           <DemoRequestsScreen
@@ -3160,6 +3174,84 @@ function MonthlyCostProjectionChart({
         <canvas ref={canvasRef} aria-label="Cost projection by monthly file volume" role="img" />
       </div>
     </section>
+  );
+}
+
+function SubscriptionScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [summary, setSummary] = useState<SubscriptionSummary | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+
+  async function loadSummary() {
+    setLoadingSummary(true);
+    try {
+      setSummary(await api.getSubscriptionSummary());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load subscription usage', 'error');
+    } finally {
+      setLoadingSummary(false);
+    }
+  }
+
+  useEffect(() => { loadSummary(); }, []);
+
+  if (loadingSummary && !summary) {
+    return <section className="panel empty"><Loader2 size={24} className="spin" /><p>Loading subscription usage.</p></section>;
+  }
+  if (!summary) return <EmptyState text="Subscription data is unavailable." />;
+
+  const usagePercent = summary.includedPages
+    ? Math.min(100, (summary.pagesProcessed / summary.includedPages) * 100)
+    : 0;
+  const formatInr = (value: number) => new Intl.NumberFormat('en-IN', {
+    style: 'currency', currency: 'INR', maximumFractionDigits: 0,
+  }).format(value);
+  const periodEnd = new Date(summary.periodEnd);
+
+  return (
+    <div className="subscription-page">
+      <section className="panel subscription-overview">
+        <div className="panel-heading">
+          <div className="subscription-heading">
+            <span><CreditCard size={20} /></span>
+            <div>
+              <small>Current subscription</small>
+              <h2>{summary.planName}</h2>
+              <p>Usage for {new Date(summary.periodStart).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. Resets on {periodEnd.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}.</p>
+            </div>
+          </div>
+          <button className="icon-button" title="Refresh subscription usage" onClick={loadSummary}>
+            {loadingSummary ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
+        </div>
+
+        <div className="subscription-usage">
+          <div className="subscription-usage-copy">
+            <span>Included page usage</span>
+            <strong>{formatNumber(summary.pagesProcessed)} <small>/ {formatNumber(summary.includedPages)} pages</small></strong>
+          </div>
+          <div className="subscription-progress" role="progressbar" aria-label="Included page usage" aria-valuemin={0} aria-valuemax={summary.includedPages} aria-valuenow={Math.min(summary.pagesProcessed, summary.includedPages)}>
+            <span style={{ width: `${usagePercent}%` }} />
+          </div>
+          <p>{summary.remainingPages > 0 ? `${formatNumber(summary.remainingPages)} included pages remaining` : 'Included page allowance used'}</p>
+        </div>
+
+        <div className="review-metric-grid subscription-metrics">
+          <ReviewMetric label="Pages processed" value={formatNumber(summary.pagesProcessed)} helper={`${formatNumber(summary.documentsProcessed)} documents processed`} icon={<Files size={18} />} />
+          <ReviewMetric label="Included pages" value={formatNumber(summary.includedPages)} helper="Monthly plan allowance" icon={<ClipboardCheck size={18} />} />
+          <ReviewMetric label="Additional pages" value={formatNumber(summary.additionalPages)} helper={summary.additionalPages ? 'Usage above included allowance' : 'No overage this period'} icon={<PlusCircle size={18} />} />
+          <ReviewMetric label="Estimated overage" value={formatInr(summary.estimatedOverageInr)} helper={`${formatInr(summary.overageRateInr)} per additional page`} icon={<CircleDollarSign size={18} />} />
+        </div>
+      </section>
+      <section className="panel subscription-details">
+        <h3>Usage details</h3>
+        <dl>
+          <div><dt>Billing period</dt><dd>{new Date(summary.periodStart).toLocaleDateString()} – {periodEnd.toLocaleDateString()}</dd></div>
+          <div><dt>Overage rate</dt><dd>{formatInr(summary.overageRateInr)} per page</dd></div>
+          <div><dt>Additional page charge</dt><dd>{formatInr(summary.estimatedOverageInr)}</dd></div>
+        </dl>
+        <p className="subscription-note">Page counts are recorded during preprocessing. Documents processed before page measurement was enabled are counted as one page.</p>
+      </section>
+    </div>
   );
 }
 

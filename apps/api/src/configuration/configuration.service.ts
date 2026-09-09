@@ -25,6 +25,9 @@ export class ConfigurationService {
 
   private normalize(config: any = {}) {
     const defaults = {
+      subscriptionPlanName: 'Growth',
+      subscriptionIncludedPages: 8000,
+      subscriptionOverageRateInr: 4,
       storageEncryptionEnabled: false,
       databaseEncryptionEnabled: false,
       storageEncryptionKeyVersion: 1,
@@ -64,6 +67,9 @@ export class ConfigurationService {
     return {
       ...defaults,
       ...config,
+      subscriptionPlanName: config?.subscriptionPlanName?.trim().slice(0, 80) || defaults.subscriptionPlanName,
+      subscriptionIncludedPages: Math.max(0, Math.floor(Number(config?.subscriptionIncludedPages) || defaults.subscriptionIncludedPages)),
+      subscriptionOverageRateInr: Math.max(0, Number(config?.subscriptionOverageRateInr) || defaults.subscriptionOverageRateInr),
       storageEncryptionEnabled: Boolean(config?.storageEncryptionEnabled),
       databaseEncryptionEnabled: Boolean(config?.databaseEncryptionEnabled),
       cachingEnabled: config?.cachingEnabled !== false,
@@ -158,6 +164,9 @@ export class ConfigurationService {
   }
 
   async save(config: {
+    subscriptionPlanName?: string;
+    subscriptionIncludedPages?: number;
+    subscriptionOverageRateInr?: number;
     cachingEnabled?: boolean;
     storageEncryptionEnabled?: boolean;
     databaseEncryptionEnabled?: boolean;
@@ -197,6 +206,9 @@ export class ConfigurationService {
     llmClassificationConcurrency?: number;
     extractionConcurrency?: number;
   }): Promise<Configuration> {
+    const subscriptionPlanName = config.subscriptionPlanName?.trim().slice(0, 80) || 'Growth';
+    const subscriptionIncludedPages = Math.max(0, Math.floor(Number(config.subscriptionIncludedPages) || 8000));
+    const subscriptionOverageRateInr = Math.max(0, Number(config.subscriptionOverageRateInr) || 4);
     const cachingEnabled = config.cachingEnabled !== false;
     const configurationCacheTtlSeconds = Math.min(86400, Math.max(1, Number(config.configurationCacheTtlSeconds) || 30));
     const turnstileEnabled = Boolean(config.turnstileEnabled);
@@ -277,6 +289,9 @@ export class ConfigurationService {
         {},
         {
           ...safeConfig,
+          subscriptionPlanName,
+          subscriptionIncludedPages,
+          subscriptionOverageRateInr,
           cachingEnabled,
           configurationCacheTtlSeconds,
           turnstileEnabled,

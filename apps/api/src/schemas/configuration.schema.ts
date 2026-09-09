@@ -10,6 +10,15 @@ export type ClassificationMode = 'vector' | 'llm' | 'rag';
 export type DocumentIngestionTrigger = 'event-grid' | 'blob';
 @Schema({ collection: 'configuration' })
 export class Configuration {
+  @Prop({ default: 'Growth' })
+  subscriptionPlanName!: string;
+
+  @Prop({ default: 8000, min: 0 })
+  subscriptionIncludedPages!: number;
+
+  @Prop({ default: 4, min: 0 })
+  subscriptionOverageRateInr!: number;
+
   @Prop({ default: false })
   storageEncryptionEnabled!: boolean;
 

@@ -820,6 +820,81 @@ nav {
   font-weight: 800;
 }
 
+.subscription-page {
+  display: grid;
+  gap: 18px;
+}
+
+.subscription-overview,
+.subscription-details {
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(15 23 42 / 0.05);
+}
+
+.subscription-overview {
+  border-top: 3px solid #7c3aed;
+}
+
+.subscription-details {
+  border-top: 3px solid #0f766e;
+}
+
+.subscription-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.subscription-heading > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: #6d28d9;
+  background: #f3e8ff;
+}
+
+.subscription-heading small,
+.subscription-usage-copy > span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.subscription-heading h2 { margin: 2px 0; }
+.subscription-heading p { margin: 0; color: var(--muted); font-size: 13px; }
+
+.subscription-usage {
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.subscription-usage-copy { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.subscription-usage-copy strong { font-size: 24px; }
+.subscription-usage-copy strong small { color: var(--muted); font-size: 14px; font-weight: 700; }
+.subscription-progress { height: 10px; margin: 14px 0 8px; overflow: hidden; border-radius: 999px; background: var(--border); }
+.subscription-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #0f766e, #7c3aed); }
+.subscription-usage p, .subscription-note { margin: 0; color: var(--muted); font-size: 13px; }
+.subscription-metrics { margin-top: 18px; }
+.subscription-details h3 { margin-top: 0; }
+.subscription-details dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
+.subscription-details dl div { padding: 12px; border-radius: 8px; background: var(--surface-muted); }
+.subscription-details dt { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.subscription-details dd { margin: 5px 0 0; font-weight: 800; }
+
+@media (max-width: 760px) {
+  .subscription-details dl { grid-template-columns: 1fr; }
+  .subscription-usage-copy { align-items: flex-start; flex-direction: column; }
+}
+
 .demo-requests-page {
   display: grid;
   gap: 18px;

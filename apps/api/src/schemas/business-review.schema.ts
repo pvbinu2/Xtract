@@ -13,6 +13,9 @@ export class BusinessReviewSummary {
   filesProcessed!: number;
 
   @Prop({ default: 0 })
+  pagesProcessed!: number;
+
+  @Prop({ default: 0 })
   inputTokens!: number;
 
   @Prop({ default: 0 })
@@ -52,6 +55,9 @@ export class BusinessReviewHistory {
 
   @Prop()
   status?: string;
+
+  @Prop({ default: 1 })
+  pageCount!: number;
 
   @Prop()
   model?: string;

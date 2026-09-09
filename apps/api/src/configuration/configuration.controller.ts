@@ -18,6 +18,9 @@ export class ConfigurationController {
   async saveConfiguration(
     @Body()
     body: {
+      subscriptionPlanName?: string;
+      subscriptionIncludedPages?: number;
+      subscriptionOverageRateInr?: number;
       storageEncryptionEnabled?: boolean;
       databaseEncryptionEnabled?: boolean;
       cachingEnabled?: boolean;

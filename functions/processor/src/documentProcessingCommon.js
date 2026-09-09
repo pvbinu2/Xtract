@@ -289,6 +289,7 @@ async function recordBusinessReviewProcessing(db, document, documentType, metric
   const classificationCostUsd = Number(metrics?.classificationCostUsd || 0);
   const embeddingCostUsd = Number(metrics?.embeddingCostUsd || 0);
   const estimatedCostUsd = Number((extractionCostUsd + classificationCostUsd + embeddingCostUsd).toFixed(8));
+  const pageCount = Math.max(1, Number(document.pageCount) || 1);
   const normalizedMetrics = {
     model: metrics?.model || 'mock',
     inputTokens: Number(metrics?.inputTokens || 0),
@@ -307,6 +308,7 @@ async function recordBusinessReviewProcessing(db, document, documentType, metric
       $setOnInsert: { key: 'global', createdAt: new Date() },
       $inc: {
         filesProcessed: 1,
+        pagesProcessed: pageCount,
         inputTokens: normalizedMetrics.inputTokens,
         outputTokens: normalizedMetrics.outputTokens,
         totalTokens: normalizedMetrics.totalTokens,
@@ -326,6 +328,7 @@ async function recordBusinessReviewProcessing(db, document, documentType, metric
     documentTypeName: documentType?.name || document.documentTypeName,
     category: documentType?.category || document.category,
     status: 'extraction_completed',
+    pageCount,
     classificationModel: document.classificationModel,
     extractionModel: normalizedMetrics.model,
     ...normalizedMetrics,

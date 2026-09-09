@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs/promises');
+const { PDFDocument } = require('pdf-lib');
 const { app, output } = require('@azure/functions');
 const { withPreprocessingConcurrency } = require('../aiConcurrency');
 const {
@@ -158,6 +159,9 @@ async function prepareDocumentText(message, context) {
     const { documentTextMode, textOptions } = processingOptionsFor(document, configuration);
     localFilePath = await resolveDocumentFile(document, configuration);
     const excelDocument = isExcelDocument(document);
+    const pageCount = excelDocument
+      ? 1
+      : Math.max(1, (await PDFDocument.load(await fs.readFile(localFilePath))).getPageCount());
     const workbook = excelDocument ? parseWorkbook(await fs.readFile(localFilePath)) : undefined;
     const content = workbook ? { text: workbook.text } : await extractDocumentContent(localFilePath, undefined, {
       ...textOptions,
@@ -216,6 +220,7 @@ async function prepareDocumentText(message, context) {
         textArtifactMode: documentTextMode,
         spatialTextArtifactContainer: PROCESSING_CONTAINER,
         spatialTextArtifactBlobName: spatialArtifactBlobName,
+        pageCount,
         ...(workbookBlobName ? {
           workbookArtifactContainer: PROCESSING_CONTAINER,
           workbookArtifactBlobName: workbookBlobName,
