@@ -25,6 +25,7 @@ export class ConfigurationService {
 
   private normalize(config: any = {}) {
     const defaults = {
+      deploymentMode: 'self_hosted',
       subscriptionPlanName: 'Growth',
       subscriptionIncludedPages: 8000,
       subscriptionOverageRateInr: 4,
@@ -67,6 +68,7 @@ export class ConfigurationService {
     return {
       ...defaults,
       ...config,
+      deploymentMode: config?.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted',
       subscriptionPlanName: config?.subscriptionPlanName?.trim().slice(0, 80) || defaults.subscriptionPlanName,
       subscriptionIncludedPages: Math.max(0, Math.floor(Number(config?.subscriptionIncludedPages) || defaults.subscriptionIncludedPages)),
       subscriptionOverageRateInr: Math.max(0, Number(config?.subscriptionOverageRateInr) || defaults.subscriptionOverageRateInr),
@@ -164,6 +166,7 @@ export class ConfigurationService {
   }
 
   async save(config: {
+    deploymentMode?: 'self_hosted' | 'subscription';
     subscriptionPlanName?: string;
     subscriptionIncludedPages?: number;
     subscriptionOverageRateInr?: number;
@@ -206,6 +209,7 @@ export class ConfigurationService {
     llmClassificationConcurrency?: number;
     extractionConcurrency?: number;
   }): Promise<Configuration> {
+    const deploymentMode = config.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted';
     const subscriptionPlanName = config.subscriptionPlanName?.trim().slice(0, 80) || 'Growth';
     const subscriptionIncludedPages = Math.max(0, Math.floor(Number(config.subscriptionIncludedPages) || 8000));
     const subscriptionOverageRateInr = Math.max(0, Number(config.subscriptionOverageRateInr) || 4);
@@ -289,6 +293,7 @@ export class ConfigurationService {
         {},
         {
           ...safeConfig,
+          deploymentMode,
           subscriptionPlanName,
           subscriptionIncludedPages,
           subscriptionOverageRateInr,

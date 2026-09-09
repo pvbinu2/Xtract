@@ -8,8 +8,12 @@ export type ConfigurationDocument = Configuration & Document;
 export type AiProvider = 'openai' | 'custom' | 'ollama';
 export type ClassificationMode = 'vector' | 'llm' | 'rag';
 export type DocumentIngestionTrigger = 'event-grid' | 'blob';
+export type DeploymentMode = 'self_hosted' | 'subscription';
 @Schema({ collection: 'configuration' })
 export class Configuration {
+  @Prop({ default: 'self_hosted', enum: ['self_hosted', 'subscription'] })
+  deploymentMode!: DeploymentMode;
+
   @Prop({ default: 'Growth' })
   subscriptionPlanName!: string;
 

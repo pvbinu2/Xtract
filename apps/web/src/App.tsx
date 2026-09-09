@@ -652,7 +652,9 @@ function OperationsApp() {
     filesProcessing: 0,
     filesReady: 0,
   });
+  const [subscriptionMetrics, setSubscriptionMetrics] = useState<SubscriptionSummary | null>(null);
   const [config, setConfig] = useState<AppConfig>({
+    deploymentMode: 'self_hosted',
     subscriptionPlanName: 'Growth',
     subscriptionIncludedPages: 8000,
     subscriptionOverageRateInr: 4,
@@ -710,6 +712,7 @@ function OperationsApp() {
     try {
       const saved = await api.getConfiguration();
       const loadedConfig: AppConfig = {
+        deploymentMode: saved.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted',
         subscriptionPlanName: saved.subscriptionPlanName || 'Growth',
         subscriptionIncludedPages: Math.max(0, Number(saved.subscriptionIncludedPages) || 8000),
         subscriptionOverageRateInr: Math.max(0, Number(saved.subscriptionOverageRateInr) || 4),
@@ -769,6 +772,7 @@ function OperationsApp() {
         try {
           const parsed = JSON.parse(storedConfig);
           const loadedConfig: AppConfig = {
+            deploymentMode: parsed.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted',
             subscriptionPlanName: parsed.subscriptionPlanName || 'Growth',
             subscriptionIncludedPages: Math.max(0, Number(parsed.subscriptionIncludedPages) || 8000),
             subscriptionOverageRateInr: Math.max(0, Number(parsed.subscriptionOverageRateInr) || 4),
@@ -833,6 +837,9 @@ function OperationsApp() {
     const saved = await api.saveConfiguration(newConfig);
     setConfig(saved);
     setPersistedConfig(saved);
+    if (saved.deploymentMode === 'subscription') {
+      setSubscriptionMetrics(await api.getSubscriptionSummary());
+    }
     showToast('Configuration saved successfully', 'info');
     return saved;
   }
@@ -866,7 +873,7 @@ function OperationsApp() {
   }
 
   async function refreshOperationsMetrics() {
-    const [summary, readyDocuments] = await Promise.all([
+    const [summary, readyDocuments, subscription] = await Promise.all([
       api.getBusinessReviewSummary(),
       api.listDocuments(
         new URLSearchParams({
@@ -875,6 +882,7 @@ function OperationsApp() {
           pageSize: '5',
         }),
       ),
+      api.getSubscriptionSummary(),
     ]);
 
     setOperationsMetrics({
@@ -883,6 +891,7 @@ function OperationsApp() {
       filesProcessing: summary.filesProcessing,
       filesReady: readyDocuments.total,
     });
+    setSubscriptionMetrics(subscription);
     setMetricsLoaded(true);
   }
 
@@ -998,6 +1007,12 @@ function OperationsApp() {
       return;
     }
   }, [currentUser?.id, view]);
+
+  useEffect(() => {
+    if (!isAdmin || !configLoaded) return;
+    if (config.deploymentMode === 'subscription' && view === 'business-review') setView('subscription');
+    if (config.deploymentMode === 'self_hosted' && view === 'subscription') setView('business-review');
+  }, [config.deploymentMode, configLoaded, isAdmin, view]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1198,7 +1213,8 @@ function OperationsApp() {
   ];
   const visibleNavigation = navigation.filter((item) => (
     currentUser?.role === 'admin'
-      ? true
+      ? (item.id !== 'subscription' || config.deploymentMode === 'subscription') &&
+        (item.id !== 'business-review' || config.deploymentMode === 'self_hosted')
       : item.id === 'documents' || item.id === 'upload' || item.id === 'password-reset'
   ));
   const validationDocumentId = activeDocumentId || documents[0]?._id || '';
@@ -1213,6 +1229,7 @@ function OperationsApp() {
   const averageCostPerFile = operationsMetrics.filesProcessed
     ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
     : 0;
+  const isSubscription = config.deploymentMode === 'subscription';
   const selectedPageLoading =
     (view === 'types' && !documentTypesLoaded) ||
     (view === 'classification' && (!documentTypesLoaded || !configLoaded)) ||
@@ -1299,7 +1316,7 @@ function OperationsApp() {
             <h1>{view === 'validation' ? 'Validation' : navigation.find((item) => item.id === view)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            {isAdmin && (
+            {isAdmin && !isSubscription && (
               <div className="status-strip">
                 <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
                 <StatusMetric
@@ -1322,6 +1339,14 @@ function OperationsApp() {
                   value={operationsMetrics.filesReady}
                   onClick={() => openDocuments('extraction_completed')}
                 />
+              </div>
+            )}
+            {isAdmin && isSubscription && subscriptionMetrics && (
+              <div className="status-strip">
+                <StatusMetric label="Plan" value={subscriptionMetrics.planName} onClick={() => setView('subscription')} />
+                <StatusMetric label="Pages processed" value={formatNumber(subscriptionMetrics.pagesProcessed)} onClick={() => setView('subscription')} />
+                <StatusMetric label="Pages remaining" value={formatNumber(subscriptionMetrics.remainingPages)} onClick={() => setView('subscription')} />
+                <StatusMetric label="Additional pages" value={formatNumber(subscriptionMetrics.additionalPages)} onClick={() => setView('subscription')} />
               </div>
             )}
             <button
@@ -3476,6 +3501,10 @@ const pendingConfigurationFields: Array<{
   label: string;
   secret?: boolean;
 }> = [
+  { key: 'deploymentMode', label: 'Operating model' },
+  { key: 'subscriptionPlanName', label: 'Subscription plan' },
+  { key: 'subscriptionIncludedPages', label: 'Included pages' },
+  { key: 'subscriptionOverageRateInr', label: 'Subscription overage rate' },
   { key: 'aiProvider', label: 'AI provider' },
   { key: 'openAiApiKey', label: 'OpenAI API key', secret: true },
   { key: 'customApiKey', label: 'Custom API key', secret: true },
@@ -3532,9 +3561,10 @@ function ConfigurationScreen({
   onRefresh: () => Promise<void>;
 }) {
   const [aiServiceTab, setAiServiceTab] = useState<AiProvider>('openai');
-  const [configurationTab, setConfigurationTab] = useState<'summary' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
+  const [configurationTab, setConfigurationTab] = useState<'summary' | 'deployment' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
   const configurationTabs = [
     { id: 'summary', label: 'Summary', icon: Gauge },
+    { id: 'deployment', label: 'Operating model', icon: Building2 },
     { id: 'ai', label: 'AI Services', icon: Sparkles },
     { id: 'scaling', label: 'Scaling', icon: TrendingUp },
     { id: 'caching', label: 'Caching', icon: Database },
@@ -3614,6 +3644,31 @@ function ConfigurationScreen({
         ))}
       </div>
       <div className="configuration-form">
+        <div className={`configuration-section deployment expanded${configurationTab === 'deployment' ? ' active-tab' : ''}`}>
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Building2 size={20} /></span>
+              <span><strong>Operating model</strong><small>Choose the commercial experience shown to administrators</small></span>
+            </span>
+          </div>
+          <div className="configuration-section-body deployment-mode-options">
+            <label className={config.deploymentMode === 'self_hosted' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
+              <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'self_hosted'} onChange={() => onConfigChange({ ...config, deploymentMode: 'self_hosted' })} />
+              <span><strong>Self hosted</strong><small>Show Business Review and AI processing-cost metrics.</small></span>
+            </label>
+            <label className={config.deploymentMode === 'subscription' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
+              <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'subscription'} onChange={() => onConfigChange({ ...config, deploymentMode: 'subscription' })} />
+              <span><strong>Subscription</strong><small>Show Subscription and included-page, remaining-page, and overage metrics.</small></span>
+            </label>
+            {config.deploymentMode === 'subscription' && (
+              <div className="deployment-plan-fields">
+                <label>Plan name<input value={config.subscriptionPlanName} maxLength={80} onChange={(event) => onConfigChange({ ...config, subscriptionPlanName: event.target.value })} /></label>
+                <label>Included pages / month<input type="number" min={0} value={config.subscriptionIncludedPages} onChange={(event) => onConfigChange({ ...config, subscriptionIncludedPages: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} /></label>
+                <label>Overage rate (₹ / page)<input type="number" min={0} step="0.01" value={config.subscriptionOverageRateInr} onChange={(event) => onConfigChange({ ...config, subscriptionOverageRateInr: Math.max(0, Number(event.target.value) || 0) })} /></label>
+              </div>
+            )}
+          </div>
+        </div>
         <div className={`configuration-section summary expanded${configurationTab === 'summary' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
@@ -3625,6 +3680,13 @@ function ConfigurationScreen({
             </span>
           </div>
           <div className="configuration-section-body configuration-summary-grid">
+            <div className="configuration-summary-group">
+              <strong><Building2 size={15} /> Operating model</strong>
+              <dl>
+                <div><dt>Mode</dt><dd>{config.deploymentMode === 'subscription' ? 'Subscription' : 'Self hosted'}</dd></div>
+                {config.deploymentMode === 'subscription' && <><div><dt>Plan</dt><dd>{config.subscriptionPlanName}</dd></div><div><dt>Included pages</dt><dd>{formatNumber(config.subscriptionIncludedPages)} / month</dd></div></>}
+              </dl>
+            </div>
             <div className="configuration-summary-group">
               <strong><Sparkles size={15} /> AI Services</strong>
               <dl>

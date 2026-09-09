@@ -4068,6 +4068,77 @@ select {
   outline-offset: 1px;
 }
 
+.configuration-section.deployment {
+  --section-accent: #7c3aed;
+  --section-tint: rgb(124 58 237 / 0.07);
+}
+
+.deployment-mode-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.deployment-mode-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-height: 112px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-muted);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  padding: 17px;
+  box-shadow: 0 3px 10px rgb(15 23 42 / 0.05);
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.deployment-mode-option:hover,
+.deployment-mode-option:focus-within {
+  border-color: var(--section-accent);
+  box-shadow: 0 8px 22px rgb(15 23 42 / 0.1);
+  transform: translateY(-1px);
+}
+
+.deployment-mode-option.selected {
+  border-color: var(--section-accent);
+  border-left-color: var(--section-accent);
+  background: color-mix(in srgb, var(--section-tint) 70%, var(--surface));
+}
+
+.deployment-mode-option input { margin: 4px 0 0; accent-color: var(--section-accent); }
+.deployment-mode-option strong { display: block; color: var(--text); font-size: 14px; }
+.deployment-mode-option small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+.deployment-plan-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  border: 1px solid color-mix(in srgb, var(--section-accent) 30%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--section-tint) 35%, var(--surface));
+  padding: 16px;
+}
+
+.deployment-plan-fields label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.deployment-plan-fields input { width: 100%; }
+
+@media (max-width: 760px) {
+  .deployment-mode-options,
+  .deployment-plan-fields { grid-template-columns: 1fr; }
+}
+
 .configuration-form > .configuration-section {
   display: none;
 }

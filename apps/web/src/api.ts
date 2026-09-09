@@ -1,6 +1,7 @@
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, UserRole } from './types';
 
 export type AppConfigPayload = {
+  deploymentMode: 'self_hosted' | 'subscription';
   subscriptionPlanName: string;
   subscriptionIncludedPages: number;
   subscriptionOverageRateInr: number;
