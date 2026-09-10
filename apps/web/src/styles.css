@@ -6409,6 +6409,24 @@ textarea {
   font-weight: 800;
 }
 
+.document-model-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.reasoning-effort-badge {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.34);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
 .file-count,
 .classifier-pill {
   justify-self: start;

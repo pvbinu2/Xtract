@@ -7636,6 +7636,10 @@ function ValidationScreen({
   if (!document) return <EmptyState text="Loading document." />;
 
   const isLocked = ['validated', 'rejected', 'unsupported_format'].includes(document.status);
+  const documentType = documentTypeFor(document);
+  const classificationReasoningEffort = document.classificationReasoningEffort || config.classificationReasoningEffort;
+  const extractionReasoningEffort = document.processingMetrics?.reasoningEffort || documentType?.extractionReasoningEffort;
+  const showClassificationReasoning = document.classificationMethod !== 'vector' && Boolean(classificationReasoningEffort);
 
   return (
     <div className="validation-layout">
@@ -7727,8 +7731,14 @@ function ValidationScreen({
                 />
               </div>
               <div className="document-model-line">
-                <span>Classification: {displayModel(document.classificationModel)}</span>
-                <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
+                <span className="document-model-item">
+                  <span>Classification: {displayModel(document.classificationModel)}</span>
+                  {showClassificationReasoning && <span className="reasoning-effort-badge">{classificationReasoningEffort}</span>}
+                </span>
+                <span className="document-model-item">
+                  <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
+                  {extractionReasoningEffort && <span className="reasoning-effort-badge">{extractionReasoningEffort}</span>}
+                </span>
               </div>
               {document.validatedBy && (
                 <div className="validation-audit-line">
