@@ -74,6 +74,7 @@ export type IncomingDocument = {
   classificationScore?: number;
   classificationMethod?: 'manual' | 'vector' | 'llm' | 'rag';
   classificationModel?: string;
+  classificationReasoningEffort?: ReasoningEffort;
   classificationJustification?: string;
   classificationCandidates?: Array<{
     documentTypeId: string;
@@ -84,6 +85,7 @@ export type IncomingDocument = {
   processingMode?: 'ocr' | 'pdf' | 'markdown' | 'spreadsheet';
   processingMetrics?: {
     model?: string;
+    reasoningEffort?: ReasoningEffort;
   };
   status:
     | 'received'
@@ -146,6 +148,19 @@ export type BusinessReviewSummary = {
     embeddingCostUsd?: number;
     processedAt: string;
   }>;
+};
+
+export type SubscriptionSummary = {
+  planName: string;
+  periodStart: string;
+  periodEnd: string;
+  includedPages: number;
+  pagesProcessed: number;
+  additionalPages: number;
+  remainingPages: number;
+  documentsProcessed: number;
+  overageRateInr: number;
+  estimatedOverageInr: number;
 };
 
 export type DemoRequest = {

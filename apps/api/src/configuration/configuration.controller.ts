@@ -18,6 +18,10 @@ export class ConfigurationController {
   async saveConfiguration(
     @Body()
     body: {
+      deploymentMode?: 'self_hosted' | 'subscription';
+      subscriptionPlanName?: string;
+      subscriptionIncludedPages?: number;
+      subscriptionOverageRateInr?: number;
       storageEncryptionEnabled?: boolean;
       databaseEncryptionEnabled?: boolean;
       cachingEnabled?: boolean;

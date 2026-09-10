@@ -573,12 +573,14 @@ export class DocumentsService {
     const classificationCostUsd = Number(metrics.classificationCostUsd || 0);
     const embeddingCostUsd = Number(metrics.embeddingCostUsd || 0);
     const estimatedCostUsd = Number((extractionCostUsd + classificationCostUsd + embeddingCostUsd).toFixed(8));
+    const pageCount = Math.max(1, Number(document.pageCount) || 1);
     await this.businessReviewSummaryModel.findOneAndUpdate(
       { key: 'global' },
       {
         $setOnInsert: { key: 'global' },
         $inc: {
           filesProcessed: 1,
+          pagesProcessed: pageCount,
           inputTokens: Number(metrics.inputTokens || 0),
           outputTokens: Number(metrics.outputTokens || 0),
           totalTokens: Number(metrics.totalTokens || 0),
@@ -597,6 +599,7 @@ export class DocumentsService {
       documentTypeName: document.documentTypeName,
       category: document.category,
       status: document.status,
+      pageCount,
       model: metrics.model,
       classificationModel: document.classificationModel,
       extractionModel: metrics.model,
@@ -669,6 +672,39 @@ export class DocumentsService {
         extractionModel: doc.extractionModel || doc.model,
         processedAt: doc.processedAt || (doc as unknown as { updatedAt?: Date }).updatedAt,
       })),
+    };
+  }
+
+  async subscriptionSummary() {
+    const configuration = await this.configurationService.get();
+    const now = new Date();
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const usage = await this.documentModel.aggregate([
+      {
+        $match: {
+          isModelTest: { $ne: true },
+          status: { $in: ['extraction_completed', 'validated', 'rejected'] },
+          'processingMetrics.processedAt': { $gte: periodStart },
+        },
+      },
+      { $group: { _id: null, pagesProcessed: { $sum: { $ifNull: ['$pageCount', 1] } }, documentsProcessed: { $sum: 1 } } },
+    ]).exec();
+    const includedPages = Math.max(0, Number(configuration.subscriptionIncludedPages) || 8000);
+    const pagesProcessed = Number(usage[0]?.pagesProcessed || 0);
+    const additionalPages = Math.max(0, pagesProcessed - includedPages);
+    const overageRateInr = Math.max(0, Number(configuration.subscriptionOverageRateInr) || 4);
+
+    return {
+      planName: configuration.subscriptionPlanName || 'Growth',
+      periodStart,
+      periodEnd: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
+      includedPages,
+      pagesProcessed,
+      additionalPages,
+      remainingPages: Math.max(0, includedPages - pagesProcessed),
+      documentsProcessed: Number(usage[0]?.documentsProcessed || 0),
+      overageRateInr,
+      estimatedOverageInr: Number((additionalPages * overageRateInr).toFixed(2)),
     };
   }
 

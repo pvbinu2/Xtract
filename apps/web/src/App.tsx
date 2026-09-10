@@ -17,6 +17,7 @@ import {
   Copy,
   Calculator,
   CircleDollarSign,
+  CreditCard,
   Clock3,
   Coins,
   Moon,
@@ -66,11 +67,11 @@ import {
 } from 'lucide-react';
 import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
-import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, TableColumn, UserRole } from './types';
+import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
 
-type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'business-review' | 'demo-requests' | 'password-reset' | 'users' | 'health';
+type View = 'types' | 'classification' | 'upload' | 'documents' | 'validation' | 'configuration' | 'subscription' | 'business-review' | 'demo-requests' | 'password-reset' | 'users' | 'health';
 
 type AppConfig = AppConfigPayload;
 type AiProvider = AppConfig['aiProvider'];
@@ -603,6 +604,9 @@ function confidenceBadge(item: ExtractedValue) {
 }
 
 export function App() {
+  if (window.location.pathname === '/xtractor/technical-stack') {
+    return <TechnicalStackSite />;
+  }
   if (window.location.pathname === '/xtractor') {
     return <MarketingSite />;
   }
@@ -648,7 +652,12 @@ function OperationsApp() {
     filesProcessing: 0,
     filesReady: 0,
   });
+  const [subscriptionMetrics, setSubscriptionMetrics] = useState<SubscriptionSummary | null>(null);
   const [config, setConfig] = useState<AppConfig>({
+    deploymentMode: 'self_hosted',
+    subscriptionPlanName: 'Growth',
+    subscriptionIncludedPages: 8000,
+    subscriptionOverageRateInr: 4,
     storageEncryptionEnabled: false,
     databaseEncryptionEnabled: false,
     storageEncryptionKeyConfigured: false,
@@ -703,6 +712,10 @@ function OperationsApp() {
     try {
       const saved = await api.getConfiguration();
       const loadedConfig: AppConfig = {
+        deploymentMode: saved.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted',
+        subscriptionPlanName: saved.subscriptionPlanName || 'Growth',
+        subscriptionIncludedPages: Math.max(0, Number(saved.subscriptionIncludedPages) || 8000),
+        subscriptionOverageRateInr: Math.max(0, Number(saved.subscriptionOverageRateInr) || 4),
         storageEncryptionEnabled: Boolean(saved.storageEncryptionEnabled),
         databaseEncryptionEnabled: Boolean(saved.databaseEncryptionEnabled),
         storageEncryptionKeyConfigured: Boolean(saved.storageEncryptionKeyConfigured),
@@ -759,6 +772,10 @@ function OperationsApp() {
         try {
           const parsed = JSON.parse(storedConfig);
           const loadedConfig: AppConfig = {
+            deploymentMode: parsed.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted',
+            subscriptionPlanName: parsed.subscriptionPlanName || 'Growth',
+            subscriptionIncludedPages: Math.max(0, Number(parsed.subscriptionIncludedPages) || 8000),
+            subscriptionOverageRateInr: Math.max(0, Number(parsed.subscriptionOverageRateInr) || 4),
             storageEncryptionEnabled: Boolean(parsed.storageEncryptionEnabled),
             databaseEncryptionEnabled: Boolean(parsed.databaseEncryptionEnabled),
             storageEncryptionKeyConfigured: Boolean(parsed.storageEncryptionKeyConfigured),
@@ -820,6 +837,9 @@ function OperationsApp() {
     const saved = await api.saveConfiguration(newConfig);
     setConfig(saved);
     setPersistedConfig(saved);
+    if (saved.deploymentMode === 'subscription') {
+      setSubscriptionMetrics(await api.getSubscriptionSummary());
+    }
     showToast('Configuration saved successfully', 'info');
     return saved;
   }
@@ -853,7 +873,7 @@ function OperationsApp() {
   }
 
   async function refreshOperationsMetrics() {
-    const [summary, readyDocuments] = await Promise.all([
+    const [summary, readyDocuments, subscription] = await Promise.all([
       api.getBusinessReviewSummary(),
       api.listDocuments(
         new URLSearchParams({
@@ -862,6 +882,7 @@ function OperationsApp() {
           pageSize: '5',
         }),
       ),
+      api.getSubscriptionSummary(),
     ]);
 
     setOperationsMetrics({
@@ -870,6 +891,7 @@ function OperationsApp() {
       filesProcessing: summary.filesProcessing,
       filesReady: readyDocuments.total,
     });
+    setSubscriptionMetrics(subscription);
     setMetricsLoaded(true);
   }
 
@@ -985,6 +1007,12 @@ function OperationsApp() {
       return;
     }
   }, [currentUser?.id, view]);
+
+  useEffect(() => {
+    if (!isAdmin || !configLoaded) return;
+    if (config.deploymentMode === 'subscription' && view === 'business-review') setView('subscription');
+    if (config.deploymentMode === 'self_hosted' && view === 'subscription') setView('business-review');
+  }, [config.deploymentMode, configLoaded, isAdmin, view]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1176,6 +1204,7 @@ function OperationsApp() {
     { id: 'types' as View, label: 'Document Types', icon: ClipboardCheck },
     { id: 'classification' as View, label: 'Classification', icon: BrainCircuit },
     { id: 'configuration' as View, label: 'Configuration', icon: Gauge },
+    { id: 'subscription' as View, label: 'Subscription', icon: CreditCard },
     { id: 'business-review' as View, label: 'Business Review', icon: BarChart3 },
     { id: 'demo-requests' as View, label: 'Demo Requests', icon: Mail },
     { id: 'users' as View, label: 'User Management', icon: UsersIcon },
@@ -1184,7 +1213,8 @@ function OperationsApp() {
   ];
   const visibleNavigation = navigation.filter((item) => (
     currentUser?.role === 'admin'
-      ? true
+      ? (item.id !== 'subscription' || config.deploymentMode === 'subscription') &&
+        (item.id !== 'business-review' || config.deploymentMode === 'self_hosted')
       : item.id === 'documents' || item.id === 'upload' || item.id === 'password-reset'
   ));
   const validationDocumentId = activeDocumentId || documents[0]?._id || '';
@@ -1199,6 +1229,7 @@ function OperationsApp() {
   const averageCostPerFile = operationsMetrics.filesProcessed
     ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
     : 0;
+  const isSubscription = config.deploymentMode === 'subscription';
   const selectedPageLoading =
     (view === 'types' && !documentTypesLoaded) ||
     (view === 'classification' && (!documentTypesLoaded || !configLoaded)) ||
@@ -1285,7 +1316,7 @@ function OperationsApp() {
             <h1>{view === 'validation' ? 'Validation' : navigation.find((item) => item.id === view)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            {isAdmin && (
+            {isAdmin && !isSubscription && (
               <div className="status-strip">
                 <StatusMetric label="Files processed" value={operationsMetrics.filesProcessed} />
                 <StatusMetric
@@ -1308,6 +1339,14 @@ function OperationsApp() {
                   value={operationsMetrics.filesReady}
                   onClick={() => openDocuments('extraction_completed')}
                 />
+              </div>
+            )}
+            {isAdmin && isSubscription && subscriptionMetrics && (
+              <div className="status-strip">
+                <StatusMetric label="Plan" value={subscriptionMetrics.planName} onClick={() => setView('subscription')} />
+                <StatusMetric label="Pages processed" value={formatNumber(subscriptionMetrics.pagesProcessed)} onClick={() => setView('subscription')} />
+                <StatusMetric label="Pages remaining" value={formatNumber(subscriptionMetrics.remainingPages)} onClick={() => setView('subscription')} />
+                <StatusMetric label="Additional pages" value={formatNumber(subscriptionMetrics.additionalPages)} onClick={() => setView('subscription')} />
               </div>
             )}
             <button
@@ -1395,6 +1434,9 @@ function OperationsApp() {
             onCurrencyChange={updateDisplayCurrency}
             onNotify={showToast}
           />
+        )}
+        {!selectedPageLoading && isAdmin && view === 'subscription' && (
+          <SubscriptionScreen onNotify={showToast} />
         )}
         {!selectedPageLoading && isAdmin && view === 'demo-requests' && (
           <DemoRequestsScreen
@@ -1519,6 +1561,7 @@ function MarketingSite() {
             <a href="#how-it-works">How it works</a>
             <a href="#supported-formats">File support</a>
             <a href="#platform-features">Features</a>
+            <a href="/xtractor/technical-stack">Technical stack</a>
             <a href="#business-applications">Solutions</a>
             <a href="#demo-request-form">Contact</a>
           </div>
@@ -1787,7 +1830,115 @@ function MarketingSite() {
       <footer className="marketing-footer">
         <div className="marketing-brand"><img src="/icon-192.png" alt="" /><strong>Xtractor</strong></div>
         <p>Intelligent document operations, built for trusted outcomes.</p>
+        <a href="/xtractor/technical-stack">Technical stack</a>
         <button type="button" onClick={() => { window.location.href = '/'; }}>Sign in to Xtractor <ChevronRight size={15} /></button>
+      </footer>
+    </main>
+  );
+}
+
+function TechnicalStackSite() {
+  const layers = [
+    {
+      icon: Files,
+      label: 'Experience layer',
+      title: 'React + TypeScript + Vite',
+      text: 'A fast, typed web application for document intake, classifier configuration, extraction review, and operational reporting.',
+    },
+    {
+      icon: Network,
+      label: 'API & workflow',
+      title: 'NestJS + Azure Functions',
+      text: 'NestJS provides the application API while independently scalable Azure Functions process preparation, classification, extraction, and training work.',
+    },
+    {
+      icon: Database,
+      label: 'Data & retrieval',
+      title: 'MongoDB + Qdrant',
+      text: 'MongoDB stores document state, schemas, and review records. Qdrant powers vector retrieval for trained document-type matching and RAG.',
+    },
+    {
+      icon: BrainCircuit,
+      label: 'AI services',
+      title: 'OpenAI, custom endpoints, or Ollama',
+      text: 'Choose hosted OpenAI models, compatible private endpoints, or self-hosted Ollama for classification, extraction, reasoning, and embeddings.',
+    },
+    {
+      icon: HardDrive,
+      label: 'Storage & messaging',
+      title: 'Azure Blob Storage + Service Bus',
+      text: 'Source files and prepared artifacts are stored separately from application records, while queues isolate every processing stage for resilient scaling.',
+    },
+    {
+      icon: ShieldCheck,
+      label: 'Security & control',
+      title: 'Encrypted artifacts and human review',
+      text: 'Configurable encryption protects stored files and extracted values. Role-based review keeps people in control before downstream delivery.',
+    },
+  ];
+
+  return (
+    <main className="marketing-site technical-stack-site">
+      <section className="technical-stack-hero">
+        <div className="marketing-nav">
+          <a className="marketing-brand" href="/xtractor">
+            <img src="/icon-192.png" alt="" />
+            <strong>Xtractor</strong>
+          </a>
+          <div className="marketing-nav-links">
+            <a href="/xtractor">Overview</a>
+            <a href="#architecture">Architecture</a>
+            <a href="#processing">Processing</a>
+          </div>
+          <div className="marketing-nav-actions">
+            <button type="button" className="marketing-secondary-link" onClick={() => { window.location.href = '/'; }}>Sign in</button>
+            <a className="marketing-nav-cta" href="/xtractor#demo-request-form">Book a demo</a>
+          </div>
+        </div>
+        <div className="technical-stack-hero-copy">
+          <span className="marketing-kicker"><Network size={14} /> Technical stack</span>
+          <h1>Built for reliable, <em>observable</em> document intelligence.</h1>
+          <p>Xtractor combines a modern web workspace, independently scalable workers, vector retrieval, and configurable AI providers into one controlled document-processing platform.</p>
+        </div>
+      </section>
+
+      <section className="marketing-section technical-stack-architecture" id="architecture">
+        <div className="marketing-section-heading centered">
+          <span className="marketing-kicker">Platform architecture</span>
+          <h2>Each layer has one clear job.</h2>
+          <p>The stack separates user experience, orchestration, storage, retrieval, and AI work so teams can scale and govern each concern independently.</p>
+        </div>
+        <div className="technical-stack-grid">
+          {layers.map(({ icon: Icon, label, title, text }) => (
+            <article key={title}>
+              <div className="marketing-card-icon"><Icon size={22} /></div>
+              <span>{label}</span>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="technical-stack-processing" id="processing">
+        <div>
+          <span className="marketing-kicker">Processing path</span>
+          <h2>From upload to trusted data.</h2>
+          <p>Every stage records live status, persists useful artifacts, and hands work to the next independently scalable service.</p>
+        </div>
+        <ol>
+          <li><span>01</span><strong>Intake</strong><small>Web, API, or Blob Storage</small></li>
+          <li><span>02</span><strong>Prepare</strong><small>OCR, markdown, or workbook text</small></li>
+          <li><span>03</span><strong>Classify</strong><small>Vector, LLM, or RAG selection</small></li>
+          <li><span>04</span><strong>Extract</strong><small>Structured values and source references</small></li>
+          <li><span>05</span><strong>Validate</strong><small>Human review and downstream delivery</small></li>
+        </ol>
+      </section>
+
+      <footer className="marketing-footer">
+        <div className="marketing-brand"><img src="/icon-192.png" alt="" /><strong>Xtractor</strong></div>
+        <p>Intelligent document operations, built for trusted outcomes.</p>
+        <a href="/xtractor">Back to overview <ChevronRight size={15} /></a>
       </footer>
     </main>
   );
@@ -3051,6 +3202,84 @@ function MonthlyCostProjectionChart({
   );
 }
 
+function SubscriptionScreen({ onNotify }: { onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void }) {
+  const [summary, setSummary] = useState<SubscriptionSummary | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+
+  async function loadSummary() {
+    setLoadingSummary(true);
+    try {
+      setSummary(await api.getSubscriptionSummary());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to load subscription usage', 'error');
+    } finally {
+      setLoadingSummary(false);
+    }
+  }
+
+  useEffect(() => { loadSummary(); }, []);
+
+  if (loadingSummary && !summary) {
+    return <section className="panel empty"><Loader2 size={24} className="spin" /><p>Loading subscription usage.</p></section>;
+  }
+  if (!summary) return <EmptyState text="Subscription data is unavailable." />;
+
+  const usagePercent = summary.includedPages
+    ? Math.min(100, (summary.pagesProcessed / summary.includedPages) * 100)
+    : 0;
+  const formatInr = (value: number) => new Intl.NumberFormat('en-IN', {
+    style: 'currency', currency: 'INR', maximumFractionDigits: 0,
+  }).format(value);
+  const periodEnd = new Date(summary.periodEnd);
+
+  return (
+    <div className="subscription-page">
+      <section className="panel subscription-overview">
+        <div className="panel-heading">
+          <div className="subscription-heading">
+            <span><CreditCard size={20} /></span>
+            <div>
+              <small>Current subscription</small>
+              <h2>{summary.planName}</h2>
+              <p>Usage for {new Date(summary.periodStart).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. Resets on {periodEnd.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}.</p>
+            </div>
+          </div>
+          <button className="icon-button" title="Refresh subscription usage" onClick={loadSummary}>
+            {loadingSummary ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          </button>
+        </div>
+
+        <div className="subscription-usage">
+          <div className="subscription-usage-copy">
+            <span>Included page usage</span>
+            <strong>{formatNumber(summary.pagesProcessed)} <small>/ {formatNumber(summary.includedPages)} pages</small></strong>
+          </div>
+          <div className="subscription-progress" role="progressbar" aria-label="Included page usage" aria-valuemin={0} aria-valuemax={summary.includedPages} aria-valuenow={Math.min(summary.pagesProcessed, summary.includedPages)}>
+            <span style={{ width: `${usagePercent}%` }} />
+          </div>
+          <p>{summary.remainingPages > 0 ? `${formatNumber(summary.remainingPages)} included pages remaining` : 'Included page allowance used'}</p>
+        </div>
+
+        <div className="review-metric-grid subscription-metrics">
+          <ReviewMetric label="Pages processed" value={formatNumber(summary.pagesProcessed)} helper={`${formatNumber(summary.documentsProcessed)} documents processed`} icon={<Files size={18} />} />
+          <ReviewMetric label="Included pages" value={formatNumber(summary.includedPages)} helper="Monthly plan allowance" icon={<ClipboardCheck size={18} />} />
+          <ReviewMetric label="Additional pages" value={formatNumber(summary.additionalPages)} helper={summary.additionalPages ? 'Usage above included allowance' : 'No overage this period'} icon={<PlusCircle size={18} />} />
+          <ReviewMetric label="Estimated overage" value={formatInr(summary.estimatedOverageInr)} helper={`${formatInr(summary.overageRateInr)} per additional page`} icon={<CircleDollarSign size={18} />} />
+        </div>
+      </section>
+      <section className="panel subscription-details">
+        <h3>Usage details</h3>
+        <dl>
+          <div><dt>Billing period</dt><dd>{new Date(summary.periodStart).toLocaleDateString()} – {periodEnd.toLocaleDateString()}</dd></div>
+          <div><dt>Overage rate</dt><dd>{formatInr(summary.overageRateInr)} per page</dd></div>
+          <div><dt>Additional page charge</dt><dd>{formatInr(summary.estimatedOverageInr)}</dd></div>
+        </dl>
+        <p className="subscription-note">Page counts are recorded during preprocessing. Documents processed before page measurement was enabled are counted as one page.</p>
+      </section>
+    </div>
+  );
+}
+
 function BusinessReviewScreen({
   displayCurrency,
   onCurrencyChange,
@@ -3272,6 +3501,10 @@ const pendingConfigurationFields: Array<{
   label: string;
   secret?: boolean;
 }> = [
+  { key: 'deploymentMode', label: 'Operating model' },
+  { key: 'subscriptionPlanName', label: 'Subscription plan' },
+  { key: 'subscriptionIncludedPages', label: 'Included pages' },
+  { key: 'subscriptionOverageRateInr', label: 'Subscription overage rate' },
   { key: 'aiProvider', label: 'AI provider' },
   { key: 'openAiApiKey', label: 'OpenAI API key', secret: true },
   { key: 'customApiKey', label: 'Custom API key', secret: true },
@@ -3328,9 +3561,10 @@ function ConfigurationScreen({
   onRefresh: () => Promise<void>;
 }) {
   const [aiServiceTab, setAiServiceTab] = useState<AiProvider>('openai');
-  const [configurationTab, setConfigurationTab] = useState<'summary' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
+  const [configurationTab, setConfigurationTab] = useState<'summary' | 'deployment' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
   const configurationTabs = [
     { id: 'summary', label: 'Summary', icon: Gauge },
+    { id: 'deployment', label: 'Operating model', icon: Building2 },
     { id: 'ai', label: 'AI Services', icon: Sparkles },
     { id: 'scaling', label: 'Scaling', icon: TrendingUp },
     { id: 'caching', label: 'Caching', icon: Database },
@@ -3410,6 +3644,31 @@ function ConfigurationScreen({
         ))}
       </div>
       <div className="configuration-form">
+        <div className={`configuration-section deployment expanded${configurationTab === 'deployment' ? ' active-tab' : ''}`}>
+          <div className="configuration-section-toggle">
+            <span className="configuration-section-title">
+              <span className="configuration-section-icon"><Building2 size={20} /></span>
+              <span><strong>Operating model</strong><small>Choose the commercial experience shown to administrators</small></span>
+            </span>
+          </div>
+          <div className="configuration-section-body deployment-mode-options">
+            <label className={config.deploymentMode === 'self_hosted' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
+              <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'self_hosted'} onChange={() => onConfigChange({ ...config, deploymentMode: 'self_hosted' })} />
+              <span><strong>Self hosted</strong><small>Show Business Review and AI processing-cost metrics.</small></span>
+            </label>
+            <label className={config.deploymentMode === 'subscription' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
+              <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'subscription'} onChange={() => onConfigChange({ ...config, deploymentMode: 'subscription' })} />
+              <span><strong>Subscription</strong><small>Show Subscription and included-page, remaining-page, and overage metrics.</small></span>
+            </label>
+            {config.deploymentMode === 'subscription' && (
+              <div className="deployment-plan-fields">
+                <label>Plan name<input value={config.subscriptionPlanName} maxLength={80} onChange={(event) => onConfigChange({ ...config, subscriptionPlanName: event.target.value })} /></label>
+                <label>Included pages / month<input type="number" min={0} value={config.subscriptionIncludedPages} onChange={(event) => onConfigChange({ ...config, subscriptionIncludedPages: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} /></label>
+                <label>Overage rate (₹ / page)<input type="number" min={0} step="0.01" value={config.subscriptionOverageRateInr} onChange={(event) => onConfigChange({ ...config, subscriptionOverageRateInr: Math.max(0, Number(event.target.value) || 0) })} /></label>
+              </div>
+            )}
+          </div>
+        </div>
         <div className={`configuration-section summary expanded${configurationTab === 'summary' ? ' active-tab' : ''}`}>
           <div className="configuration-section-toggle">
             <span className="configuration-section-title">
@@ -3421,6 +3680,13 @@ function ConfigurationScreen({
             </span>
           </div>
           <div className="configuration-section-body configuration-summary-grid">
+            <div className="configuration-summary-group">
+              <strong><Building2 size={15} /> Operating model</strong>
+              <dl>
+                <div><dt>Mode</dt><dd>{config.deploymentMode === 'subscription' ? 'Subscription' : 'Self hosted'}</dd></div>
+                {config.deploymentMode === 'subscription' && <><div><dt>Plan</dt><dd>{config.subscriptionPlanName}</dd></div><div><dt>Included pages</dt><dd>{formatNumber(config.subscriptionIncludedPages)} / month</dd></div></>}
+              </dl>
+            </div>
             <div className="configuration-summary-group">
               <strong><Sparkles size={15} /> AI Services</strong>
               <dl>
@@ -7370,6 +7636,10 @@ function ValidationScreen({
   if (!document) return <EmptyState text="Loading document." />;
 
   const isLocked = ['validated', 'rejected', 'unsupported_format'].includes(document.status);
+  const documentType = documentTypeFor(document);
+  const classificationReasoningEffort = document.classificationReasoningEffort || config.classificationReasoningEffort;
+  const extractionReasoningEffort = document.processingMetrics?.reasoningEffort || documentType?.extractionReasoningEffort;
+  const showClassificationReasoning = document.classificationMethod !== 'vector' && Boolean(classificationReasoningEffort);
 
   return (
     <div className="validation-layout">
@@ -7461,8 +7731,14 @@ function ValidationScreen({
                 />
               </div>
               <div className="document-model-line">
-                <span>Classification: {displayModel(document.classificationModel)}</span>
-                <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
+                <span className="document-model-item">
+                  <span>Classification: {displayModel(document.classificationModel)}</span>
+                  {showClassificationReasoning && <span className="reasoning-effort-badge">{classificationReasoningEffort}</span>}
+                </span>
+                <span className="document-model-item">
+                  <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
+                  {extractionReasoningEffort && <span className="reasoning-effort-badge">{extractionReasoningEffort}</span>}
+                </span>
               </div>
               {document.validatedBy && (
                 <div className="validation-audit-line">

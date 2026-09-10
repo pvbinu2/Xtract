@@ -553,6 +553,7 @@ async function extractQueuedDocument(message, context) {
       estimatedCostUsd: 0,
       processedAt: new Date(),
     };
+    processingMetrics.reasoningEffort = effectiveDocumentType.extractionReasoningEffort;
     const classificationMetrics = payload.classificationMetrics || {
       model: localDocument.classificationModel || 'unknown',
       inputTokens: 0,

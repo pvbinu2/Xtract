@@ -32,6 +32,12 @@ export class DocumentsController {
     return this.service.businessReviewSummary();
   }
 
+  @Get('subscription/summary')
+  @Roles('admin')
+  subscriptionSummary() {
+    return this.service.subscriptionSummary();
+  }
+
   @Delete('business-review')
   @Roles('admin')
   resetBusinessReview() {

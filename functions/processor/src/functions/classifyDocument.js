@@ -104,6 +104,7 @@ async function classifyQueuedDocument(message, context) {
           classificationScore: classification.score,
           classificationMethod: classification.method || 'llm',
           classificationModel: classification.model || 'unknown',
+          classificationReasoningEffort: configuration?.classificationReasoningEffort,
           classificationJustification: classification.justification,
           ...(classification.classificationCandidates
             ? { classificationCandidates: classification.classificationCandidates }

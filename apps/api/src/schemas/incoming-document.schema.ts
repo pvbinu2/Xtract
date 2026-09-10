@@ -99,6 +99,9 @@ export class ProcessingMetrics {
   @Prop()
   model?: string;
 
+  @Prop({ enum: ['low', 'medium', 'high', 'xhigh'] })
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+
   @Prop({ default: 0 })
   inputTokens?: number;
 
@@ -157,6 +160,9 @@ export class IncomingDocument {
 
   @Prop()
   mimeType?: string;
+
+  @Prop({ default: 1, min: 1 })
+  pageCount!: number;
 
   @Prop({ default: false })
   convertedToPdf?: boolean;
@@ -238,6 +244,9 @@ export class IncomingDocument {
 
   @Prop()
   classificationModel?: string;
+
+  @Prop({ enum: ['low', 'medium', 'high', 'xhigh'] })
+  classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
 
   @Prop()
   classificationJustification?: string;
