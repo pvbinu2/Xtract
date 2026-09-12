@@ -64,6 +64,8 @@ import {
   Users as UsersIcon,
   ZoomIn,
   ZoomOut,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
@@ -645,6 +647,7 @@ function OperationsApp() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [documentWorkspaceFullscreen, setDocumentWorkspaceFullscreen] = useState(false);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
   const [operationsMetrics, setOperationsMetrics] = useState<OperationsMetrics>({
     filesProcessed: 0,
@@ -1230,6 +1233,7 @@ function OperationsApp() {
     ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
     : 0;
   const isSubscription = config.deploymentMode === 'subscription';
+  const isDocumentWorkspaceFullscreen = documentWorkspaceFullscreen && (view === 'documents' || view === 'validation');
   const selectedPageLoading =
     (view === 'types' && !documentTypesLoaded) ||
     (view === 'classification' && (!documentTypesLoaded || !configLoaded)) ||
@@ -1260,7 +1264,7 @@ function OperationsApp() {
   }
 
   return (
-    <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+    <main className={`${sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}${isDocumentWorkspaceFullscreen ? ' document-workspace-fullscreen' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
           <button
@@ -1310,6 +1314,16 @@ function OperationsApp() {
       </aside>
 
       <section className="workspace">
+        {isDocumentWorkspaceFullscreen && (
+          <button
+            type="button"
+            className="workspace-fullscreen-exit"
+            onClick={() => setDocumentWorkspaceFullscreen(false)}
+            title="Exit full-screen workspace"
+          >
+            <Minimize2 size={16} /> Exit full screen
+          </button>
+        )}
         <header className="topbar">
           <div>
             <p className="eyebrow">Extraction operations</p>
@@ -1421,6 +1435,8 @@ function OperationsApp() {
               setActiveDocumentId(id);
               setView('validation');
             }}
+            isFullscreen={isDocumentWorkspaceFullscreen}
+            onToggleFullscreen={() => setDocumentWorkspaceFullscreen((current) => !current)}
             onPage={(page) => {
               setDocumentPage(page);
               setDocuments(page.items);
@@ -1474,6 +1490,7 @@ function OperationsApp() {
             }}
             onNotify={showToast}
             canAdminActions={canManageDocuments}
+            isFullscreen={isDocumentWorkspaceFullscreen}
           />
         )}
         {!selectedPageLoading && isAdmin && view === 'configuration' && (
@@ -6355,6 +6372,8 @@ function DocumentList({
   canManage = false,
   onOpen,
   onPage,
+  isFullscreen = false,
+  onToggleFullscreen,
 }: {
   documents: IncomingDocument[];
   documentTypes: DocumentType[];
@@ -6365,6 +6384,8 @@ function DocumentList({
   canManage?: boolean;
   onOpen: (id: string) => void;
   onPage: (page: PagedResult<IncomingDocument>) => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen: () => void;
 }) {
   const [status, setStatus] = useState<DocumentStatusFilter>('');
   const [category, setCategory] = useState('');
@@ -6519,6 +6540,14 @@ function DocumentList({
         </div>
         <div className="panel-heading-actions">
           <span className="document-total-badge"><strong>{pagination.total}</strong> total documents</span>
+          <button
+            type="button"
+            className="icon-button"
+            title={isFullscreen ? 'Exit full-screen workspace' : 'Open full-screen workspace'}
+            onClick={onToggleFullscreen}
+          >
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
             <RefreshCw size={16} />
           </button>
@@ -7333,6 +7362,7 @@ function ValidationScreen({
   onValidated,
   onNotify,
   canAdminActions = false,
+  isFullscreen = false,
 }: {
   documentId: string;
   documentTypes: DocumentType[];
@@ -7345,6 +7375,7 @@ function ValidationScreen({
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
   canAdminActions?: boolean;
+  isFullscreen?: boolean;
 }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
@@ -7707,7 +7738,7 @@ function ValidationScreen({
   const showClassificationReasoning = document.classificationMethod !== 'vector' && Boolean(classificationReasoningEffort);
 
   return (
-    <div className="validation-layout">
+    <div className={`validation-layout${isFullscreen ? ' validation-fullscreen' : ''}`}>
       <section className="pdf-pane">
         {document.processingMode === 'spreadsheet' || Boolean(document.workbookArtifactBlobName) ? (
           <SpreadsheetViewer

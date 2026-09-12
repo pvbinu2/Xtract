@@ -773,7 +773,8 @@ export class DocumentsService {
 
   private buildKeyValueExtractedData(extractedData: ExtractedValue[]) {
     return extractedData.reduce<Record<string, unknown>>((acc, item) => {
-      acc[item.key] = item.type === 'table' ? this.normalizeTableRows(item.value) : item.value;
+      const entityName = item.label?.trim() || item.key;
+      acc[entityName] = item.type === 'table' ? this.normalizeTableRows(item.value) : item.value;
       return acc;
     }, {});
   }
