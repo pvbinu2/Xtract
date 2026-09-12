@@ -365,6 +365,7 @@ export class DocumentsService {
     }
     document.reprocessOptions = {
       extractionModel: options.extractionModel,
+      extractionReasoningEffort: options.extractionReasoningEffort,
       useOcrForDocumentProcessing: options.useOcrForDocumentProcessing,
       documentTextMode: options.documentTextMode,
       forceClassification,

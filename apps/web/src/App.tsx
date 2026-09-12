@@ -3680,15 +3680,22 @@ function ConfigurationScreen({
             </span>
           </div>
           <div className="configuration-section-body configuration-summary-grid">
-            <div className="configuration-summary-group">
-              <strong><Building2 size={15} /> Operating model</strong>
+            <div className="configuration-summary-group summary-operating-mode">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('deployment')}><Building2 size={15} /> Operating model</button>
               <dl>
-                <div><dt>Mode</dt><dd>{config.deploymentMode === 'subscription' ? 'Subscription' : 'Self hosted'}</dd></div>
+                <div><dt>Active</dt><dd className="ready">{config.deploymentMode === 'subscription' ? 'Subscription' : 'Self hosted'}</dd></div>
                 {config.deploymentMode === 'subscription' && <><div><dt>Plan</dt><dd>{config.subscriptionPlanName}</dd></div><div><dt>Included pages</dt><dd>{formatNumber(config.subscriptionIncludedPages)} / month</dd></div></>}
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><Sparkles size={15} /> AI Services</strong>
+            <div className="configuration-summary-group summary-caching">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('caching')}><Database size={15} /> Caching</button>
+              <dl>
+                <div><dt>In-memory cache</dt><dd className={config.cachingEnabled ? 'ready' : ''}>{config.cachingEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>TTL</dt><dd>{config.cachingEnabled ? `${config.configurationCacheTtlSeconds} seconds` : 'Not applicable'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('ai')}><Sparkles size={15} /> AI Services</button>
               <dl>
                 <div><dt>OpenAI key</dt><dd className={config.openAiApiKeyConfigured ? 'ready' : ''}>{config.openAiApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
                 <div><dt>Custom key</dt><dd className={config.customApiKeyConfigured ? 'ready' : ''}>{config.customApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
@@ -3699,8 +3706,8 @@ function ConfigurationScreen({
                 <div><dt>Vector database</dt><dd>{config.vectorDatabaseProvider} · {config.vectorDatabaseApiKeyConfigured ? 'Authenticated' : 'No key'}</dd></div>
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><TrendingUp size={15} /> Scaling</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('scaling')}><TrendingUp size={15} /> Scaling</button>
               <dl>
                 <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}/16</dd></div>
                 <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}/16</dd></div>
@@ -3708,15 +3715,8 @@ function ConfigurationScreen({
                 <div><dt>Extraction</dt><dd>{config.extractionConcurrency}/16</dd></div>
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><Database size={15} /> Caching</strong>
-              <dl>
-                <div><dt>In-memory cache</dt><dd className={config.cachingEnabled ? 'ready' : ''}>{config.cachingEnabled ? 'On' : 'Off'}</dd></div>
-                <div><dt>TTL</dt><dd>{config.cachingEnabled ? `${config.configurationCacheTtlSeconds} seconds` : 'Not applicable'}</dd></div>
-              </dl>
-            </div>
-            <div className="configuration-summary-group">
-              <strong><ShieldCheck size={15} /> Encryption</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('encryption')}><ShieldCheck size={15} /> Encryption</button>
               <dl>
                 <div><dt>Processing storage</dt><dd className={config.storageEncryptionEnabled ? 'ready' : ''}>{config.storageEncryptionEnabled ? 'On' : 'Off'}</dd></div>
                 <div><dt>Storage key</dt><dd className={config.storageEncryptionKeyConfigured ? 'ready' : ''}>{config.storageEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
@@ -3724,8 +3724,8 @@ function ConfigurationScreen({
                 <div><dt>Database key</dt><dd className={config.databaseEncryptionKeyConfigured ? 'ready' : ''}>{config.databaseEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><ScanText size={15} /> Processing</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('processing')}><ScanText size={15} /> Processing</button>
               <dl>
                 <div><dt>Ingestion trigger</dt><dd>{config.documentIngestionTrigger === 'blob' ? 'Blob trigger' : 'Event Grid'}</dd></div>
                 <div><dt>Prepared text</dt><dd className={config.useOcrForDocumentProcessing ? 'ready' : ''}>{config.useOcrForDocumentProcessing ? 'On' : 'Off'}</dd></div>
@@ -3733,8 +3733,8 @@ function ConfigurationScreen({
                 {config.documentTextMode === 'markdown' && <div><dt>Docling endpoint</dt><dd title={config.markdownServiceUrl}>{config.markdownServiceUrl || 'Not configured'}</dd></div>}
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><Network size={15} /> Downstream</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('downstream')}><Network size={15} /> Downstream</button>
               <dl>
                 <div><dt>Endpoint</dt><dd title={config.downstreamUrl || 'Not configured'}>{config.downstreamUrl || 'Not configured'}</dd></div>
                 <div><dt>Delete after delivery</dt><dd>{config.deleteAfterDownstream ? 'On' : 'Off'}</dd></div>
@@ -4061,7 +4061,11 @@ function ConfigurationScreen({
                   onChange={(event) => onConfigChange({ ...config, storageEncryptionEnabled: event.target.checked })} />
                 <span><strong>Processing Storage Encryption</strong><small>Encrypt original, converted, OCR, and markdown processing artifacts.</small></span>
               </label>
-              <p className="help-text">{config.storageEncryptionKeyConfigured ? 'Encryption key configured.' : config.storageEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              {config.storageEncryptionKeyConfigured ? (
+                <span className="encryption-key-configured-badge"><CheckCircle2 size={15} aria-hidden="true" /> Encryption key configured</span>
+              ) : (
+                <p className="help-text">{config.storageEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              )}
             </div>
             <div className="document-processing-option-card">
               <label className="checkbox-row">
@@ -4069,7 +4073,11 @@ function ConfigurationScreen({
                   onChange={(event) => onConfigChange({ ...config, databaseEncryptionEnabled: event.target.checked })} />
                 <span><strong>Database Extracted-Data Encryption</strong><small>Encrypt only extracted field values before saving them in the database.</small></span>
               </label>
-              <p className="help-text">{config.databaseEncryptionKeyConfigured ? 'Encryption key configured.' : config.databaseEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              {config.databaseEncryptionKeyConfigured ? (
+                <span className="encryption-key-configured-badge"><CheckCircle2 size={15} aria-hidden="true" /> Encryption key configured</span>
+              ) : (
+                <p className="help-text">{config.databaseEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              )}
             </div>
             <p className="help-text">These settings apply only to newly ingested documents. Disabling encryption does not decrypt existing data, which remains readable using the retained keys.</p>
           </div>
@@ -4089,24 +4097,34 @@ function ConfigurationScreen({
           <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
               <div className="document-processing-option-card">
                 <strong>Document ingestion trigger</strong>
-                <label className="document-processing-field">
-                  Trigger mode
-                  <select
-                    value={config.documentIngestionTrigger}
-                    onChange={(event) => onConfigChange({
-                      ...config,
-                      documentIngestionTrigger: event.target.value as AppConfig['documentIngestionTrigger'],
-                    })}
-                  >
-                    <option value="event-grid">Event Grid via Service Bus</option>
-                    <option value="blob">Blob trigger</option>
-                  </select>
-                </label>
-                <p className="help-text">
-                  {config.documentIngestionTrigger === 'event-grid'
-                    ? 'BlobCreated events are delivered through Event Grid and the blob-ingestion Service Bus queue. Recommended for reliable high-volume processing.'
-                    : 'Azure Functions polls the trigger container directly. Useful for simpler deployments and local development.'}
-                </p>
+                <div className="configuration-icon-options" role="radiogroup" aria-label="Document ingestion trigger">
+                  <label className={config.documentIngestionTrigger === 'event-grid' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                    <input
+                      type="radio"
+                      name="document-ingestion-trigger"
+                      checked={config.documentIngestionTrigger === 'event-grid'}
+                      onChange={() => onConfigChange({ ...config, documentIngestionTrigger: 'event-grid' })}
+                    />
+                    <Radio size={20} aria-hidden="true" />
+                    <span>
+                      <strong>Event Grid</strong>
+                      <small>Delivers BlobCreated events through Event Grid and the blob-ingestion Service Bus queue. Best for reliable, high-volume processing.</small>
+                    </span>
+                  </label>
+                  <label className={config.documentIngestionTrigger === 'blob' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                    <input
+                      type="radio"
+                      name="document-ingestion-trigger"
+                      checked={config.documentIngestionTrigger === 'blob'}
+                      onChange={() => onConfigChange({ ...config, documentIngestionTrigger: 'blob' })}
+                    />
+                    <HardDrive size={20} aria-hidden="true" />
+                    <span>
+                      <strong>Blob trigger</strong>
+                      <small>Azure Functions polls the trigger container directly. A simple fit for local development and smaller deployments.</small>
+                    </span>
+                  </label>
+                </div>
               </div>
               <div className="document-processing-option-card">
                 <strong>Text preparation</strong>
@@ -4122,16 +4140,34 @@ function ConfigurationScreen({
                   </span>
                 </label>
                 {config.useOcrForDocumentProcessing && (
-                  <label className="document-processing-field">
-                    Text extraction engine
-                    <select
-                      value={config.documentTextMode}
-                      onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
-                    >
-                      <option value="ocr">Built in</option>
-                      <option value="markdown">Markdown (Docling service)</option>
-                    </select>
-                  </label>
+                  <div className="configuration-icon-options" role="radiogroup" aria-label="Text extraction engine">
+                    <label className={config.documentTextMode === 'ocr' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                      <input
+                        type="radio"
+                        name="document-text-mode"
+                        checked={config.documentTextMode === 'ocr'}
+                        onChange={() => onConfigChange({ ...config, documentTextMode: 'ocr' })}
+                      />
+                      <ScanText size={20} aria-hidden="true" />
+                      <span>
+                        <strong>Built in</strong>
+                        <small>Use the application’s built-in text extraction before classification, schema generation, and extraction.</small>
+                      </span>
+                    </label>
+                    <label className={config.documentTextMode === 'markdown' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                      <input
+                        type="radio"
+                        name="document-text-mode"
+                        checked={config.documentTextMode === 'markdown'}
+                        onChange={() => onConfigChange({ ...config, documentTextMode: 'markdown' })}
+                      />
+                      <TextSelect size={20} aria-hidden="true" />
+                      <span>
+                        <strong>Markdown</strong>
+                        <small>Use the configured Docling service to prepare structured markdown text for AI processing.</small>
+                      </span>
+                    </label>
+                  </div>
                 )}
                 {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
                   <label className="document-processing-field">
@@ -4165,9 +4201,12 @@ function ConfigurationScreen({
                         )),
                       })}
                     />
-                    <span>
-                      PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
-                      <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                    <span className="ingestion-file-type-content">
+                      <FileText size={18} aria-hidden="true" />
+                      <span>
+                        PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                        <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                      </span>
                     </span>
                   </label>
                   <label className="checkbox-row">
@@ -4183,9 +4222,12 @@ function ConfigurationScreen({
                         )),
                       })}
                     />
-                    <span>
-                      Excel <strong>{excelIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
-                      <small>{excelIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                    <span className="ingestion-file-type-content">
+                      <FileSpreadsheet size={18} aria-hidden="true" />
+                      <span>
+                        Excel <strong>{excelIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                        <small>{excelIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                      </span>
                     </span>
                   </label>
                   <label className="checkbox-row">
@@ -4201,9 +4243,12 @@ function ConfigurationScreen({
                         )),
                       })}
                     />
-                    <span>
-                      Images <strong>{imageIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
-                      <small>{imageIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                    <span className="ingestion-file-type-content">
+                      <FileImage size={18} aria-hidden="true" />
+                      <span>
+                        Images <strong>{imageIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                        <small>{imageIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                      </span>
                     </span>
                   </label>
                 </div>
@@ -7185,6 +7230,9 @@ function ReprocessDialog({
   const [extractionModel, setExtractionModel] = useState(
     document.processingMetrics?.model || documentType?.extractionModel || lowCostOpenAIModel,
   );
+  const [extractionReasoningEffort, setExtractionReasoningEffort] = useState<ReasoningEffort>(
+    document.processingMetrics?.reasoningEffort || documentType?.extractionReasoningEffort || 'low',
+  );
   const reprocessModelOptions = openAIModelOptions.some((option) => option.value === extractionModel)
     ? openAIModelOptions
     : [{ value: extractionModel, label: displayModel(extractionModel) }, ...openAIModelOptions];
@@ -7196,6 +7244,7 @@ function ReprocessDialog({
     try {
       await onConfirm({
         extractionModel,
+        extractionReasoningEffort,
         useOcrForDocumentProcessing: processingMode !== 'pdf',
         documentTextMode: processingMode === 'markdown' ? 'markdown' : 'ocr',
         forceClassification: true,
@@ -7224,6 +7273,20 @@ function ReprocessDialog({
               {reprocessModelOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Reasoning effort
+            <select
+              value={extractionReasoningEffort}
+              disabled={!supportsReasoningEffort(extractionModel)}
+              onChange={(event) => setExtractionReasoningEffort(event.target.value as ReasoningEffort)}
+            >
+              {reasoningEffortOptions.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
                 </option>
               ))}
             </select>

@@ -491,6 +491,7 @@ async function extractQueuedDocument(message, context) {
     const effectiveDocumentType = {
       ...documentType,
       extractionModel: reprocessOptions.extractionModel || documentType.extractionModel,
+      extractionReasoningEffort: reprocessOptions.extractionReasoningEffort || documentType.extractionReasoningEffort,
     };
     const extractionProvider = ['openai', 'custom', 'ollama'].includes(documentType.extractionAiProvider)
       ? documentType.extractionAiProvider

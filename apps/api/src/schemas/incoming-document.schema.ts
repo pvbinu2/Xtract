@@ -33,6 +33,7 @@ const DocumentStageTimingSchema = SchemaFactory.createForClass(DocumentStageTimi
 export type ReprocessOptions = {
   documentTypeId?: string;
   extractionModel?: string;
+  extractionReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
   useOcrForDocumentProcessing?: boolean;
   documentTextMode?: 'ocr' | 'markdown';
   forceClassification?: boolean;

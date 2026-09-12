@@ -59,6 +59,7 @@ export type AppConfigPayload = {
 export type ReprocessDocumentPayload = {
   documentTypeId?: string;
   extractionModel?: string;
+  extractionReasoningEffort?: ReasoningEffort;
   useOcrForDocumentProcessing?: boolean;
   documentTextMode?: 'ocr' | 'markdown';
   forceClassification?: boolean;

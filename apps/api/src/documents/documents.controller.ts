@@ -163,6 +163,7 @@ export class DocumentsController {
     @Body() body?: {
       documentTypeId?: string;
       extractionModel?: string;
+      extractionReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       useOcrForDocumentProcessing?: boolean;
       documentTextMode?: 'ocr' | 'markdown';
       forceClassification?: boolean;
