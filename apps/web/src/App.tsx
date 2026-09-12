@@ -3654,10 +3654,12 @@ function ConfigurationScreen({
           <div className="configuration-section-body deployment-mode-options">
             <label className={config.deploymentMode === 'self_hosted' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
               <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'self_hosted'} onChange={() => onConfigChange({ ...config, deploymentMode: 'self_hosted' })} />
+              <HardDrive size={20} aria-hidden="true" />
               <span><strong>Self hosted</strong><small>Show Business Review and AI processing-cost metrics.</small></span>
             </label>
             <label className={config.deploymentMode === 'subscription' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
               <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'subscription'} onChange={() => onConfigChange({ ...config, deploymentMode: 'subscription' })} />
+              <CreditCard size={20} aria-hidden="true" />
               <span><strong>Subscription</strong><small>Show Subscription and included-page, remaining-page, and overage metrics.</small></span>
             </label>
             {config.deploymentMode === 'subscription' && (

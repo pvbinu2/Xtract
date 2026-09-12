@@ -4097,17 +4097,18 @@ select {
 .deployment-mode-option {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: start;
-  gap: 12px;
-  min-height: 112px;
+  gap: 9px;
+  min-height: 86px;
   border: 1px solid var(--border);
   border-left: 4px solid var(--border-muted);
   border-radius: 10px;
   background: var(--surface-strong);
-  padding: 17px;
+  padding: 12px;
   box-shadow: 0 3px 10px rgb(15 23 42 / 0.05);
   cursor: pointer;
+  opacity: 0.58;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
@@ -4116,15 +4117,18 @@ select {
   border-color: var(--section-accent);
   box-shadow: 0 8px 22px rgb(15 23 42 / 0.1);
   transform: translateY(-1px);
+  opacity: 0.82;
 }
 
 .deployment-mode-option.selected {
   border-color: var(--section-accent);
   border-left-color: var(--section-accent);
   background: color-mix(in srgb, var(--section-tint) 70%, var(--surface));
+  opacity: 1;
 }
 
 .deployment-mode-option input { margin: 4px 0 0; accent-color: var(--section-accent); }
+.deployment-mode-option > svg { margin-top: 1px; color: var(--section-accent); }
 .deployment-mode-option strong { display: block; color: var(--text); font-size: 14px; }
 .deployment-mode-option small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 
