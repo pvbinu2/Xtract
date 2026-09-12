@@ -410,31 +410,6 @@ nav {
   padding: 0;
 }
 
-.workspace-fullscreen-exit {
-  position: fixed;
-  z-index: 20;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid rgb(15 23 42 / 0.18);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
-  box-shadow: 0 5px 18px rgb(15 23 42 / 0.14);
-  padding: 8px 11px;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 800;
-  backdrop-filter: blur(8px);
-}
-
-.workspace-fullscreen-exit:hover {
-  border-color: #2563eb;
-  color: #1d4ed8;
-}
-
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -4363,6 +4338,29 @@ select {
 
 .configuration-summary-group dd.ready {
   color: #047857;
+}
+
+.configuration-summary-group dd.summary-scaling-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-scaling-track {
+  display: block;
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.summary-scaling-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
 }
 
 .summary-operating-mode,
@@ -8318,6 +8316,38 @@ html[data-theme='dark'] .spreadsheet-cell.active {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.validation-back-button {
+  align-self: flex-start;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.document-viewer-navigation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 8px;
+  min-width: 0;
+}
+
+.document-viewer-navigation > .validation-back-button {
+  margin-bottom: 0;
+  align-self: center;
+}
+
+.document-viewer-navigation > .pdf-toolbar,
+.document-viewer-navigation > .spreadsheet-tabs {
+  margin-left: auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.document-viewer-navigation > .spreadsheet-tabs {
+  flex: 0 1 auto;
 }
 
 .extraction-pane .panel-heading {

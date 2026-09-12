@@ -67,7 +67,7 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
+import { api, authToken, SESSION_EXPIRED_EVENT, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, TableColumn, UserRole } from './types';
 
@@ -1199,7 +1199,42 @@ function OperationsApp() {
     setMetricsLoaded(false);
     setActiveDocumentId('');
     setView('documents');
+    setDocumentWorkspaceFullscreen(false);
   }
+
+  useEffect(() => {
+    const expireSession = () => logout();
+    window.addEventListener(SESSION_EXPIRED_EVENT, expireSession);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, expireSession);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const checkExpiry = () => {
+      clearTimeout(timer);
+      const token = authToken();
+      if (!token) { logout(); return; }
+      try {
+        const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const { exp } = JSON.parse(atob(encoded));
+        if (typeof exp !== 'number' || !Number.isFinite(exp)) return;
+        const remaining = exp * 1000 - Date.now();
+        if (remaining <= 0) { logout(); return; }
+        timer = setTimeout(checkExpiry, Math.min(remaining, 2147483647));
+      } catch {
+        // The API remains authoritative for tokens without a readable expiry.
+      }
+    };
+    checkExpiry();
+    window.addEventListener('focus', checkExpiry);
+    document.addEventListener('visibilitychange', checkExpiry);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', checkExpiry);
+      document.removeEventListener('visibilitychange', checkExpiry);
+    };
+  }, [currentUser]);
 
   const navigation = [
     { id: 'documents' as View, label: 'Documents', icon: Files },
@@ -1314,16 +1349,6 @@ function OperationsApp() {
       </aside>
 
       <section className="workspace">
-        {isDocumentWorkspaceFullscreen && (
-          <button
-            type="button"
-            className="workspace-fullscreen-exit"
-            onClick={() => setDocumentWorkspaceFullscreen(false)}
-            title="Exit full-screen workspace"
-          >
-            <Minimize2 size={16} /> Exit full screen
-          </button>
-        )}
         <header className="topbar">
           <div>
             <p className="eyebrow">Extraction operations</p>
@@ -1478,6 +1503,7 @@ function OperationsApp() {
         {!selectedPageLoading && view === 'validation' && (
           <ValidationScreen
             documentId={validationDocumentId}
+            onBack={() => setView('documents')}
             documentTypes={documentTypes}
             config={config}
             canNavigatePrevious={canNavigatePreviousDocument}
@@ -1491,6 +1517,7 @@ function OperationsApp() {
             onNotify={showToast}
             canAdminActions={canManageDocuments}
             isFullscreen={isDocumentWorkspaceFullscreen}
+            onToggleFullscreen={() => setDocumentWorkspaceFullscreen((current) => !current)}
           />
         )}
         {!selectedPageLoading && isAdmin && view === 'configuration' && (
@@ -3728,10 +3755,22 @@ function ConfigurationScreen({
             <div className="configuration-summary-group summary-compact">
               <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('scaling')}><TrendingUp size={15} /> Scaling</button>
               <dl>
-                <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}/16</dd></div>
-                <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}/16</dd></div>
-                <div><dt>LLM classification</dt><dd>{config.llmClassificationConcurrency}/16</dd></div>
-                <div><dt>Extraction</dt><dd>{config.extractionConcurrency}/16</dd></div>
+                {[
+                  { label: 'Preprocessing', value: config.preprocessingConcurrency },
+                  { label: 'Vector classification', value: config.vectorClassificationConcurrency },
+                  { label: 'LLM classification', value: config.llmClassificationConcurrency },
+                  { label: 'Extraction', value: config.extractionConcurrency },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd className="summary-scaling-value" title={`${value} of 16 concurrent operations configured`}>
+                      <span className="summary-scaling-track" role="meter" aria-label={`${label} concurrency limit`} aria-valuemin={0} aria-valuemax={16} aria-valuenow={value}>
+                        <span style={{ width: `${Math.min(100, Math.max(0, value / 16 * 100))}%` }} />
+                      </span>
+                      <span>{value}/16</span>
+                    </dd>
+                  </div>
+                ))}
               </dl>
             </div>
             <div className="configuration-summary-group summary-compact">
@@ -7352,6 +7391,8 @@ function ReprocessDialog({
 
 function ValidationScreen({
   documentId,
+  onBack,
+  onToggleFullscreen,
   documentTypes,
   config,
   canNavigatePrevious = false,
@@ -7365,6 +7406,8 @@ function ValidationScreen({
   isFullscreen = false,
 }: {
   documentId: string;
+  onBack: () => void;
+  onToggleFullscreen: () => void;
   documentTypes: DocumentType[];
   config: AppConfig;
   canNavigatePrevious?: boolean;
@@ -7728,8 +7771,30 @@ function ValidationScreen({
     }
   }
 
-  if (!documentId) return <EmptyState text="Select a document from the list." />;
-  if (!document) return <EmptyState text="Loading document." />;
+  const backButton = (
+    <>
+    <button type="button" className="secondary-button compact validation-back-button" onClick={onBack}>
+      <ChevronLeft size={16} aria-hidden="true" /> Back to documents
+    </button>
+    <button
+      type="button"
+      className="icon-button"
+      title={isFullscreen ? 'Exit full-screen workspace' : 'Open full-screen workspace'}
+      aria-label={isFullscreen ? 'Exit full-screen workspace' : 'Open full-screen workspace'}
+      aria-pressed={isFullscreen}
+      onClick={onToggleFullscreen}
+    >
+      {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+    </button>
+    </>
+  );
+
+  if (!documentId || !document) return (
+    <section className="panel">
+      {backButton}
+      <EmptyState text={!documentId ? 'Select a document from the list.' : 'Loading document.'} />
+    </section>
+  );
 
   const isLocked = ['validated', 'rejected', 'unsupported_format'].includes(document.status);
   const documentType = documentTypeFor(document);
@@ -7743,6 +7808,7 @@ function ValidationScreen({
         {document.processingMode === 'spreadsheet' || Boolean(document.workbookArtifactBlobName) ? (
           <SpreadsheetViewer
             documentId={document._id}
+            navigation={backButton}
             activeReferences={tableEditIndex !== null && values[tableEditIndex]?.key === activeFieldKey
               ? tableEditCellReferences
               : values.find((item) => item.key === activeFieldKey)?.cellReferences || []}
@@ -7771,6 +7837,7 @@ function ValidationScreen({
         ) : (
         <PdfViewer
           documentId={document._id}
+          navigation={backButton}
           highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
           selectionMode={copyFromDocumentKey !== null}
@@ -8284,8 +8351,9 @@ function spreadsheetCellCoordinates(address: string) {
   return { row: Number(match[2]) - 1, column };
 }
 
-function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onReplaceSelection, onAppendSelection, onNotify }: {
+function SpreadsheetViewer({ documentId, navigation, activeReferences, selectionMode, onReplaceSelection, onAppendSelection, onNotify }: {
   documentId: string;
+  navigation?: ReactNode;
   activeReferences: NonNullable<ExtractedValue['cellReferences']>;
   selectionMode: boolean;
   onReplaceSelection: (selection: { text: string; reference: NonNullable<ExtractedValue['cellReferences']>[number] }) => void;
@@ -8347,8 +8415,11 @@ function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onRepl
   const columns = sheet ? Array.from({ length: Math.min(12, Math.max(0, sheet.columnCount - viewport.column)) }, (_, index) => viewport.column + index) : [];
 
   return <div className="spreadsheet-viewer">
+    <div className="document-viewer-navigation">
+      {navigation}
     <div className="spreadsheet-tabs">
       {(metadata?.sheets || []).map((candidate) => <button key={candidate.index} className={candidate.index === sheetIndex ? 'active' : ''} onClick={() => setSheetIndex(candidate.index)}>{candidate.name}</button>)}
+    </div>
     </div>
     {!sheet && <div className="pdf-page-state">Loading worksheet.</div>}
     {sheet && sheet.rowCount === 0 && <div className="pdf-page-state">This worksheet is empty.</div>}
@@ -8389,6 +8460,7 @@ function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onRepl
 
 function PdfViewer({
   documentId,
+  navigation,
   highlights,
   activeFieldKey,
   selectionMode,
@@ -8397,6 +8469,7 @@ function PdfViewer({
   onNotify,
 }: {
   documentId: string;
+  navigation?: ReactNode;
   highlights: Array<{
     page: number;
     x: number;
@@ -8705,6 +8778,8 @@ function PdfViewer({
 
   return (
     <div className="pdf-viewer">
+      <div className="document-viewer-navigation">
+        {navigation}
       <div className="pdf-toolbar" aria-label="PDF page and zoom controls">
         <button
           className="icon-button"
@@ -8753,6 +8828,7 @@ function PdfViewer({
         >
           <ZoomIn size={16} />
         </button>
+      </div>
       </div>
       <div
         className={`pdf-pages${isPanning ? ' panning' : ''}${selectionMode ? ' selecting-text' : ''}`}

@@ -106,6 +106,14 @@ export type HealthCheckResult = {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3000/api';
 const AUTH_TOKEN_KEY = 'xtract-auth-token';
+export const SESSION_EXPIRED_EVENT = 'xtract-session-expired';
+
+function handleUnauthorized(response: Response, token: string) {
+  if (response.status === 401 && token && authToken() === token) {
+    clearAuthToken();
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
+}
 
 export function authToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY) || '';
@@ -130,6 +138,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = authToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  handleUnauthorized(response, token);
   if (!response.ok) {
     const rawMessage = await response.text();
     let message = rawMessage;
@@ -149,6 +158,7 @@ async function requestFile(path: string) {
   const token = authToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(`${API_BASE}${path}`, { headers });
+  handleUnauthorized(response, token);
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed: ${response.status}`);
@@ -228,6 +238,7 @@ export const api = {
     const token = authToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
     const response = await fetch(`${API_BASE}/documents/${id}/pages/${pageNumber}/file`, { headers });
+    handleUnauthorized(response, token);
     if (!response.ok) {
       const message = await response.text();
       throw new Error(message || `Request failed: ${response.status}`);
