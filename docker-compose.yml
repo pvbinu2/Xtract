@@ -50,7 +50,11 @@ services:
     container_name: xtract-mock-downstream
     working_dir: /app/apps/mock-downstream-api
     volumes:
-      - .:/app
+      # Defaults to this Compose file's directory, so moving the repository does
+      # not leave containers bound to its former absolute host path.  Set
+      # PROJECT_ROOT to an absolute path only when intentionally mounting a
+      # different checkout.
+      - ${PROJECT_ROOT:-.}:/app
     ports:
       - "3001:3001"
     environment:
@@ -96,7 +100,9 @@ services:
     container_name: xtract-apps
     working_dir: /app
     volumes:
-      - .:/app
+      # See mock-downstream-api: keep the development bind mount portable when
+      # the repository is moved to another location.
+      - ${PROJECT_ROOT:-.}:/app
       - xtract-apps-node-modules:/app/node_modules
       - xtract-apps-web-node-modules:/app/apps/web/node_modules
       - xtract-apps-processor-node-modules:/app/functions/processor/node_modules

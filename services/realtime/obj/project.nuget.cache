@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "XPbyH5chyao=",
+  "dgSpecHash": "lJw7mukgzcI=",
   "success": true,
-  "projectFilePath": "/Users/pvbinu/Documents/Repo/Xtract/services/realtime/Xtract.Realtime.csproj",
+  "projectFilePath": "/Volumes/Binu Disk/Repo/Xtract/services/realtime/Xtract.Realtime.csproj",
   "expectedPackageFiles": [
     "/Users/pvbinu/.nuget/packages/microsoft.aspnetcore.authentication.jwtbearer/9.0.7/microsoft.aspnetcore.authentication.jwtbearer.9.0.7.nupkg.sha512",
     "/Users/pvbinu/.nuget/packages/microsoft.identitymodel.abstractions/8.0.1/microsoft.identitymodel.abstractions.8.0.1.nupkg.sha512",
@@ -11,7 +11,10 @@
     "/Users/pvbinu/.nuget/packages/microsoft.identitymodel.protocols/8.0.1/microsoft.identitymodel.protocols.8.0.1.nupkg.sha512",
     "/Users/pvbinu/.nuget/packages/microsoft.identitymodel.protocols.openidconnect/8.0.1/microsoft.identitymodel.protocols.openidconnect.8.0.1.nupkg.sha512",
     "/Users/pvbinu/.nuget/packages/microsoft.identitymodel.tokens/8.0.1/microsoft.identitymodel.tokens.8.0.1.nupkg.sha512",
-    "/Users/pvbinu/.nuget/packages/system.identitymodel.tokens.jwt/8.0.1/system.identitymodel.tokens.jwt.8.0.1.nupkg.sha512"
+    "/Users/pvbinu/.nuget/packages/system.identitymodel.tokens.jwt/8.0.1/system.identitymodel.tokens.jwt.8.0.1.nupkg.sha512",
+    "/Users/pvbinu/.nuget/packages/microsoft.netcore.app.ref/9.0.20/microsoft.netcore.app.ref.9.0.20.nupkg.sha512",
+    "/Users/pvbinu/.nuget/packages/microsoft.aspnetcore.app.ref/9.0.20/microsoft.aspnetcore.app.ref.9.0.20.nupkg.sha512",
+    "/Users/pvbinu/.nuget/packages/microsoft.netcore.app.host.osx-arm64/9.0.20/microsoft.netcore.app.host.osx-arm64.9.0.20.nupkg.sha512"
   ],
   "logs": []
 }
