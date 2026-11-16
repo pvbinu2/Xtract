@@ -5518,6 +5518,22 @@ function DocumentTypeManagement({
                         <Pencil size={16} />
                         Edit Schema
                       </button>
+                      {!activeType.finalized && fields.length > 0 && (
+                        <button
+                          className="primary-button"
+                          onClick={() =>
+                            onRun(async () => {
+                              const updated = await api.finalizeTemplate(activeType._id, fields);
+                              onDocumentTypeSaved(updated);
+                              setFields(withUiIds(updated.fields));
+                              await onRefresh();
+                            }, 'Document type finalized')
+                          }
+                        >
+                          <CheckCircle2 size={16} />
+                          Finalize
+                        </button>
+                      )}
                     </div>
                   ) : schemaOrdering ? (
                     <div className="schema-actions">
