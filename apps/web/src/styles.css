@@ -8410,7 +8410,9 @@ html[data-theme='dark'] .spreadsheet-cell.active {
 
 .extraction-pane-content {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 8px;
 }
 
@@ -8641,8 +8643,17 @@ html[data-theme='dark'] .spreadsheet-cell.active {
   font-weight: 800;
 }
 
+.extraction-form,
+.extraction-field,
+.table-value,
+.inline-table-editor {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .table-scroll,
 .editable-table {
+  max-width: 100%;
   overflow: auto;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
