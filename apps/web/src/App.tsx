@@ -4543,9 +4543,11 @@ function ClassificationScreen({
     ? 'training'
     : failedCount
       ? 'failed'
-      : trainableTypes.length && trainedCount === trainableTypes.length
+      : trainedCount > 0
         ? 'trained'
         : 'untrained';
+  const untrainedTypes = includedTypes.filter((type) =>
+    type.classifierTrainingStatus !== 'trained' && type.classifierTrainingStatus !== 'training');
   const lastTrainedType = includedTypes
     .filter((type) => type.classifierTrainedAt)
     .sort((left, right) =>
@@ -4587,6 +4589,17 @@ function ClassificationScreen({
                 <span>Last trained by</span>
                 <strong>{lastTrainedType?.classifierTrainedBy || '—'}</strong>
               </div>
+              {overallStatus !== 'untrained' && untrainedTypes.length > 0 && (
+                <div>
+                  <span>Pending training</span>
+                  <strong
+                    className="classifier-pill pending"
+                    title={untrainedTypes.map((type) => type.name).join(', ')}
+                  >
+                    {untrainedTypes.length} untrained type{untrainedTypes.length === 1 ? '' : 's'}
+                  </strong>
+                </div>
+              )}
             </div>
             <div className="panel-heading-actions">
               <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
@@ -6141,7 +6154,7 @@ function CreateDocumentTypeModal({
                     className={errors.category ? 'input-error' : ''}
                   >
                     <option value="">Select a category</option>
-                    {categories.map((cat) => (
+                    {(category && !categories.includes(category) ? [...categories, category].sort() : categories).map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>
