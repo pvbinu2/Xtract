@@ -1,6 +1,7 @@
 const { app, output } = require('@azure/functions');
 const { classifyDocument, normalizeObjectId } = require('../classifier');
 const { withClassificationConcurrency } = require('../aiConcurrency');
+const { withFunctionLogging } = require('../functionLogger');
 const { publishDocumentChanged } = require('../documentEvents');
 const { getConfiguration } = require('../configurationCache');
 const {
@@ -25,7 +26,7 @@ const extractionQueueOutput = output.serviceBusQueue({
 async function classifyQueuedDocument(message, context) {
   const documentId = resolveDocumentId(message);
   if (!documentId || !ObjectId.isValid(documentId)) {
-    context.warn(`Skipping queue message without a valid documentId: ${JSON.stringify(message)}`);
+    context.warn('Skipping classification message without a valid documentId.');
     return;
   }
 
@@ -78,8 +79,12 @@ async function classifyQueuedDocument(message, context) {
     let classificationUpdate = {};
 
     if (!documentType) {
+      context.info(`Classifying document (mode=${configuration?.classificationMode || 'default'}).`);
       const localFilePath = await resolveDocumentFile(document, configuration);
-      const preparedText = await resolvePreparedDocumentText(document, configuration);
+      const fullPreparedText = await resolvePreparedDocumentText(document, configuration);
+      const preparedText = document.textArtifactComplete
+        ? fullPreparedText.slice(0, Number(process.env.DOCUMENT_TEXT_LIMIT || 60000))
+        : fullPreparedText;
       const localDocument = { ...document, filePath: localFilePath };
       try {
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
@@ -140,6 +145,7 @@ async function classifyQueuedDocument(message, context) {
       embeddingMetrics,
       classificationUpdate,
     }));
+    context.info('Classification returned; extraction output staged.');
   } catch (error) {
     const errorMessage = `Classification failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
@@ -152,5 +158,5 @@ app.serviceBusQueue('classifyDocument', {
   queueName: 'document-classification',
   connection: 'ServiceBusConnection',
   extraOutputs: [extractionQueueOutput],
-  handler: withClassificationConcurrency(classifyQueuedDocument),
+  handler: withFunctionLogging('classifyDocument', 'document-classification', withClassificationConcurrency(classifyQueuedDocument), { documentMessage: true }),
 });

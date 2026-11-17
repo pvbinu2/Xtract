@@ -139,14 +139,14 @@ function hasResolvableDocumentFile(document) {
   );
 }
 
-async function markDocumentFailed(documents, documentId, error) {
-  await transitionDocumentStatus(
+async function markDocumentFailed(documents, documentId, error, guard) {
+  return transitionDocumentStatus(
     documents,
     documentId,
     'failed',
     { error },
     ['reprocessOptions'],
-    { completed: true },
+    { completed: true, guard },
   );
 }
 
@@ -243,43 +243,49 @@ async function transitionDocumentStatus(
     startTime,
     ...(timing.completed ? { endTime: now } : {}),
   };
-  await documents.updateOne(
-    { _id: documentId },
-    [
-      {
-        $set: {
-          ...setFields,
-          status,
-          updatedAt: now,
-          revision: { $add: [{ $ifNull: ['$revision', 0] }, 1] },
-          stageTimings: {
-            $concatArrays: [
-              {
-                $map: {
-                  input: { $ifNull: ['$stageTimings', []] },
-                  as: 'stage',
-                  in: {
-                    $cond: [
-                      { $eq: [{ $ifNull: ['$$stage.endTime', null] }, null] },
-                      { $mergeObjects: ['$$stage', { endTime: now }] },
-                      '$$stage',
-                    ],
-                  },
+  const stages = [
+    {
+      $set: {
+        ...(timing.guard
+          ? Object.fromEntries(Object.entries(setFields).map(([key, value]) => [key, { $literal: value }]))
+          : setFields),
+        status,
+        updatedAt: now,
+        revision: { $add: [{ $ifNull: ['$revision', 0] }, 1] },
+        stageTimings: {
+          $concatArrays: [
+            {
+              $map: {
+                input: { $ifNull: ['$stageTimings', []] },
+                as: 'stage',
+                in: {
+                  $cond: [
+                    { $eq: [{ $ifNull: ['$$stage.endTime', null] }, null] },
+                    { $mergeObjects: ['$$stage', { endTime: now }] },
+                    '$$stage',
+                  ],
                 },
               },
-              [newStageTiming],
-            ],
-          },
+            },
+            [newStageTiming],
+          ],
         },
       },
-    ],
+    },
+  ];
+  if (timing.guard && unsetFields.length) stages.push({ $unset: unsetFields });
+  const result = await documents.updateOne(
+    { _id: documentId, ...timing.guard },
+    stages,
   );
-  if (unsetFields.length) {
+  if (!result.matchedCount) return false;
+  if (unsetFields.length && !timing.guard) {
     await documents.updateOne(
       { _id: documentId },
       { $unset: Object.fromEntries(unsetFields.map((field) => [field, ''])) },
     );
   }
+  return true;
 }
 
 async function recordBusinessReviewProcessing(db, document, documentType, metrics) {

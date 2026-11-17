@@ -366,11 +366,11 @@ async function embedText(text, options = {}) {
   }
 
   const client = getOpenAI(options);
-  if (!client) throw new Error('An API key is required to create classifier embeddings.');
+  if (!client) throw new Error('An API key is required to create embeddings.');
   const response = await withOpenAIRetry(() => client.embeddings.create({
     model,
     input: text || 'empty document',
-  }), 'Classifier embedding');
+  }), 'Embedding');
   return {
     embedding: response.data[0].embedding,
     metrics: embeddingMetricsFromResponse(response, model),
@@ -432,6 +432,7 @@ async function searchDocumentTypeVectors(document, textOptions = {}, options = {
     ? options.preparedText.slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000))
     : await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
       ...textOptions,
+      documentId: String(document._id),
       fileName: document.originalName || document.fileName,
     });
   const chunks = chunkText([
@@ -597,6 +598,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
       ? options.preparedText.slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000))
       : await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
         ...textOptions,
+        documentId: String(document._id),
         fileName: document.originalName || document.fileName,
       })
     : '';
@@ -668,6 +670,7 @@ function normalizeObjectId(value) {
 
 module.exports = {
   classifyDocument,
+  embedText,
   normalizeObjectId,
   resetClassifierVectors,
   samplePath,

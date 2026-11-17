@@ -1,14 +1,18 @@
-const { app } = require('@azure/functions');
+const { app, output } = require('@azure/functions');
 const { withExtractionConcurrency } = require('../aiConcurrency');
+const { withFunctionLogging } = require('../functionLogger');
 const { publishDocumentChanged } = require('../documentEvents');
 const { getConfiguration } = require('../configurationCache');
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const OpenAI = require('openai');
 const { attachBoundingBoxes } = require('../pdfBoundingBox');
 const { isExcelDocument, parseWorkbook } = require('../workbook');
 const { extractDocumentContent, extractDocumentSpatialItems, extractDocumentText } = require('../documentText');
 const { withOpenAIRetry } = require('../openaiRetry');
+const { extractChunkedDocument } = require('../chunkedExtraction');
+const { shouldRouteToChunkExtraction } = require('../chunkRouting');
 const {
   ObjectId,
   getClient,
@@ -24,6 +28,11 @@ const {
   resolveMessage,
   transitionDocumentStatus,
 } = require('../documentProcessingCommon');
+
+const chunkExtractionOutput = output.serviceBusQueue({
+  queueName: 'document-chunk-extraction',
+  connection: 'ServiceBusConnection',
+});
 
 function getOpenAI(options = {}) {
   if (!options.apiKey) return undefined;
@@ -173,7 +182,12 @@ function processingMetricsFromResponse(response, model) {
 function parseJsonObject(text) {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  return JSON.parse(fenced ? fenced[1] : trimmed);
+  try {
+    return JSON.parse(fenced ? fenced[1] : trimmed);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new Error('The model returned invalid JSON.', { cause: error });
+  }
 }
 
 function normalizedName(value) {
@@ -352,6 +366,7 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
       ? await extractDocumentContent(document.filePath, undefined, {
         mode: textMode,
         markdownServiceUrl: textOptions.markdownServiceUrl,
+        documentId: String(document._id),
         fileName: document.originalName || document.fileName,
       })
       : { text: '', spatialItems: [] };
@@ -418,21 +433,129 @@ async function extractValuesWithOpenAI(document, documentType, useOcr = false, t
     }
   }
 
-  // Docling can return a small subset of positioned elements for scanned PDFs.
-  // That partial result previously prevented the full Tesseract spatial pass,
-  // leaving most extracted fields without validation-page bounding boxes.
-  // Prefer OCR positions in markdown mode and retain Docling positions as a
-  // fallback for values that OCR did not recognize.
+  // Prefer OCR positions in markdown mode and retain Docling positions as a fallback.
   const ocrSpatialItems = !isExcelDocument(document) && (textMode === 'markdown' || !documentContent.spatialItems.length)
     ? await extractDocumentSpatialItems(document.filePath)
     : [];
-  const spatialItems = [...ocrSpatialItems, ...documentContent.spatialItems];
-
   return {
     values,
     metrics,
-    spatialItems,
+    spatialItems: [...ocrSpatialItems, ...documentContent.spatialItems],
   };
+}
+
+async function extractChunkField(document, documentType, field, chunk, aiOptions, textSourceLabel) {
+  const schema = JSON.stringify(schemaForFields([field]));
+  if (schema.length > 12000) throw new Error(`Schema for ${field.key} exceeds the chunk extraction limit.`);
+  const shape = field.type === 'table'
+    ? '{"value":[{"value":{"column_key":"value"},"evidence":"exact source text for this row"}],"confidence":0.9}'
+    : '{"value":"extracted value","evidence":"exact source text supporting the value","confidence":0.9}';
+  const prompt = [
+    `Extract ${field.label} from this part of a ${documentType.name} document.`,
+    'Return JSON only. Extract only values found in the target chunk; surrounding context is for interpretation only.',
+    'Evidence must be an exact, contiguous quote from the target chunk, not a paraphrase.',
+    field.type === 'table'
+      ? 'Return every table data row in this chunk in document order, excluding headers and separator lines. Use only the column keys in the schema. Return an empty array if no rows are present.'
+      : 'Return an empty string if the value is absent. Do not infer missing values.',
+    ...(field.type === 'table' && chunk.tableHeader
+      ? [`Previous table header for context only; do not extract it as a row:\n${chunk.tableHeader}`]
+      : []),
+    ...(field.type !== 'table' && chunk.contextBefore
+      ? [`Context before the target chunk:\n${chunk.contextBefore}`] : []),
+    ...(field.type !== 'table' && chunk.contextAfter
+      ? [`Context after the target chunk:\n${chunk.contextAfter}`] : []),
+    `Return this shape: ${shape}`,
+    `Schema: ${schema}`,
+    `Target chunk:\n${chunk.text}`,
+  ].join('\n');
+
+  async function request(issues, previous) {
+    const correction = issues ? `\nVerification issues: ${JSON.stringify(issues)}\nPrevious extraction: ${JSON.stringify(previous)}\nCorrect the result using only the chunk and provide exact evidence.` : '';
+    if (prompt.length + correction.length > 24000) throw new Error(`Chunk extraction prompt for ${field.key} exceeds the request budget.`);
+    const response = await createJsonResponse(
+      [{ type: 'input_text', text: prompt + correction }],
+      aiOptions,
+      `Chunk extraction for document ${document._id || document.fileName}`,
+    );
+    if (!response) throw new Error('An AI provider must be configured for chunked extraction.');
+    const parsed = parseJsonObject(response.outputText);
+    if (!Object.prototype.hasOwnProperty.call(parsed, 'value')) throw new Error(`Missing value in chunk response for ${field.key}.`);
+    if (field.type === 'table') {
+      if (!Array.isArray(parsed.value)) throw new Error(`Invalid table response for ${field.key}.`);
+      parsed.value = parsed.value.map((row) => {
+        if (!row || typeof row.value !== 'object' || row.value === null || Array.isArray(row.value)) {
+          throw new Error(`Invalid table row in chunk response for ${field.key}.`);
+        }
+        return { value: coerceTableRowsToSchema([row.value], field.columns || [])[0], evidence: row.evidence };
+      });
+    } else if (parsed.value !== null && typeof parsed.value === 'object') {
+      throw new Error(`Invalid scalar response for ${field.key}.`);
+    }
+    return { parsed, metrics: processingMetricsFromResponse(response.raw, response.model) };
+  }
+
+  let result = await request();
+  let metrics = result.metrics;
+  if (documentType.extractionVerification) {
+    if (schema.length + chunk.text.length + JSON.stringify(result.parsed.value).length > 20000) {
+      throw new Error(`Chunk verification input for ${field.key} exceeds the request budget.`);
+    }
+    const verification = await verifyExtractionWithOpenAI({
+      aiOptions,
+      document,
+      documentType,
+      selectedFields: [field],
+      values: [{
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        value: field.type === 'table' ? result.parsed.value.map((row) => row.value) : result.parsed.value,
+        confidence: result.parsed.confidence,
+      }],
+      useOcr: true,
+      documentText: chunk.text,
+      textSourceLabel,
+    });
+    metrics = combineMetrics(metrics, verification.metrics);
+    if (verification.needsCorrection) {
+      const correction = await request(verification.issues, result.parsed);
+      metrics = combineMetrics(metrics, correction.metrics);
+      result = correction;
+    }
+  }
+  return {
+    value: result.parsed.value,
+    evidence: result.parsed.evidence,
+    confidence: typeof result.parsed.confidence === 'number' && result.parsed.confidence >= 0 && result.parsed.confidence <= 1
+      ? result.parsed.confidence : undefined,
+    metrics,
+  };
+}
+
+async function extractChunkedValues(document, documentType, documentText, textMode, aiOptions, index, context) {
+  if (providerName(aiOptions) !== 'ollama' && !getOpenAI(aiOptions)) {
+    throw new Error('An AI provider must be configured for chunked extraction.');
+  }
+  const requestOptions = {
+    ...aiOptions,
+    model: documentType.extractionModel,
+    reasoningEffort: documentType.extractionReasoningEffort,
+  };
+  const result = await extractChunkedDocument({
+    text: documentText,
+    fields: (documentType.fields || []).filter((field) => field.selected),
+    log: (message) => context.info(message),
+    indexOptions: {
+      index,
+      documentId: String(document._id),
+      embeddingOptions: { ...aiOptions, aiProvider: 'openai', apiKey: aiOptions.openAiApiKey },
+    },
+    extractChunk: (field, chunk) => extractChunkField(
+      document, documentType, field, chunk, requestOptions,
+      textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text',
+    ),
+  });
+  return { ...result, spatialItems: await extractDocumentSpatialItems(document.filePath) };
 }
 
 function mockValue(label, type, index) {
@@ -443,11 +566,11 @@ function mockValue(label, type, index) {
   return `Extracted ${label}`;
 }
 
-async function extractQueuedDocument(message, context) {
+async function extractQueuedDocument(message, context, chunked = false) {
   const payload = resolveMessage(message);
   const documentId = payload.documentId || payload.id;
   if (!documentId || !ObjectId.isValid(documentId)) {
-    context.warn(`Skipping extraction queue message without a valid documentId: ${JSON.stringify(message)}`);
+    context.warn('Skipping extraction message without a valid documentId.');
     return;
   }
 
@@ -460,10 +583,31 @@ async function extractQueuedDocument(message, context) {
     context.error(`Document ${documentId} not found`);
     return;
   }
-  await transitionDocumentStatus(documents, document._id, 'extraction_started');
-  await publishDocumentChanged(documents, document._id, ['status'], context);
-
   const configuration = await getConfiguration();
+  const chunkGuard = chunked ? {
+    status: 'extraction_started',
+    chunkExtractionAttemptId: payload.chunkExtractionAttemptId,
+  } : undefined;
+  if (chunked && (!payload.chunkExtractionAttemptId || document.status !== chunkGuard.status ||
+    document.chunkExtractionAttemptId !== chunkGuard.chunkExtractionAttemptId)) {
+    context.info(`Skipping stale chunk extraction for document ${documentId}.`);
+    return;
+  }
+  if (!chunked && configuration?.chunkedExtractionEnabled === true &&
+    ['extraction_completed', 'validated', 'rejected'].includes(document.status)) {
+    context.info(`Skipping completed extraction for document ${documentId}.`);
+    return;
+  }
+  if (!chunked) {
+    const started = await transitionDocumentStatus(
+      documents, document._id, 'extraction_started', {}, [],
+      configuration?.chunkedExtractionEnabled === true
+        ? { guard: { status: document.status, revision: document.revision } }
+        : {},
+    );
+    if (!started) return;
+    await publishDocumentChanged(documents, document._id, ['status'], context);
+  }
   const {
     aiOptions,
     reprocessOptions,
@@ -475,30 +619,30 @@ async function extractQueuedDocument(message, context) {
   const documentTypeId = normalizeDocumentTypeId(document);
   const documentType = documentTypeId ? await documentTypes.findOne({ _id: documentTypeId }) : null;
   if (!documentType) {
-    await transitionDocumentStatus(
+    const failed = await transitionDocumentStatus(
       documents,
       document._id,
       'failed',
       { error: 'Document type not found for extraction' },
       ['reprocessOptions'],
-      { completed: true },
+      { completed: true, guard: chunkGuard },
     );
-    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
+    if (failed) await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
   if (!hasResolvableDocumentFile(document)) {
     const errorMessage = `Document file not found: ${document.filePath || 'missing filePath'}`;
     context.error(errorMessage);
-    await markDocumentFailed(documents, document._id, errorMessage);
-    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
+    const failed = await markDocumentFailed(documents, document._id, errorMessage, chunkGuard);
+    if (failed) await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
     return;
   }
 
   let localFilePath;
   try {
     localFilePath = await resolveDocumentFile(document, configuration);
-    const preparedText = await resolvePreparedDocumentText(document, configuration);
+    let preparedText = await resolvePreparedDocumentText(document, configuration);
     const preparedTextMode = document.textArtifactMode === 'markdown' ? 'markdown' : 'ocr';
     const effectiveDocumentType = {
       ...documentType,
@@ -517,17 +661,66 @@ async function extractQueuedDocument(message, context) {
     const usesPreparedText = Boolean(document.workbookArtifactBlobName) || useOcrForDocumentProcessing || providerName(extractionAiOptions) === 'ollama';
     const effectiveProcessingMode = document.workbookArtifactBlobName ? 'spreadsheet' : usesPreparedText ? preparedTextMode : 'pdf';
     const localDocument = { ...document, ...payload.classificationUpdate, filePath: localFilePath };
-    const extraction = await extractValuesWithOpenAI(
-      localDocument,
-      effectiveDocumentType,
-      useOcrForDocumentProcessing,
-      {
+    const chunkingEligible = configuration?.chunkedExtractionEnabled === true && usesPreparedText
+      && !document.workbookArtifactBlobName && !isExcelDocument(document);
+    context.info(`Extraction configured (chunked=${chunked}, mode=${effectiveProcessingMode}, provider=${extractionProvider}, textLength=${preparedText.length}).`);
+    if (chunked && (!usesPreparedText || document.workbookArtifactBlobName || isExcelDocument(document))) {
+      throw new Error('Chunk extraction requires an OCR or Markdown document.');
+    }
+    if ((chunked || chunkingEligible) && !document.textArtifactComplete) {
+      preparedText = (await extractDocumentContent(localFilePath, Infinity, {
         ...textOptions,
+        documentId: String(document._id),
         mode: preparedTextMode,
-        preparedText: usesPreparedText ? preparedText : undefined,
-      },
-      extractionAiOptions,
-    );
+        fileName: document.convertedToPdf
+          ? path.posix.basename(document.storageBlobName || document.fileName)
+          : document.originalName || document.fileName,
+      })).text;
+    }
+    if (!chunked && shouldRouteToChunkExtraction({
+      enabled: configuration?.chunkedExtractionEnabled === true,
+      usesPreparedText,
+      spreadsheet: Boolean(document.workbookArtifactBlobName) || isExcelDocument(document),
+      textLength: preparedText.length,
+      threshold: configuration?.chunkedExtractionThreshold ?? 24000,
+    })) {
+      let attemptId = document.chunkExtractionAttemptId;
+      if (!attemptId) {
+        attemptId = randomUUID();
+        const claimed = await documents.updateOne(
+          { _id: document._id, status: 'extraction_started', chunkExtractionAttemptId: null },
+          { $set: { chunkExtractionAttemptId: attemptId } },
+        );
+        if (!claimed.matchedCount) {
+          const current = await documents.findOne({ _id: document._id });
+          if (current?.status !== 'extraction_started' || !current.chunkExtractionAttemptId) return;
+          attemptId = current.chunkExtractionAttemptId;
+        }
+      }
+      context.extraOutputs.set(chunkExtractionOutput, JSON.stringify({
+        ...payload,
+        documentId: String(document._id),
+        chunkExtractionAttemptId: attemptId,
+        chunkedExtractionIndex: configuration.chunkedExtractionIndex || 'memory',
+      }));
+      context.info(`Chunk extraction output staged (textLength=${preparedText.length}, index=${configuration.chunkedExtractionIndex || 'memory'}).`);
+      return;
+    }
+    const extraction = chunked
+      ? await extractChunkedValues(localDocument, effectiveDocumentType, preparedText, preparedTextMode, extractionAiOptions, payload.chunkedExtractionIndex, context)
+      : await extractValuesWithOpenAI(
+        localDocument,
+        effectiveDocumentType,
+        useOcrForDocumentProcessing,
+        {
+          ...textOptions,
+          mode: preparedTextMode,
+          preparedText: usesPreparedText
+            ? document.textArtifactComplete ? preparedText.slice(0, Number(process.env.DOCUMENT_TEXT_LIMIT || 60000)) : preparedText
+            : undefined,
+        },
+        extractionAiOptions,
+      );
     const extractedValues = extraction?.values ||
       (documentType.fields || [])
         .filter((field) => field.selected)
@@ -574,13 +767,16 @@ async function extractQueuedDocument(message, context) {
       totalTokens: 0,
       estimatedCostUsd: 0,
     };
-    const embeddingMetrics = payload.embeddingMetrics || {
+    const classificationEmbeddingMetrics = payload.embeddingMetrics || {
       model: 'none',
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
       estimatedCostUsd: 0,
     };
+    const embeddingMetrics = extraction?.embeddingMetrics
+      ? combineMetrics(classificationEmbeddingMetrics, extraction.embeddingMetrics)
+      : classificationEmbeddingMetrics;
     processingMetrics.extractionCostUsd = Number(processingMetrics.estimatedCostUsd || 0);
     processingMetrics.classificationCostUsd = Number(classificationMetrics.estimatedCostUsd || 0);
     processingMetrics.embeddingCostUsd = Number(embeddingMetrics.estimatedCostUsd || 0);
@@ -602,7 +798,7 @@ async function extractQueuedDocument(message, context) {
     ).toFixed(8));
 
     const protectedExtractedData = extractedDataUpdate(document, extractedData, configuration);
-    await transitionDocumentStatus(
+    const completed = await transitionDocumentStatus(
       documents,
       document._id,
       'extraction_completed',
@@ -614,9 +810,11 @@ async function extractQueuedDocument(message, context) {
         processingMode: effectiveProcessingMode,
         error: null,
       },
-      ['reprocessOptions', ...Object.keys(protectedExtractedData.$unset || {})],
-      { completed: true },
+      ['reprocessOptions', ...(chunked ? ['chunkExtractionAttemptId'] : []), ...Object.keys(protectedExtractedData.$unset || {})],
+      { completed: true, guard: chunkGuard },
     );
+    if (!completed) return;
+    context.info(`Extraction completed (chunked=${chunked}, fieldCount=${extractedData.length}).`);
     await publishDocumentChanged(
       documents,
       document._id,
@@ -627,8 +825,8 @@ async function extractQueuedDocument(message, context) {
   } catch (error) {
     const errorMessage = `Extraction failed: ${error?.message || String(error)}`;
     context.error(errorMessage);
-    await markDocumentFailed(documents, document._id, errorMessage);
-    await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
+    const failed = await markDocumentFailed(documents, document._id, errorMessage, chunkGuard);
+    if (failed) await publishDocumentChanged(documents, document._id, ['status', 'error'], context);
   } finally {
     if (localFilePath && document.storageContainer && document.storageBlobName) await removeTempFile(localFilePath);
   }
@@ -637,5 +835,8 @@ async function extractQueuedDocument(message, context) {
 app.serviceBusQueue('extractDocument', {
   queueName: 'document-extraction',
   connection: 'ServiceBusConnection',
-  handler: withExtractionConcurrency(extractQueuedDocument),
+  extraOutputs: [chunkExtractionOutput],
+  handler: withFunctionLogging('extractDocument', 'document-extraction', withExtractionConcurrency(extractQueuedDocument), { documentMessage: true }),
 });
+
+module.exports = { extractQueuedDocument, extractChunkField };

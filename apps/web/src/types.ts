@@ -41,6 +41,13 @@ export type ExtractedValue = {
   type: FieldType;
   value: unknown;
   confidence?: number;
+  needsReview?: boolean;
+  sourceEvidence?: Array<{ start: number; end: number; quote: string }>;
+  reviewCandidates?: Array<{
+    value: unknown;
+    confidence?: number;
+    evidence: { start: number; end: number; quote: string };
+  }>;
   boundingBoxes?: Array<{
     page: number;
     x: number;

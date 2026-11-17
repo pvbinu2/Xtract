@@ -35,6 +35,9 @@ export class ConfigurationController {
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;
       useOcrForDocumentProcessing?: boolean;
+      chunkedExtractionEnabled?: boolean;
+      chunkedExtractionThreshold?: number;
+      chunkedExtractionIndex?: 'memory' | 'qdrant';
       documentIngestionTrigger?: 'event-grid' | 'blob';
       ingestionFileTypes?: IngestionFileType[];
       documentTextMode?: 'ocr' | 'markdown';

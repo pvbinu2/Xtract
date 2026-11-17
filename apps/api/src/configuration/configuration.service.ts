@@ -43,6 +43,9 @@ export class ConfigurationService {
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
       useOcrForDocumentProcessing: false,
+      chunkedExtractionEnabled: false,
+      chunkedExtractionThreshold: 24000,
+      chunkedExtractionIndex: 'memory',
       documentIngestionTrigger: 'event-grid',
       ingestionFileTypes: DEFAULT_INGESTION_FILE_TYPES,
       documentTextMode: 'ocr',
@@ -81,6 +84,10 @@ export class ConfigurationService {
       turnstileExpectedHostname: config?.turnstileExpectedHostname?.trim().toLowerCase() || '',
       turnstileExpectedAction: config?.turnstileExpectedAction?.trim() || 'request-demo',
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+      chunkedExtractionEnabled: config?.chunkedExtractionEnabled === true,
+      chunkedExtractionThreshold: Number.isInteger(config?.chunkedExtractionThreshold) && config.chunkedExtractionThreshold >= 1000 && config.chunkedExtractionThreshold <= 10000000
+        ? config.chunkedExtractionThreshold : defaults.chunkedExtractionThreshold,
+      chunkedExtractionIndex: config?.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
       documentIngestionTrigger: config?.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
       ingestionFileTypes: normalizeIngestionFileTypes(config?.ingestionFileTypes),
       markdownServiceUrl: config?.markdownServiceUrl || '',
@@ -183,6 +190,9 @@ export class ConfigurationService {
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
     useOcrForDocumentProcessing?: boolean;
+    chunkedExtractionEnabled?: boolean;
+    chunkedExtractionThreshold?: number;
+    chunkedExtractionIndex?: 'memory' | 'qdrant';
     documentIngestionTrigger?: 'event-grid' | 'blob';
     ingestionFileTypes?: IngestionFileType[];
     documentTextMode?: 'ocr' | 'markdown';
@@ -209,6 +219,12 @@ export class ConfigurationService {
     llmClassificationConcurrency?: number;
     extractionConcurrency?: number;
   }): Promise<Configuration> {
+    if (config.chunkedExtractionThreshold !== undefined && (!Number.isInteger(config.chunkedExtractionThreshold) || config.chunkedExtractionThreshold < 1000 || config.chunkedExtractionThreshold > 10000000)) {
+      throw new BadRequestException('Chunked extraction threshold must be an integer between 1,000 and 10,000,000 characters.');
+    }
+    if (config.chunkedExtractionIndex !== undefined && !['memory', 'qdrant'].includes(config.chunkedExtractionIndex)) {
+      throw new BadRequestException('Chunked extraction index must be memory or qdrant.');
+    }
     const deploymentMode = config.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted';
     const subscriptionPlanName = config.subscriptionPlanName?.trim().slice(0, 80) || 'Growth';
     const subscriptionIncludedPages = Math.max(0, Math.floor(Number(config.subscriptionIncludedPages) || 8000));
@@ -312,6 +328,9 @@ export class ConfigurationService {
           databaseEncryptionKeyVersion: Number(existing?.databaseEncryptionKeyVersion) || 1,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
+          chunkedExtractionEnabled: config.chunkedExtractionEnabled === true,
+          chunkedExtractionThreshold: config.chunkedExtractionThreshold ?? 24000,
+          chunkedExtractionIndex: config.chunkedExtractionIndex ?? 'memory',
           documentIngestionTrigger,
           ingestionFileTypes,
           documentTextMode,

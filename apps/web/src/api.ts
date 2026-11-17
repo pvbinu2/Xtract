@@ -21,6 +21,9 @@ export type AppConfigPayload = {
   deleteAfterDownstream: boolean;
   sendKeyValuePairs: boolean;
   useOcrForDocumentProcessing: boolean;
+  chunkedExtractionEnabled: boolean;
+  chunkedExtractionThreshold: number;
+  chunkedExtractionIndex: 'memory' | 'qdrant';
   documentIngestionTrigger: 'event-grid' | 'blob';
   ingestionFileTypes: Array<{
     extensions: string[];

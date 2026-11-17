@@ -1,3 +1,5 @@
+const { getFunctionLogger } = require('./functionLogger');
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -37,7 +39,9 @@ async function withOpenAIRetry(operation, label = 'OpenAI request') {
 
       const jitter = Math.floor(Math.random() * 250);
       const delay = retryDelayFromError(error, attempt) + jitter;
-      console.warn(`${label} rate-limited or temporarily unavailable. Retrying in ${delay}ms.`);
+      const logger = getFunctionLogger();
+      if (logger) logger.write('warn', `AI request rate-limited or temporarily unavailable. Retrying in ${delay}ms.`);
+      else console.warn(`${label} rate-limited or temporarily unavailable. Retrying in ${delay}ms.`);
       await sleep(delay);
     }
   }

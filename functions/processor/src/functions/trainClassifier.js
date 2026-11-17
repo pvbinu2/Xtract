@@ -1,4 +1,5 @@
 const { app } = require('@azure/functions');
+const { withFunctionLogging } = require('../functionLogger');
 const { decryptSecret, MongoDatabase, ObjectId } = require('@xtract/common');
 const { resetClassifierVectors, trainClassifierProfile } = require('../classifier');
 const { getConfiguration } = require('../configurationCache');
@@ -60,6 +61,7 @@ async function trainClassifier(message, context) {
       context.warn('No included document types with samples found for classifier training.');
       return;
     }
+    context.info(`Training classifier profiles (count=${includedTypes.length}).`);
 
     try {
       await resetClassifierVectors(aiOptions);
@@ -114,7 +116,7 @@ async function trainClassifier(message, context) {
   }
 
   if (!payload.documentTypeId || !ObjectId.isValid(payload.documentTypeId) || !payload.sampleFileName) {
-    context.warn(`Skipping classifier training message without documentTypeId/sampleFileName: ${JSON.stringify(message)}`);
+    context.warn('Skipping classifier training message without documentTypeId/sampleFileName.');
     return;
   }
 
@@ -126,6 +128,7 @@ async function trainClassifier(message, context) {
   }
 
   try {
+    context.info('Training one classifier profile.');
     const profile = await trainClassifierProfile(documentType, payload.sampleFileName, aiOptions);
     await documentTypes.updateOne(
       { _id: documentTypeId },
@@ -159,5 +162,5 @@ async function trainClassifier(message, context) {
 app.serviceBusQueue('trainClassifier', {
   queueName: 'classifier-training',
   connection: 'ServiceBusConnection',
-  handler: trainClassifier,
+  handler: withFunctionLogging('trainClassifier', 'classifier-training', trainClassifier),
 });

@@ -1,6 +1,7 @@
 const path = require('path');
 const { createHash } = require('crypto');
 const { app, output } = require('@azure/functions');
+const { withFunctionLogging } = require('../functionLogger');
 const { ObjectId, encryptionPolicyFor, extractedDataUpdate, getClient } = require('../documentProcessingCommon');
 const { getConfiguration } = require('../configurationCache');
 const { ingestionFileSupport, resolveDataEncryptionSettings } = require('@xtract/common');
@@ -77,6 +78,7 @@ async function ingestBlob(details, context, configuration) {
 
   const existingDocument = await documents.findOne({ triggerEventId: details.event.id });
   if (existingDocument) {
+    context.functionLogger?.setDocumentId(existingDocument._id);
     context.info(`Trigger blob ${triggerBlobName} was already ingested as document ${existingDocument._id}.`);
     if ([
       'received',
@@ -97,6 +99,8 @@ async function ingestBlob(details, context, configuration) {
   const mimeType = mimeTypeForFileName(originalName);
   const support = ingestionFileSupport(originalName, mimeType, configuration.ingestionFileTypes);
   const documentId = documentIdForEvent(details.event.id);
+  context.functionLogger?.setDocumentId(documentId);
+  context.info('Ingesting new trigger document.');
   const settings = resolveDataEncryptionSettings(configuration);
   const encryptionPolicy = encryptionPolicyFor(configuration);
   const processingBlobName = createBlobName(originalName, String(documentId));
@@ -167,7 +171,7 @@ app.serviceBusQueue('ingestTriggeredDocument', {
   queueName: 'blob-ingestion',
   connection: 'ServiceBusConnection',
   extraOutputs: [processingQueueOutput],
-  handler: ingestTriggeredDocument,
+  handler: withFunctionLogging('ingestTriggeredDocument', 'blob-ingestion', ingestTriggeredDocument),
 });
 
 app.storageBlob('ingestTriggeredBlob', {
@@ -175,7 +179,7 @@ app.storageBlob('ingestTriggeredBlob', {
   connection: 'AzureWebJobsStorage',
   source: 'LogsAndContainerScan',
   extraOutputs: [processingQueueOutput],
-  handler: ingestTriggeredBlob,
+  handler: withFunctionLogging('ingestTriggeredBlob', 'blob-trigger', ingestTriggeredBlob),
 });
 
 module.exports = { documentIdForEvent, ingestBlob, ingestTriggeredBlob, ingestTriggeredDocument, mimeTypeForFileName };

@@ -91,6 +91,19 @@ export class ExtractedValue {
 
   @Prop({ type: [SpreadsheetCellReferenceSchema], default: [] })
   cellReferences?: SpreadsheetCellReference[];
+
+  @Prop()
+  needsReview?: boolean;
+
+  @Prop({ type: [Object], default: undefined })
+  sourceEvidence?: Array<{ start: number; end: number; quote: string }>;
+
+  @Prop({ type: [Object], default: undefined })
+  reviewCandidates?: Array<{
+    value: unknown;
+    confidence?: number;
+    evidence: { start: number; end: number; quote: string };
+  }>;
 }
 
 const ExtractedValueSchema = SchemaFactory.createForClass(ExtractedValue);
@@ -212,6 +225,12 @@ export class IncomingDocument {
 
   @Prop()
   textArtifactMode?: 'ocr' | 'markdown';
+
+  @Prop({ default: false })
+  textArtifactComplete?: boolean;
+
+  @Prop()
+  chunkExtractionAttemptId?: string;
 
   @Prop()
   spatialTextArtifactContainer?: string;

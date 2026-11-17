@@ -344,6 +344,7 @@ export class DocumentsService {
     this.requireServiceBus();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
+    document.chunkExtractionAttemptId = undefined;
     const settings = await this.encryptionSettings();
     if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
       await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
@@ -838,6 +839,9 @@ export class DocumentsService {
     extractedData: ExtractedValue[],
     user: AuthenticatedUser,
   ): Promise<any> {
+    if (extractedData.some((field) => field.needsReview)) {
+      throw new BadRequestException('Resolve conflicting extracted values before validating the document.');
+    }
     const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
     updated.validatedBy = {

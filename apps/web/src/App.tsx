@@ -677,6 +677,9 @@ function OperationsApp() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    chunkedExtractionEnabled: false,
+    chunkedExtractionThreshold: 24000,
+    chunkedExtractionIndex: 'memory',
     documentIngestionTrigger: 'event-grid',
     ingestionFileTypes: [],
     documentTextMode: 'ocr',
@@ -735,6 +738,9 @@ function OperationsApp() {
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        chunkedExtractionEnabled: saved.chunkedExtractionEnabled === true,
+        chunkedExtractionThreshold: Math.min(10000000, Math.max(1000, Number(saved.chunkedExtractionThreshold) || 24000)),
+        chunkedExtractionIndex: saved.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
         documentIngestionTrigger: saved.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
         ingestionFileTypes: saved.ingestionFileTypes || [],
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
@@ -795,6 +801,9 @@ function OperationsApp() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            chunkedExtractionEnabled: parsed.chunkedExtractionEnabled === true,
+            chunkedExtractionThreshold: Math.min(10000000, Math.max(1000, Number(parsed.chunkedExtractionThreshold) || 24000)),
+            chunkedExtractionIndex: parsed.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
             documentIngestionTrigger: parsed.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
             ingestionFileTypes: parsed.ingestionFileTypes || [],
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
@@ -3574,6 +3583,9 @@ const pendingConfigurationFields: Array<{
   { key: 'storageEncryptionEnabled', label: 'Storage encryption' },
   { key: 'databaseEncryptionEnabled', label: 'Database encryption' },
   { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
+  { key: 'chunkedExtractionEnabled', label: 'Chunked extraction' },
+  { key: 'chunkedExtractionThreshold', label: 'Chunked extraction threshold' },
+  { key: 'chunkedExtractionIndex', label: 'Chunked extraction index' },
   { key: 'documentIngestionTrigger', label: 'Document ingestion trigger' },
   { key: 'documentTextMode', label: 'Document text mode' },
   { key: 'ingestionFileTypes', label: 'API ingestion file types' },
@@ -4242,6 +4254,39 @@ function ConfigurationScreen({
                   <p className="warning-text">
                     Processing PDFs directly can cost more because the full PDF is sent to the model instead of extracted OCR or markdown text.
                   </p>
+                )}
+              </div>
+              <div className="document-processing-option-card">
+                <strong>Large-document extraction</strong>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={config.chunkedExtractionEnabled}
+                    onChange={(event) => onConfigChange({ ...config, chunkedExtractionEnabled: event.target.checked })}
+                  />
+                  <span>
+                    Enable chunked extraction
+                    <small>Use hybrid search for large OCR and Markdown documents. Direct PDFs and spreadsheets are unchanged.</small>
+                  </span>
+                </label>
+                {config.chunkedExtractionEnabled && (
+                  <>
+                    <label className="document-processing-field">
+                      Threshold (characters)
+                      <input type="number" min={1000} max={10000000} step={1}
+                        value={config.chunkedExtractionThreshold}
+                        onChange={(event) => onConfigChange({ ...config, chunkedExtractionThreshold: Number(event.target.value) })} />
+                    </label>
+                    <label className="document-processing-field">
+                      Chunk vector index
+                      <select value={config.chunkedExtractionIndex}
+                        onChange={(event) => onConfigChange({ ...config, chunkedExtractionIndex: event.target.value === 'qdrant' ? 'qdrant' : 'memory' })}>
+                        <option value="memory">In memory</option>
+                        <option value="qdrant">Qdrant</option>
+                      </select>
+                    </label>
+                    <p className="help-text">Uses the configured embedding provider and may increase processing time and cost. Qdrant requires the configured vector database.</p>
+                  </>
                 )}
               </div>
               <div className="document-processing-option-card ingestion-file-types-card">
@@ -7646,7 +7691,7 @@ function ValidationScreen({
     if (!current) return;
 
     const next = [...values];
-    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes, cellReferences: editingValueCellReferences };
+    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes, cellReferences: editingValueCellReferences, needsReview: false, reviewCandidates: [], sourceEvidence: [] };
 
     setSavingValueKey(current.key);
     try {
@@ -8100,6 +8145,14 @@ function ValidationScreen({
                       </span>
                     )}
                   </div>
+                  {item.needsReview && (
+                    <div className="warning-text">
+                      <strong>Conflicting values: review and edit this field.</strong>
+                      {item.reviewCandidates?.map((candidate, candidateIndex) => (
+                        <p key={candidateIndex}>{coerceValue(candidate.value)} — {candidate.evidence.quote}</p>
+                      ))}
+                    </div>
+                  )}
                   <div className="value-editor">
                     <input
                       aria-label={`${item.label} value`}

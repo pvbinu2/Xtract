@@ -73,6 +73,15 @@ export class Configuration {
   @Prop({ default: false })
   useOcrForDocumentProcessing!: boolean;
 
+  @Prop({ default: false })
+  chunkedExtractionEnabled!: boolean;
+
+  @Prop({ default: 24000, min: 1000, max: 10000000 })
+  chunkedExtractionThreshold!: number;
+
+  @Prop({ default: 'memory', enum: ['memory', 'qdrant'] })
+  chunkedExtractionIndex!: 'memory' | 'qdrant';
+
   @Prop({ default: 'event-grid', enum: ['event-grid', 'blob'] })
   documentIngestionTrigger!: DocumentIngestionTrigger;
 
