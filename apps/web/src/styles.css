@@ -8184,12 +8184,19 @@ html[data-theme='dark'] .spreadsheet-cell.active {
   text-align: center;
 }
 
-.pdf-page-value {
-  min-width: 84px;
+.pdf-page-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
-  text-align: center;
+}
+
+.pdf-page-jump input {
+  width: 54px;
+  min-height: 34px;
+  padding: 4px 6px;
 }
 
 .pdf-pages {

@@ -11,6 +11,8 @@ import {
   BrainCircuit,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
@@ -8046,21 +8048,19 @@ function ValidationScreen({
                   <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
                   {extractionReasoningEffort && <span className="reasoning-effort-badge">{extractionReasoningEffort}</span>}
                 </span>
-                <span
-                  className="document-model-item"
-                  title={document.chunkedExtractionUsed === true
-                    ? 'Document extracted using chunks'
-                    : document.chunkedExtractionUsed === false
-                      ? 'Document extracted without chunking'
-                      : 'Extraction strategy not recorded'}
-                >
-                  {document.chunkedExtractionUsed === true
-                    ? <Layers3 size={16} aria-hidden="true" />
-                    : document.chunkedExtractionUsed === false
-                      ? <FileText size={16} aria-hidden="true" />
-                      : <CircleHelp size={16} aria-hidden="true" />}
-                  {document.chunkedExtractionUsed === true ? 'Chunked' : document.chunkedExtractionUsed === false ? 'Standard' : 'Unknown'}
-                </span>
+                {typeof document.chunkedExtractionUsed === 'boolean' && (
+                  <span
+                    className="document-model-item"
+                    title={document.chunkedExtractionUsed
+                      ? 'Document extracted using chunks'
+                      : 'Document extracted without chunking'}
+                  >
+                    {document.chunkedExtractionUsed
+                      ? <Layers3 size={16} aria-hidden="true" />
+                      : <FileText size={16} aria-hidden="true" />}
+                    {document.chunkedExtractionUsed ? 'Chunked' : 'Standard'}
+                  </span>
+                )}
               </div>
               {document.validatedBy && (
                 <div className="validation-audit-line">
@@ -8667,6 +8667,7 @@ function PdfViewer({
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
 }) {
   const [selectedPage, setSelectedPage] = useState(1);
+  const [pageInput, setPageInput] = useState('1');
   const [pageCount, setPageCount] = useState(0);
   const [pageImage, setPageImage] = useState<{ dataUrl: string; width: number; height: number } | null>(null);
   const [loadingPage, setLoadingPage] = useState(false);
@@ -8889,6 +8890,10 @@ function PdfViewer({
   }, [pageCount]);
 
   useEffect(() => {
+    setPageInput(String(selectedPage));
+  }, [selectedPage]);
+
+  useEffect(() => {
     const selectedHighlights = highlights.filter((box) => box.fieldKey === activeFieldKey);
     if (selectedHighlights.length === 0) return;
 
@@ -8955,6 +8960,16 @@ function PdfViewer({
   const pageHighlights = highlights.filter((box) => box.page === selectedPage - 1);
   const canGoToPreviousPage = selectedPage > 1 && !loadingPage;
   const canGoToNextPage = Boolean(pageCount) && selectedPage < pageCount && !loadingPage;
+  const targetPage = Number(pageInput);
+  const canGoToTargetPage = Number.isInteger(targetPage) && targetPage >= 1 && targetPage <= pageCount && !loadingPage;
+
+  function navigateToEnteredPage() {
+    if (canGoToTargetPage) {
+      setSelectedPage(targetPage);
+    } else {
+      setPageInput(String(selectedPage));
+    }
+  }
 
   return (
     <div className="pdf-viewer">
@@ -8964,13 +8979,41 @@ function PdfViewer({
         <button
           className="icon-button"
           type="button"
+          title="First PDF page"
+          disabled={!pageCount || selectedPage <= 1 || loadingPage}
+          onClick={() => setSelectedPage(1)}
+        >
+          <ChevronsLeft size={16} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
           title="Previous PDF page"
           disabled={!canGoToPreviousPage}
           onClick={() => setSelectedPage((page) => Math.max(1, page - 1))}
         >
           <ChevronLeft size={16} />
         </button>
-        <span className="pdf-page-value">Page {selectedPage} / {pageCount || '-'}</span>
+        <div className="pdf-page-jump">
+          <label htmlFor="pdf-page-number">Page</label>
+          <input
+            id="pdf-page-number"
+            type="number"
+            min={1}
+            max={pageCount || undefined}
+            value={pageInput}
+            disabled={!pageCount || loadingPage}
+            onChange={(event) => setPageInput(event.target.value)}
+            onBlur={navigateToEnteredPage}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                navigateToEnteredPage();
+              }
+            }}
+          />
+          <span>/ {pageCount || '-'}</span>
+        </div>
         <button
           className="icon-button"
           type="button"
@@ -8979,6 +9022,15 @@ function PdfViewer({
           onClick={() => setSelectedPage((page) => Math.min(pageCount || page, page + 1))}
         >
           <ChevronRight size={16} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          title="Last PDF page"
+          disabled={!pageCount || selectedPage >= pageCount || loadingPage}
+          onClick={() => setSelectedPage(pageCount)}
+        >
+          <ChevronsRight size={16} />
         </button>
         <button
           className="icon-button"
