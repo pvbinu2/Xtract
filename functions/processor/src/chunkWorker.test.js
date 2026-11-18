@@ -19,6 +19,7 @@ test('routes large prepared text through the separate chunk worker', async () =>
     chunkedExtractionEnabled: true,
     chunkedExtractionThreshold: 1000,
     chunkedExtractionIndex: 'memory',
+    chunkedExtractionBatchSize: 1,
   }) });
   stub('./pdfBoundingBox', { attachBoundingBoxes: async (_, values) => values });
   let reextractions = 0;
@@ -127,6 +128,7 @@ test('routes large prepared text through the separate chunk worker', async () =>
     assert.equal(document.processingMetrics.embeddingCostUsd, 0.04);
     assert.equal(recorded, 1);
     assert.ok(logs.some((message) => message.includes('Processing field')));
+    assert.ok(logs.some((message) => message.includes('batchSize=1')));
     assert.ok(logs.every((message) => message.startsWith(`[correlationId=${document._id}]`)));
     await registrations.get('chunkExtractDocument').handler(JSON.parse(message), context);
     assert.equal(recorded, 1);

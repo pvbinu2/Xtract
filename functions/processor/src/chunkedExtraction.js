@@ -19,10 +19,13 @@ function hasValue(value) {
   return value !== undefined && value !== null && (typeof value !== 'string' || value.trim() !== '');
 }
 
-async function extractChunkedDocument({ text, fields, indexOptions, extractChunk, createIndex = createChunkIndex, log = () => {} }) {
+async function extractChunkedDocument({ text, fields, indexOptions, extractChunk, batchSize = 2, createIndex = createChunkIndex, log = () => {} }) {
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 16) {
+    throw new RangeError('Chunk extraction batch size must be an integer between 1 and 16.');
+  }
   const chunks = splitDocumentText(text);
   if (!chunks.length) throw new Error('Prepared document text is empty.');
-  log(`Chunk extraction started (chunkCount=${chunks.length}, fieldCount=${fields.length}, index=${indexOptions?.index || 'custom'}).`);
+  log(`Chunk extraction started (chunkCount=${chunks.length}, fieldCount=${fields.length}, batchSize=${batchSize}, index=${indexOptions?.index || 'custom'}).`);
   for (const chunk of chunks) {
     let before = Math.max(0, chunk.start - 200);
     let after = Math.min(text.length, chunk.end + 200);
@@ -63,10 +66,7 @@ async function extractChunkedDocument({ text, fields, indexOptions, extractChunk
       log(`Processing field ${fieldIndex + 1}/${fields.length} (selectedChunks=${selected.length}, table=${field.type === 'table'}).`);
       const candidates = [];
       const visited = new Set();
-      const processChunk = async (chunk) => {
-        visited.add(chunk.index);
-        log(`Processing field ${fieldIndex + 1}/${fields.length}, chunk ${chunk.index + 1}/${chunks.length}.`);
-        const result = await extractChunk(field, chunk);
+      const processResult = (chunk, result) => {
         addMetrics(metrics, result.metrics);
         if (field.type === 'table') {
           if (!Array.isArray(result.value)) throw new Error(`Invalid table extraction result for ${field.key}.`);
@@ -83,12 +83,23 @@ async function extractChunkedDocument({ text, fields, indexOptions, extractChunk
           candidates.push({ value: result.value, evidence: evidenceFor(chunk, result.evidence), confidence: result.confidence });
         }
       };
-      for (const chunk of selected) await processChunk(chunk);
+      const processChunks = async (items) => {
+        for (let offset = 0; offset < items.length; offset += batchSize) {
+          const batch = items.slice(offset, offset + batchSize);
+          const results = await Promise.allSettled(batch.map((chunk) => {
+            visited.add(chunk.index);
+            log(`Processing field ${fieldIndex + 1}/${fields.length}, chunk ${chunk.index + 1}/${chunks.length}.`);
+            return Promise.resolve().then(() => extractChunk(field, chunk));
+          }));
+          const failure = results.find((result) => result.status === 'rejected');
+          if (failure) throw failure.reason;
+          results.forEach((result, index) => processResult(batch[index], result.value));
+        }
+      };
+      await processChunks(selected);
       if (field.type !== 'table' && !candidates.length) {
         log(`No candidates in selected chunks for field ${fieldIndex + 1}; scanning remaining chunks.`);
-        for (const chunk of chunks) {
-          if (!visited.has(chunk.index)) await processChunk(chunk);
-        }
+        await processChunks(chunks.filter((chunk) => !visited.has(chunk.index)));
       }
       log(`Processed field ${fieldIndex + 1}/${fields.length} (visitedChunks=${visited.size}, candidates=${candidates.length}).`);
 

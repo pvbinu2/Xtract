@@ -679,6 +679,7 @@ function OperationsApp() {
     useOcrForDocumentProcessing: false,
     chunkedExtractionEnabled: false,
     chunkedExtractionThreshold: 24000,
+    chunkedExtractionBatchSize: 2,
     chunkedExtractionIndex: 'memory',
     documentIngestionTrigger: 'event-grid',
     ingestionFileTypes: [],
@@ -740,6 +741,7 @@ function OperationsApp() {
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
         chunkedExtractionEnabled: saved.chunkedExtractionEnabled === true,
         chunkedExtractionThreshold: Math.min(10000000, Math.max(1000, Number(saved.chunkedExtractionThreshold) || 24000)),
+        chunkedExtractionBatchSize: Math.min(16, Math.max(1, Number(saved.chunkedExtractionBatchSize) || 2)),
         chunkedExtractionIndex: saved.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
         documentIngestionTrigger: saved.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
         ingestionFileTypes: saved.ingestionFileTypes || [],
@@ -803,6 +805,7 @@ function OperationsApp() {
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
             chunkedExtractionEnabled: parsed.chunkedExtractionEnabled === true,
             chunkedExtractionThreshold: Math.min(10000000, Math.max(1000, Number(parsed.chunkedExtractionThreshold) || 24000)),
+            chunkedExtractionBatchSize: Math.min(16, Math.max(1, Number(parsed.chunkedExtractionBatchSize) || 2)),
             chunkedExtractionIndex: parsed.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
             documentIngestionTrigger: parsed.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
             ingestionFileTypes: parsed.ingestionFileTypes || [],
@@ -3585,6 +3588,7 @@ const pendingConfigurationFields: Array<{
   { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
   { key: 'chunkedExtractionEnabled', label: 'Chunked extraction' },
   { key: 'chunkedExtractionThreshold', label: 'Chunked extraction threshold' },
+  { key: 'chunkedExtractionBatchSize', label: 'Chunk extraction batch size' },
   { key: 'chunkedExtractionIndex', label: 'Chunked extraction index' },
   { key: 'documentIngestionTrigger', label: 'Document ingestion trigger' },
   { key: 'documentTextMode', label: 'Document text mode' },
@@ -4276,6 +4280,13 @@ function ConfigurationScreen({
                       <input type="number" min={1000} max={10000000} step={1}
                         value={config.chunkedExtractionThreshold}
                         onChange={(event) => onConfigChange({ ...config, chunkedExtractionThreshold: Number(event.target.value) })} />
+                    </label>
+                    <label className="document-processing-field">
+                      Chunk extraction batch size
+                      <input type="number" min={1} max={16} step={1}
+                        value={config.chunkedExtractionBatchSize}
+                        onChange={(event) => onConfigChange({ ...config, chunkedExtractionBatchSize: Number(event.target.value) })} />
+                      <small>Maximum parallel chunk extractions per document. Set to 1 for sequential processing.</small>
                     </label>
                     <label className="document-processing-field">
                       Chunk vector index

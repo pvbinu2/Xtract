@@ -23,6 +23,7 @@ export type AppConfigPayload = {
   useOcrForDocumentProcessing: boolean;
   chunkedExtractionEnabled: boolean;
   chunkedExtractionThreshold: number;
+  chunkedExtractionBatchSize: number;
   chunkedExtractionIndex: 'memory' | 'qdrant';
   documentIngestionTrigger: 'event-grid' | 'blob';
   ingestionFileTypes: Array<{

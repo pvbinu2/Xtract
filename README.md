@@ -281,6 +281,8 @@ Under **Configuration → Processing**, enable **Chunked extraction** to use hyb
 
 Chunked extraction uses the configured embedding provider and can increase processing time, model calls, and cost. Document text is sent to that provider to generate embeddings. Choose an in-memory vector index or the configured Qdrant service. Qdrant stores temporary vectors and identifiers, not raw chunk text; vectors can still be sensitive. Temporary collections are removed after processing, and collections left by interrupted workers are removed on a subsequent chunked Qdrant run after 24 hours. An embedding or vector-service failure marks the document as failed rather than silently switching strategies.
 
+Set **Chunk extraction batch size** to control parallel chunk extraction requests per document (1–16, default 2); 1 preserves sequential processing. Fields are processed sequentially, and the limit applies independently to each active document and Function host. Higher values can increase concurrent provider requests and rate limiting; document-level extraction concurrency remains a separate setting.
+
 Provision the `document-chunk-extraction` Service Bus queue before enabling this option. It is included in the repository's Azure messaging template and local Service Bus emulator configuration. Chunked and regular workers share the configured extraction concurrency limit within each Function host.
 
 Copy the tracked Function settings template before starting the worker:

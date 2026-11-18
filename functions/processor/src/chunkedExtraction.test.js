@@ -103,3 +103,63 @@ test('fails visibly rather than splitting an oversized Markdown table row', asyn
     createIndex: fakeIndex([0]).create, extractChunk: async () => ({ value: [], metrics }),
   }), /table row exceeds/);
 });
+
+test('limits concurrent chunk requests and preserves table row order despite out-of-order completion', async () => {
+  const text = `${'a'.repeat(4000)}${'b'.repeat(4000)}${'c'.repeat(4000)}${'d'.repeat(4000)}`;
+  let active = 0;
+  let peak = 0;
+  const completed = [];
+  const result = await extractChunkedDocument({
+    text,
+    fields: [{ key: 'items', label: 'Items', type: 'table' }],
+    batchSize: 2,
+    createIndex: fakeIndex([0]).create,
+    extractChunk: async (_, chunk) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, chunk.index % 2 === 0 ? 20 : 2));
+      active -= 1;
+      completed.push(chunk.index);
+      return { value: [{ value: { index: chunk.index }, evidence: chunk.text[0] }], metrics };
+    },
+  });
+  assert.equal(peak, 2);
+  assert.deepEqual(completed, [1, 0, 3, 2]);
+  assert.deepEqual(result.values[0].value.map((row) => row.index), [0, 1, 2, 3]);
+  assert.equal(result.metrics.inputTokens, 4);
+});
+
+test('waits for all in-flight requests before closing the index after a failure', async () => {
+  let release;
+  let closed = false;
+  let started;
+  const startedPromise = new Promise((resolve) => { started = resolve; });
+  const pending = new Promise((resolve) => { release = resolve; });
+  const operation = extractChunkedDocument({
+    text: 'a'.repeat(12000),
+    fields: [{ key: 'items', label: 'Items', type: 'table' }],
+    batchSize: 2,
+    createIndex: async () => ({ close: async () => { closed = true; } }),
+    extractChunk: (_, chunk) => {
+      if (chunk.index === 0) throw new Error('request failed');
+      started();
+      return pending.then(() => ({ value: [], metrics }));
+    },
+  });
+  await startedPromise;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, false);
+  release();
+  await assert.rejects(operation, /request failed/);
+  assert.equal(closed, true);
+});
+
+test('rejects invalid batch sizes before creating an index', async () => {
+  for (const batchSize of [0, 17, 1.5]) {
+    await assert.rejects(extractChunkedDocument({
+      text: 'text', fields: [field], batchSize,
+      createIndex: async () => { throw new Error('must not create index'); },
+      extractChunk: async () => ({}),
+    }), /batch size must be an integer between 1 and 16/);
+  }
+});

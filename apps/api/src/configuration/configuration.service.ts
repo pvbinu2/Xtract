@@ -45,6 +45,7 @@ export class ConfigurationService {
       useOcrForDocumentProcessing: false,
       chunkedExtractionEnabled: false,
       chunkedExtractionThreshold: 24000,
+      chunkedExtractionBatchSize: 2,
       chunkedExtractionIndex: 'memory',
       documentIngestionTrigger: 'event-grid',
       ingestionFileTypes: DEFAULT_INGESTION_FILE_TYPES,
@@ -87,6 +88,8 @@ export class ConfigurationService {
       chunkedExtractionEnabled: config?.chunkedExtractionEnabled === true,
       chunkedExtractionThreshold: Number.isInteger(config?.chunkedExtractionThreshold) && config.chunkedExtractionThreshold >= 1000 && config.chunkedExtractionThreshold <= 10000000
         ? config.chunkedExtractionThreshold : defaults.chunkedExtractionThreshold,
+      chunkedExtractionBatchSize: Number.isInteger(config?.chunkedExtractionBatchSize) && config.chunkedExtractionBatchSize >= 1 && config.chunkedExtractionBatchSize <= 16
+        ? config.chunkedExtractionBatchSize : defaults.chunkedExtractionBatchSize,
       chunkedExtractionIndex: config?.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
       documentIngestionTrigger: config?.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
       ingestionFileTypes: normalizeIngestionFileTypes(config?.ingestionFileTypes),
@@ -192,6 +195,7 @@ export class ConfigurationService {
     useOcrForDocumentProcessing?: boolean;
     chunkedExtractionEnabled?: boolean;
     chunkedExtractionThreshold?: number;
+    chunkedExtractionBatchSize?: number;
     chunkedExtractionIndex?: 'memory' | 'qdrant';
     documentIngestionTrigger?: 'event-grid' | 'blob';
     ingestionFileTypes?: IngestionFileType[];
@@ -224,6 +228,9 @@ export class ConfigurationService {
     }
     if (config.chunkedExtractionIndex !== undefined && !['memory', 'qdrant'].includes(config.chunkedExtractionIndex)) {
       throw new BadRequestException('Chunked extraction index must be memory or qdrant.');
+    }
+    if (config.chunkedExtractionBatchSize !== undefined && (!Number.isInteger(config.chunkedExtractionBatchSize) || config.chunkedExtractionBatchSize < 1 || config.chunkedExtractionBatchSize > 16)) {
+      throw new BadRequestException('Chunked extraction batch size must be an integer between 1 and 16.');
     }
     const deploymentMode = config.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted';
     const subscriptionPlanName = config.subscriptionPlanName?.trim().slice(0, 80) || 'Growth';
@@ -330,6 +337,7 @@ export class ConfigurationService {
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
           chunkedExtractionEnabled: config.chunkedExtractionEnabled === true,
           chunkedExtractionThreshold: config.chunkedExtractionThreshold ?? 24000,
+          chunkedExtractionBatchSize: config.chunkedExtractionBatchSize ?? existing?.chunkedExtractionBatchSize ?? 2,
           chunkedExtractionIndex: config.chunkedExtractionIndex ?? 'memory',
           documentIngestionTrigger,
           ingestionFileTypes,

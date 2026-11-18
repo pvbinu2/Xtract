@@ -532,7 +532,7 @@ async function extractChunkField(document, documentType, field, chunk, aiOptions
   };
 }
 
-async function extractChunkedValues(document, documentType, documentText, textMode, aiOptions, index, context) {
+async function extractChunkedValues(document, documentType, documentText, textMode, aiOptions, index, batchSize, context) {
   if (providerName(aiOptions) !== 'ollama' && !getOpenAI(aiOptions)) {
     throw new Error('An AI provider must be configured for chunked extraction.');
   }
@@ -544,6 +544,7 @@ async function extractChunkedValues(document, documentType, documentText, textMo
   const result = await extractChunkedDocument({
     text: documentText,
     fields: (documentType.fields || []).filter((field) => field.selected),
+    batchSize,
     log: (message) => context.info(message),
     indexOptions: {
       index,
@@ -707,7 +708,7 @@ async function extractQueuedDocument(message, context, chunked = false) {
       return;
     }
     const extraction = chunked
-      ? await extractChunkedValues(localDocument, effectiveDocumentType, preparedText, preparedTextMode, extractionAiOptions, payload.chunkedExtractionIndex, context)
+      ? await extractChunkedValues(localDocument, effectiveDocumentType, preparedText, preparedTextMode, extractionAiOptions, payload.chunkedExtractionIndex, configuration?.chunkedExtractionBatchSize ?? 2, context)
       : await extractValuesWithOpenAI(
         localDocument,
         effectiveDocumentType,

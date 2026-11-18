@@ -79,6 +79,9 @@ export class Configuration {
   @Prop({ default: 24000, min: 1000, max: 10000000 })
   chunkedExtractionThreshold!: number;
 
+  @Prop({ default: 2, min: 1, max: 16 })
+  chunkedExtractionBatchSize!: number;
+
   @Prop({ default: 'memory', enum: ['memory', 'qdrant'] })
   chunkedExtractionIndex!: 'memory' | 'qdrant';
 
