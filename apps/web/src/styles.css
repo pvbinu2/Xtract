@@ -6291,6 +6291,20 @@ textarea {
   font-weight: 800;
 }
 
+.classification-setting-fields > .checkbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.classification-setting-fields > .checkbox-row > input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+}
+
 .classification-setting-fields .model-controls {
   min-width: 0;
   max-width: 100%;

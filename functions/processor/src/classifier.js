@@ -626,6 +626,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
     ? options.classificationMode
     : 'vector';
   const ragTopK = Math.min(50, Math.max(1, Number(options.ragTopK) || 5));
+  const lowConfidenceThreshold = Math.min(1, Math.max(0.01, (Number(options.lowConfidenceThreshold) || 60) / 100));
   const textOptions = {
     mode: options.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
     markdownServiceUrl: options.markdownServiceUrl,
@@ -671,7 +672,14 @@ async function classifyDocument(document, documentTypes, options = {}) {
     rankedDocumentTypes.push({ documentType, hit });
   }
 
-  if (classificationMode === 'vector' && !largeDocument) {
+  const topVectorScore = rankedDocumentTypes.length ? clampScore(rankedDocumentTypes[0].hit.score) : 0;
+  const lowConfidenceFallback = Boolean(options.lowConfidenceFallbackEnabled) &&
+    classificationMode !== 'llm' && !largeDocument && topVectorScore < lowConfidenceThreshold;
+  if (lowConfidenceFallback) {
+    getFunctionLogger()?.write('info', `Top vector score ${(topVectorScore * 100).toFixed(2)}% is below ${(lowConfidenceThreshold * 100).toFixed(0)}%; sending all document types to the LLM.`);
+  }
+
+  if (classificationMode === 'vector' && !largeDocument && !lowConfidenceFallback) {
     const topResult = rankedDocumentTypes[0];
     if (!topResult) {
       throw new Error('Vector classification returned no trained document type. Train the classifier and verify the embedding provider configuration.');
@@ -695,10 +703,11 @@ async function classifyDocument(document, documentTypes, options = {}) {
   }
 
   const selectedRankedTypes = largeDocument ? rankedDocumentTypes : rankedDocumentTypes.slice(0, ragTopK);
-  const llmCandidates = classificationMode === 'rag' || largeDocument
+  const useRetrievedCandidates = !lowConfidenceFallback && (classificationMode === 'rag' || largeDocument);
+  const llmCandidates = useRetrievedCandidates
     ? selectedRankedTypes.map(({ documentType }) => documentType)
     : candidates;
-  const classificationCandidates = classificationMode === 'rag' || largeDocument
+  const classificationCandidates = useRetrievedCandidates
     ? selectedRankedTypes.map(({ documentType: candidate, hit }) => ({
       documentTypeId: String(candidate._id),
       category: candidate.category,
@@ -724,7 +733,8 @@ async function classifyDocument(document, documentTypes, options = {}) {
     const useDocumentText = largeDocument || typeof options.preparedText === 'string' ||
       useOcr ||
       providerName(options) === 'ollama' ||
-      classificationMode === 'rag';
+      classificationMode === 'rag' ||
+      lowConfidenceFallback;
     let documentText = '';
     if (useDocumentText) {
       if (largeDocument) documentText = fullText;
@@ -775,7 +785,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
           ...llmCandidates.map((candidate, index) => (
             `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}${largeDocument ? '' : `; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`}`
           )),
-          classificationMode === 'rag' || largeDocument
+          useRetrievedCandidates
             ? `RAG retrieval results: ${selectedRankedTypes.map(({ documentType: candidate, hit }) => `${candidate._id} score=${Number(hit.score).toFixed(3)}`).join('; ')}`
             : 'All configured document types were provided for classification.',
         ].join('\n'),
@@ -806,7 +816,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
     return {
       documentType: selected || llmCandidates[0],
       score: Number(clampScore(parsed.score).toFixed(2)),
-      method: classificationMode === 'rag' || largeDocument ? 'rag' : 'llm',
+      method: useRetrievedCandidates ? 'rag' : 'llm',
       model: response.model,
       justification: typeof parsed.justification === 'string' && parsed.justification.trim()
         ? parsed.justification.trim().slice(0, 2000)

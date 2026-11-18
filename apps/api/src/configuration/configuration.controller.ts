@@ -60,6 +60,8 @@ export class ConfigurationController {
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       classificationMode?: 'vector' | 'llm' | 'rag';
       classificationRagTopK?: number;
+      classificationLowConfidenceFallbackEnabled?: boolean;
+      classificationLowConfidenceThreshold?: number;
       preprocessingConcurrency?: number;
       vectorClassificationConcurrency?: number;
       llmClassificationConcurrency?: number;

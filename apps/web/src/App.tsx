@@ -708,6 +708,8 @@ function OperationsApp() {
     classificationReasoningEffort: 'low',
     classificationMode: 'vector',
     classificationRagTopK: 5,
+    classificationLowConfidenceFallbackEnabled: false,
+    classificationLowConfidenceThreshold: 60,
     preprocessingConcurrency: 4,
     vectorClassificationConcurrency: 4,
     llmClassificationConcurrency: 1,
@@ -772,6 +774,8 @@ function OperationsApp() {
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
         classificationMode: saved.classificationMode === 'llm' || saved.classificationMode === 'rag' ? saved.classificationMode : 'vector',
         classificationRagTopK: Math.min(50, Math.max(1, Number(saved.classificationRagTopK) || 5)),
+        classificationLowConfidenceFallbackEnabled: Boolean(saved.classificationLowConfidenceFallbackEnabled),
+        classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(saved.classificationLowConfidenceThreshold) || 60)),
         preprocessingConcurrency: Math.min(16, Math.max(1, Number(saved.preprocessingConcurrency) || 4)),
         vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.vectorClassificationConcurrency) || 4)),
         llmClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.llmClassificationConcurrency) || 1)),
@@ -834,6 +838,8 @@ function OperationsApp() {
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
             classificationMode: parsed.classificationMode === 'llm' || parsed.classificationMode === 'rag' ? parsed.classificationMode : 'vector',
             classificationRagTopK: Math.min(50, Math.max(1, Number(parsed.classificationRagTopK) || 5)),
+            classificationLowConfidenceFallbackEnabled: Boolean(parsed.classificationLowConfidenceFallbackEnabled),
+            classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(parsed.classificationLowConfidenceThreshold) || 60)),
             preprocessingConcurrency: Math.min(16, Math.max(1, Number(parsed.preprocessingConcurrency) || 4)),
             vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.vectorClassificationConcurrency) || 4)),
             llmClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.llmClassificationConcurrency) || 1)),
@@ -3550,6 +3556,36 @@ function ClassificationModeControls({
           />
         </label>
       )}
+      {config.classificationMode !== 'llm' && (
+        <>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={config.classificationLowConfidenceFallbackEnabled}
+              onChange={(event) => onConfigChange({
+                ...config,
+                classificationLowConfidenceFallbackEnabled: event.target.checked,
+              })}
+            />
+            <span>Send all types to LLM when top vector score is low</span>
+          </label>
+          {config.classificationLowConfidenceFallbackEnabled && (
+            <label>
+              Low-confidence threshold (%)
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={config.classificationLowConfidenceThreshold}
+                onChange={(event) => onConfigChange({
+                  ...config,
+                  classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(event.target.value) || 1)),
+                })}
+              />
+            </label>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -3579,6 +3615,8 @@ const pendingConfigurationFields: Array<{
   { key: 'classificationReasoningEffort', label: 'Reasoning effort' },
   { key: 'classificationMode', label: 'Classification mode' },
   { key: 'classificationRagTopK', label: 'RAG results' },
+  { key: 'classificationLowConfidenceFallbackEnabled', label: 'Low-confidence LLM fallback' },
+  { key: 'classificationLowConfidenceThreshold', label: 'Low-confidence threshold' },
   { key: 'preprocessingConcurrency', label: 'Preprocessing concurrency' },
   { key: 'vectorClassificationConcurrency', label: 'Vector classification concurrency' },
   { key: 'llmClassificationConcurrency', label: 'LLM classification concurrency' },

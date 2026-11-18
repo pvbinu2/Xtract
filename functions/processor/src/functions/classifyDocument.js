@@ -101,6 +101,8 @@ async function classifyQueuedDocument(message, context) {
           reasoningEffort: configuration?.classificationReasoningEffort,
           classificationMode: configuration?.classificationMode,
           ragTopK: configuration?.classificationRagTopK,
+          lowConfidenceFallbackEnabled: configuration?.classificationLowConfidenceFallbackEnabled,
+          lowConfidenceThreshold: configuration?.classificationLowConfidenceThreshold,
           documentTextMode: document.textArtifactMode || textOptions.mode,
           markdownServiceUrl: textOptions.markdownServiceUrl,
           preparedText,

@@ -55,6 +55,8 @@ export type AppConfigPayload = {
   classificationReasoningEffort: ReasoningEffort;
   classificationMode: 'vector' | 'llm' | 'rag';
   classificationRagTopK: number;
+  classificationLowConfidenceFallbackEnabled: boolean;
+  classificationLowConfidenceThreshold: number;
   preprocessingConcurrency: number;
   vectorClassificationConcurrency: number;
   llmClassificationConcurrency: number;

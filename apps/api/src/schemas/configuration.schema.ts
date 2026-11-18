@@ -151,6 +151,12 @@ export class Configuration {
   @Prop({ default: 5, min: 1, max: 50 })
   classificationRagTopK!: number;
 
+  @Prop({ default: false })
+  classificationLowConfidenceFallbackEnabled!: boolean;
+
+  @Prop({ default: 60, min: 1, max: 100 })
+  classificationLowConfidenceThreshold!: number;
+
   @Prop({ default: 4, min: 1, max: 16 })
   preprocessingConcurrency!: number;
 

@@ -64,6 +64,8 @@ export class ConfigurationService {
       classificationReasoningEffort: 'low',
       classificationMode: 'vector',
       classificationRagTopK: 5,
+      classificationLowConfidenceFallbackEnabled: false,
+      classificationLowConfidenceThreshold: 60,
       preprocessingConcurrency: 4,
       vectorClassificationConcurrency: 4,
       llmClassificationConcurrency: 1,
@@ -109,6 +111,8 @@ export class ConfigurationService {
         ? config?.classificationMode
         : defaults.classificationMode,
       classificationRagTopK: Math.min(50, Math.max(1, Number(config?.classificationRagTopK) || defaults.classificationRagTopK)),
+      classificationLowConfidenceFallbackEnabled: Boolean(config?.classificationLowConfidenceFallbackEnabled),
+      classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(config?.classificationLowConfidenceThreshold) || defaults.classificationLowConfidenceThreshold)),
       preprocessingConcurrency: Math.min(16, Math.max(1, Number(config?.preprocessingConcurrency) || defaults.preprocessingConcurrency)),
       vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(config?.vectorClassificationConcurrency) || defaults.vectorClassificationConcurrency)),
       llmClassificationConcurrency: Math.min(16, Math.max(1, Number(config?.llmClassificationConcurrency) || defaults.llmClassificationConcurrency)),
@@ -218,6 +222,8 @@ export class ConfigurationService {
     classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     classificationMode?: 'vector' | 'llm' | 'rag';
     classificationRagTopK?: number;
+    classificationLowConfidenceFallbackEnabled?: boolean;
+    classificationLowConfidenceThreshold?: number;
     preprocessingConcurrency?: number;
     vectorClassificationConcurrency?: number;
     llmClassificationConcurrency?: number;
@@ -253,6 +259,8 @@ export class ConfigurationService {
       ? config.classificationMode
       : 'vector';
     const classificationRagTopK = Math.min(50, Math.max(1, Number(config.classificationRagTopK) || 5));
+    const classificationLowConfidenceFallbackEnabled = Boolean(config.classificationLowConfidenceFallbackEnabled);
+    const classificationLowConfidenceThreshold = Math.min(100, Math.max(1, Number(config.classificationLowConfidenceThreshold) || 60));
     const preprocessingConcurrency = Math.min(16, Math.max(1, Number(config.preprocessingConcurrency) || 4));
     const vectorClassificationConcurrency = Math.min(16, Math.max(1, Number(config.vectorClassificationConcurrency) || 4));
     const llmClassificationConcurrency = Math.min(16, Math.max(1, Number(config.llmClassificationConcurrency) || 1));
@@ -359,6 +367,8 @@ export class ConfigurationService {
           classificationReasoningEffort: config.classificationReasoningEffort || 'low',
           classificationMode,
           classificationRagTopK,
+          classificationLowConfidenceFallbackEnabled,
+          classificationLowConfidenceThreshold,
           preprocessingConcurrency,
           vectorClassificationConcurrency,
           llmClassificationConcurrency,
