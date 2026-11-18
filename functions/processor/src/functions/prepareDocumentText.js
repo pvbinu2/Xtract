@@ -158,15 +158,15 @@ async function prepareDocumentText(message, context) {
     }
 
     const { documentTextMode, textOptions } = processingOptionsFor(document, configuration);
-    context.info(`Preparing document text (mode=${documentTextMode}, complete=${configuration?.chunkedExtractionEnabled === true}).`);
+    context.info(`Preparing document text (mode=${documentTextMode}, complete=true).`);
     localFilePath = await resolveDocumentFile(document, configuration);
     const excelDocument = isExcelDocument(document);
     const pageCount = excelDocument
       ? 1
       : Math.max(1, (await PDFDocument.load(await fs.readFile(localFilePath))).getPageCount());
     const workbook = excelDocument ? parseWorkbook(await fs.readFile(localFilePath)) : undefined;
-    const completeText = configuration?.chunkedExtractionEnabled === true && !excelDocument;
-    const content = workbook ? { text: workbook.text } : await extractDocumentContent(localFilePath, completeText ? Infinity : undefined, {
+    const completeText = !excelDocument;
+    const content = workbook ? { text: workbook.text } : await extractDocumentContent(localFilePath, Infinity, {
       ...textOptions,
       documentId: String(document._id),
       fileName: document.convertedToPdf

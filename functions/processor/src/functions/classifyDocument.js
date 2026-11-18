@@ -4,6 +4,8 @@ const { withClassificationConcurrency } = require('../aiConcurrency');
 const { withFunctionLogging } = require('../functionLogger');
 const { publishDocumentChanged } = require('../documentEvents');
 const { getConfiguration } = require('../configurationCache');
+const { extractDocumentContent } = require('../documentText');
+const { isExcelDocument } = require('../workbook');
 const {
   ObjectId,
   getClient,
@@ -81,12 +83,16 @@ async function classifyQueuedDocument(message, context) {
     if (!documentType) {
       context.info(`Classifying document (mode=${configuration?.classificationMode || 'default'}).`);
       const localFilePath = await resolveDocumentFile(document, configuration);
-      const fullPreparedText = await resolvePreparedDocumentText(document, configuration);
-      const preparedText = document.textArtifactComplete
-        ? fullPreparedText.slice(0, Number(process.env.DOCUMENT_TEXT_LIMIT || 60000))
-        : fullPreparedText;
       const localDocument = { ...document, filePath: localFilePath };
       try {
+        const preparedText = document.textArtifactComplete || isExcelDocument(document)
+          ? await resolvePreparedDocumentText(document, configuration)
+          : (await extractDocumentContent(localFilePath, Infinity, {
+            ...textOptions,
+            mode: document.textArtifactMode || textOptions.mode,
+            documentId: String(document._id),
+            fileName: document.originalName || document.fileName,
+          })).text;
         const allDocumentTypes = await documentTypes.find({ finalized: true }).toArray();
         const classification = await classifyDocument(localDocument, allDocumentTypes, {
           ...aiOptions,

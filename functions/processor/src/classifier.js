@@ -3,6 +3,8 @@ const path = require('path');
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { withOpenAIRetry } = require('./openaiRetry');
+const { withLlmClassificationConcurrency } = require('./aiConcurrency');
+const { getFunctionLogger } = require('./functionLogger');
 const { QdrantVectorDatabase } = require('@xtract/common');
 const { TRAIN_CONTAINER, downloadToTemp, isConfigured: isBlobStorageConfigured, removeTempFile } = require('./blobStorage');
 
@@ -63,6 +65,7 @@ async function createJsonResponse(content, options = {}, label = 'AI request') {
         model,
         stream: false,
         format: 'json',
+        ...(options.classificationContext ? { options: { num_ctx: options.classificationContext } } : {}),
         messages: [{
           role: 'user',
           content: content.map((item) => typeof item.text === 'string' ? item.text : '').filter(Boolean).join('\n'),
@@ -350,11 +353,16 @@ async function embedText(text, options = {}) {
       body: JSON.stringify({
         model,
         input: text || 'empty document',
+        ...(options.rejectTruncation ? { truncate: false } : {}),
       }),
     });
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`Ollama embedding request failed (${response.status}): ${message || response.statusText}`);
+      const error = new Error(`Ollama embedding request failed (${response.status}): ${message || response.statusText}`);
+      if (options.rejectTruncation && response.status === 400 && /input length exceeds (?:the )?maximum context length/i.test(message)) {
+        error.code = 'embedding_context_exceeded';
+      }
+      throw error;
     }
     const payload = await response.json();
     const embedding = Array.isArray(payload?.embeddings?.[0]) ? payload.embeddings[0] : payload?.embedding;
@@ -375,6 +383,114 @@ async function embedText(text, options = {}) {
     embedding: response.data[0].embedding,
     metrics: embeddingMetricsFromResponse(response, model),
   };
+}
+
+function isEmbeddingContextExceeded(error) {
+  return error?.code === 'embedding_context_exceeded' || error?.code === 'context_length_exceeded' ||
+    (error?.status === 400 && /maximum context length|maximum number of tokens|too many tokens/i.test(error?.message || ''));
+}
+
+async function embedDocumentChunks(text, options) {
+  const pending = [text || 'empty document'];
+  const chunks = [];
+  let wasSplit = false;
+  while (pending.length) {
+    const chunk = pending.shift();
+    try {
+      chunks.push({ text: chunk, ...await embedText(chunk, { ...options, rejectTruncation: true }) });
+    } catch (error) {
+      if (!isEmbeddingContextExceeded(error)) throw error;
+      let midpoint = Math.floor(chunk.length / 2);
+      if (midpoint && /[\uD800-\uDBFF]/.test(chunk[midpoint - 1]) && /[\uDC00-\uDFFF]/.test(chunk[midpoint])) midpoint -= 1;
+      if (!midpoint || midpoint === chunk.length) throw error;
+      wasSplit = true;
+      pending.unshift(chunk.slice(0, midpoint), chunk.slice(midpoint));
+    }
+  }
+  return { chunks, wasSplit };
+}
+
+async function searchEmbeddedChunks(chunks, options, resultLimit) {
+  const hitsByPoint = new Map();
+  let metrics = emptyMetrics(embeddingModelName(options));
+  let ensuredVectorSize = 0;
+  for (const chunk of chunks) {
+    if (!ensuredVectorSize) {
+      ensuredVectorSize = chunk.embedding.length;
+      await ensureVectorCollection(ensuredVectorSize, options);
+    }
+    metrics = addMetrics(metrics, chunk.metrics);
+    const hits = await vectorDatabase(options).search(chunk.embedding, resultLimit);
+    for (const hit of hits) {
+      const existing = hitsByPoint.get(hit.id);
+      if (!existing || hit.score > existing.score) hitsByPoint.set(hit.id, hit);
+    }
+  }
+  return { hits: Array.from(hitsByPoint.values()).sort((a, b) => b.score - a.score), metrics };
+}
+
+function splitByBytes(text, maxBytes) {
+  const chunks = [];
+  let chunk = '';
+  let size = 0;
+  for (const character of text) {
+    const bytes = Buffer.byteLength(character);
+    if (size + bytes > maxBytes && chunk) {
+      chunks.push(chunk);
+      chunk = '';
+      size = 0;
+    }
+    chunk += character;
+    size += bytes;
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
+}
+
+async function classificationContext(options) {
+  if (providerName(options) !== 'ollama') return 8192;
+  const response = await fetch(`${ollamaBaseUrl(options)}/api/show`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: ollamaModelName(options) }),
+  });
+  if (!response.ok) throw new Error(`Could not determine Ollama classification model context (${response.status}).`);
+  const model = await response.json();
+  const architecture = model.model_info?.['general.architecture'];
+  const limit = model.model_info?.[`${architecture}.context_length`];
+  if (!Number.isInteger(limit) || limit < 2048) {
+    throw new Error('Ollama classification model does not expose a usable context window.');
+  }
+  return Math.min(limit, 8192);
+}
+
+async function summarizeClassificationText(text, options, contextSize) {
+  const pieceBytes = Math.min(3000, contextSize - 1400);
+  const summaryBytes = Math.min(800, Math.floor(pieceBytes / 3));
+  let pieces = splitByBytes(text, pieceBytes);
+  let metrics = emptyMetrics('');
+  do {
+    const summaries = [];
+    for (const piece of pieces) {
+      const response = await createJsonResponse([{
+        type: 'input_text',
+        text: `Summarize this document section for document-type classification. Preserve distinctive evidence and return JSON with a "summary" string of at most ${Math.floor(summaryBytes / 4)} characters.\n\n${piece}`,
+      }], { ...options, classificationContext: contextSize }, 'Large document classification summary');
+      if (!response) throw new Error('An AI provider must be configured for large-document classification.');
+      const summary = parseJsonObject(response.outputText).summary;
+      if (typeof summary !== 'string' || !summary.trim() || Buffer.byteLength(summary) > summaryBytes) {
+        throw new Error('The classification model returned an invalid or oversized document summary.');
+      }
+      metrics = addMetrics(metrics, metricsFromResponse(response.raw, response.model));
+      summaries.push(summary.trim());
+    }
+    const combined = summaries.join('\n');
+    pieces = splitByBytes(combined, pieceBytes);
+    if (pieces.length >= summaries.length && pieces.length > 1) {
+      throw new Error('Classification summaries could not be reduced to fit the model context.');
+    }
+  } while (pieces.length > 1);
+  return { text: pieces[0] || '', metrics };
 }
 
 async function deleteDocumentTypeVectors(documentTypeId, options = {}) {
@@ -516,21 +632,31 @@ async function classifyDocument(document, documentTypes, options = {}) {
   };
   let vectorHits = [];
   let embeddingMetrics = emptyMetrics(embeddingModelName(options));
+  let largeDocument = false;
+  let fullText;
   const needsVectorSearch = classificationMode === 'vector' || classificationMode === 'rag';
   if (needsVectorSearch && (embeddingProviderName(options) === 'ollama' || options.apiKey)) {
     try {
-      const vectorSearch = await searchDocumentTypeVectors(
-        document,
-        textOptions,
-        options,
-        classificationMode === 'rag'
-          ? Math.max(ragTopK * 3, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5))
-          : Math.max(9, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5)),
-      );
+      fullText = typeof options.preparedText === 'string'
+        ? options.preparedText
+        : await extractDocumentText(document.filePath, Infinity, {
+          ...textOptions, documentId: String(document._id), fileName: document.originalName || document.fileName,
+        });
+      const embedded = await embedDocumentChunks(fullText, options);
+      largeDocument = embedded.wasSplit;
+      const resultLimit = classificationMode === 'rag'
+        ? Math.max(ragTopK * 3, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5))
+        : Math.max(9, Number(process.env.CLASSIFIER_VECTOR_LIMIT || 5));
+      const vectorSearch = largeDocument
+        ? await searchEmbeddedChunks(embedded.chunks, options, resultLimit)
+        : await searchDocumentTypeVectors(document, textOptions, { ...options, preparedText: fullText }, resultLimit);
+      if (largeDocument) getFunctionLogger()?.write('info', `Classified document vector chunks (count=${embedded.chunks.length}).`);
       vectorHits = vectorSearch.hits;
-      embeddingMetrics = vectorSearch.metrics;
+      embeddingMetrics = largeDocument
+        ? vectorSearch.metrics
+        : addMetrics(embedded.chunks[0].metrics, vectorSearch.metrics);
     } catch (error) {
-      vectorHits = [];
+      throw new Error(`Vector classification failed: ${error?.message || String(error)}`, { cause: error });
     }
   }
 
@@ -545,7 +671,7 @@ async function classifyDocument(document, documentTypes, options = {}) {
     rankedDocumentTypes.push({ documentType, hit });
   }
 
-  if (classificationMode === 'vector') {
+  if (classificationMode === 'vector' && !largeDocument) {
     const topResult = rankedDocumentTypes[0];
     if (!topResult) {
       throw new Error('Vector classification returned no trained document type. Train the classifier and verify the embedding provider configuration.');
@@ -568,11 +694,12 @@ async function classifyDocument(document, documentTypes, options = {}) {
     };
   }
 
-  const llmCandidates = classificationMode === 'rag'
-    ? rankedDocumentTypes.slice(0, ragTopK).map(({ documentType }) => documentType)
+  const selectedRankedTypes = largeDocument ? rankedDocumentTypes : rankedDocumentTypes.slice(0, ragTopK);
+  const llmCandidates = classificationMode === 'rag' || largeDocument
+    ? selectedRankedTypes.map(({ documentType }) => documentType)
     : candidates;
-  const classificationCandidates = classificationMode === 'rag'
-    ? rankedDocumentTypes.slice(0, ragTopK).map(({ documentType: candidate, hit }) => ({
+  const classificationCandidates = classificationMode === 'rag' || largeDocument
+    ? selectedRankedTypes.map(({ documentType: candidate, hit }) => ({
       documentTypeId: String(candidate._id),
       category: candidate.category,
       name: candidate.name,
@@ -582,85 +709,114 @@ async function classifyDocument(document, documentTypes, options = {}) {
   if (!llmCandidates.length) {
     throw new Error('RAG classification returned no trained document types. Train the classifier and verify the embedding provider configuration.');
   }
-  if (providerName(options) !== 'ollama' && !getOpenAI(options)) {
+  async function classifyWithModel() {
+    if (providerName(options) !== 'ollama' && !getOpenAI(options)) {
+      if (largeDocument || (classificationMode === 'llm' && typeof options.preparedText === 'string' &&
+        options.preparedText.length > Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000))) {
+        throw new Error('An AI provider must be configured for large-document classification.');
+      }
+      return {
+        ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
+        classificationCandidates,
+      };
+    }
+
+    const useDocumentText = largeDocument || typeof options.preparedText === 'string' ||
+      useOcr ||
+      providerName(options) === 'ollama' ||
+      classificationMode === 'rag';
+    let documentText = '';
+    if (useDocumentText) {
+      if (largeDocument) documentText = fullText;
+      else if (typeof options.preparedText === 'string') {
+        documentText = classificationMode === 'llm'
+          ? options.preparedText
+          : options.preparedText.slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
+      } else {
+        documentText = await extractDocumentText(document.filePath, classificationMode === 'llm' ? Infinity : Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
+          ...textOptions,
+          documentId: String(document._id),
+          fileName: document.originalName || document.fileName,
+        });
+      }
+    }
+    const needsSummary = largeDocument || (classificationMode === 'llm' && documentText.length > Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000));
+    let summaryMetrics = emptyMetrics('');
+    let contextSize;
+    if (needsSummary) {
+      contextSize = await classificationContext(options);
+      const summary = await summarizeClassificationText(documentText, options, contextSize);
+      documentText = summary.text;
+      summaryMetrics = summary.metrics;
+    }
+    const requestConfig = openAIRequestConfig({
+      model: options.model,
+      reasoningEffort: options.reasoningEffort,
+      aiProvider: options.aiProvider,
+      ollamaBaseUrl: options.ollamaBaseUrl,
+      ollamaModel: options.ollamaModel,
+    });
+    const content = [
+      ...(useDocumentText || providerName(options) === 'ollama' ? [] : [pdfInput(document.filePath)]),
+      {
+        type: 'input_text',
+        text: [
+          useDocumentText
+            ? `Classify the uploaded document using ${textOptions.mode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text'}, trained document type profiles, and metadata.`
+            : 'Classify the uploaded PDF using trained document type profiles and metadata.',
+          'Choose exactly one candidate document type. Return JSON only.',
+          'The score must be a number from 0 to 1 representing match strength.',
+          'The justification must concisely identify the document evidence that supports the selected type.',
+          'Return this exact shape:',
+          '{"documentTypeId":"candidate_id","score":0.92,"justification":"Concise evidence-based reason for choosing this type"}',
+          `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
+          useDocumentText ? `Document text:\n${documentText}` : '',
+          'Candidates:',
+          ...llmCandidates.map((candidate, index) => (
+            `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}${largeDocument ? '' : `; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`}`
+          )),
+          classificationMode === 'rag' || largeDocument
+            ? `RAG retrieval results: ${selectedRankedTypes.map(({ documentType: candidate, hit }) => `${candidate._id} score=${Number(hit.score).toFixed(3)}`).join('; ')}`
+            : 'All configured document types were provided for classification.',
+        ].join('\n'),
+      },
+    ];
+
+    if (needsSummary && Buffer.byteLength(content[0].text) > contextSize - 1400) {
+      throw new Error('The combined classification candidates exceed the available model context.');
+    }
+    const response = await createJsonResponse(content, {
+      ...options,
+      model: requestConfig.model,
+      ...(needsSummary ? { classificationContext: contextSize } : {}),
+    }, `${classificationMode === 'rag' ? 'RAG' : 'LLM'} classifier for ${document._id || document.fileName}`);
+    if (!response) {
+      return {
+        ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
+        classificationCandidates,
+      };
+    }
+    const classificationMetrics = needsSummary
+      ? addMetrics(summaryMetrics, metricsFromResponse(response.raw, response.model))
+      : metricsFromResponse(response.raw, response.model);
+
+    const parsed = parseJsonObject(response.outputText);
+    const selected = llmCandidates.find((candidate) => String(candidate._id) === parsed.documentTypeId);
+    if (!selected && needsSummary) throw new Error('The classification model returned an unknown document type.');
     return {
-      ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
+      documentType: selected || llmCandidates[0],
+      score: Number(clampScore(parsed.score).toFixed(2)),
+      method: classificationMode === 'rag' || largeDocument ? 'rag' : 'llm',
+      model: response.model,
+      justification: typeof parsed.justification === 'string' && parsed.justification.trim()
+        ? parsed.justification.trim().slice(0, 2000)
+        : `The LLM selected ${(selected || llmCandidates[0]).name} as the closest match among the candidate document types.`,
       classificationCandidates,
+      classificationMetrics,
+      embeddingMetrics,
     };
   }
-
-  const useDocumentText = typeof options.preparedText === 'string' ||
-    useOcr ||
-    providerName(options) === 'ollama' ||
-    classificationMode === 'rag';
-  const documentText = useDocumentText
-    ? typeof options.preparedText === 'string'
-      ? options.preparedText.slice(0, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000))
-      : await extractDocumentText(document.filePath, Number(process.env.CLASSIFIER_TEXT_LIMIT || 36000), {
-        ...textOptions,
-        documentId: String(document._id),
-        fileName: document.originalName || document.fileName,
-      })
-    : '';
-  const requestConfig = openAIRequestConfig({
-    model: options.model,
-    reasoningEffort: options.reasoningEffort,
-    aiProvider: options.aiProvider,
-    ollamaBaseUrl: options.ollamaBaseUrl,
-    ollamaModel: options.ollamaModel,
-  });
-  const content = [
-    ...(useDocumentText || providerName(options) === 'ollama' ? [] : [pdfInput(document.filePath)]),
-    {
-      type: 'input_text',
-      text: [
-        useDocumentText
-          ? `Classify the uploaded document using ${textOptions.mode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text'}, trained document type profiles, and metadata.`
-          : 'Classify the uploaded PDF using trained document type profiles and metadata.',
-        'Choose exactly one candidate document type. Return JSON only.',
-        'The score must be a number from 0 to 1 representing match strength.',
-        'The justification must concisely identify the document evidence that supports the selected type.',
-        'Return this exact shape:',
-        '{"documentTypeId":"candidate_id","score":0.92,"justification":"Concise evidence-based reason for choosing this type"}',
-        `Uploaded file name: ${document.originalName || document.fileName || 'unknown'}`,
-        useDocumentText ? `Document text:\n${documentText}` : '',
-        'Candidates:',
-        ...llmCandidates.map((candidate, index) => (
-          `${index + 1}. id=${candidate._id}; category=${candidate.category}; name=${candidate.name}; profile=${candidate.classifierProfile || fallbackProfile(candidate, latestExistingSample(candidate))}`
-        )),
-        classificationMode === 'rag'
-          ? `RAG retrieval results: ${rankedDocumentTypes.slice(0, ragTopK).map(({ documentType: candidate, hit }) => `${candidate.name} score=${Number(hit.score).toFixed(3)}`).join('; ')}`
-          : 'All configured document types were provided for classification.',
-      ].join('\n'),
-    },
-  ];
-
-  const response = await createJsonResponse(content, {
-    ...options,
-    model: requestConfig.model,
-  }, `${classificationMode === 'rag' ? 'RAG' : 'LLM'} classifier for ${document._id || document.fileName}`);
-  if (!response) {
-    return {
-      ...fallbackClassify(document.originalName || document.fileName || '', llmCandidates, options),
-      classificationCandidates,
-    };
-  }
-  const classificationMetrics = metricsFromResponse(response.raw, response.model);
-
-  const parsed = parseJsonObject(response.outputText);
-  const selected = llmCandidates.find((candidate) => String(candidate._id) === parsed.documentTypeId) || llmCandidates[0];
-  return {
-    documentType: selected,
-    score: Number(clampScore(parsed.score).toFixed(2)),
-    method: classificationMode === 'rag' ? 'rag' : 'llm',
-    model: response.model,
-    justification: typeof parsed.justification === 'string' && parsed.justification.trim()
-      ? parsed.justification.trim().slice(0, 2000)
-      : `The LLM selected ${selected.name} as the closest match among the candidate document types.`,
-    classificationCandidates,
-    classificationMetrics,
-    embeddingMetrics,
-  };
+  return withLlmClassificationConcurrency(classifyWithModel)();
 }
 
 function normalizeObjectId(value) {

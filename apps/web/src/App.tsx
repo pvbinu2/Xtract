@@ -4687,9 +4687,9 @@ function ClassificationScreen({
               <strong>{aiModelLabel(config)}</strong>
               <small>
                 {config.classificationMode === 'vector'
-                  ? `Top vector result using ${embeddingModelLabel(config)}.`
+                  ? `Top vector result using ${embeddingModelLabel(config)}; large documents use all retrieved types and an LLM decision.`
                   : config.classificationMode === 'rag'
-                    ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
+                    ? `LLM chooses from the top ${config.classificationRagTopK} vector results, or all retrieved types for large documents.`
                     : 'LLM chooses from all configured document types.'}
               </small>
             </div>

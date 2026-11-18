@@ -38,7 +38,7 @@ Xtract is designed for organizations that need to automate document processing w
 
 - Document type management with configurable extraction schemas.
 - Sample PDF upload for template generation and classifier training.
-- Configurable classification using the top vector result, an LLM with all document types, or RAG with the top vector-retrieved types.
+- Configurable classification using vector search, an LLM with all document types, or RAG with vector-retrieved types.
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
 - Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
 - API-key-authenticated multipart ingestion for external systems, with idempotent retries and caller metadata.
@@ -361,7 +361,7 @@ http://docling-markdown:7072/api/extract-markdown
 - With an AI API key saved under **Configuration → AI Services**, template generation and extraction use the selected provider, and classifier training stores embeddings in Qdrant.
 - When using Ollama from Docker Compose, set the app configuration's Ollama base URL to `http://host.docker.internal:11434`. The `xtract-apps` service also defaults `OLLAMA_MODEL=llama3.2` and `OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b`.
 - If no OpenAI key is configured, the app falls back to deterministic mock values for local UI testing.
-- Classification mode is configured in the application: **Vector** selects Qdrant's top result, **LLM** sends all eligible document types to the model, and **RAG** sends only the configured top-K vector-retrieved types to the model.
+- Classification mode is configured in the application: **Vector** selects Qdrant's top result, **LLM** sends all eligible document types to the model, and **RAG** sends the configured top-K vector-retrieved types to the model. When the complete text exceeds the embedding model's input window, Vector and RAG search every chunk, combine all retrieved eligible types, and use the LLM to choose among them. Long text is summarized in sections before the final LLM decision; this incurs additional model calls and cost. Complete text is prepared independently of the chunked-extraction setting, and older incomplete artifacts are regenerated for classification. Large-document classification requires a configured LLM; if candidates do not fit its context, processing fails rather than silently dropping types.
 - Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`.
 - OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts.
 - The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.

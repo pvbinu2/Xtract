@@ -1,3 +1,4 @@
+const { AsyncLocalStorage } = require('async_hooks');
 const { getConfiguration } = require('./configurationCache');
 
 function positiveInteger(value, fallback, maximum = 16) {
@@ -59,6 +60,7 @@ async function configuredLimit(field, environmentName, fallback) {
 const preprocessingGate = createConcurrencyGate(4);
 const vectorClassificationGate = createConcurrencyGate(4);
 const llmClassificationGate = createConcurrencyGate(1);
+const llmClassificationScope = new AsyncLocalStorage();
 const extractionGate = createConcurrencyGate(1);
 
 function withPreprocessingConcurrency(handler) {
@@ -86,8 +88,21 @@ function withClassificationConcurrency(handler) {
         configuration.llmClassificationConcurrency,
         positiveInteger(process.env.LLM_CLASSIFICATION_CONCURRENCY, 1),
       );
-    const gate = vectorMode ? vectorClassificationGate : llmClassificationGate;
-    return gate(async () => limit, handler)(...args);
+    if (vectorMode) return vectorClassificationGate(async () => limit, handler)(...args);
+    return llmClassificationGate(
+      async () => limit,
+      (...handlerArgs) => llmClassificationScope.run(true, () => handler(...handlerArgs)),
+    )(...args);
+  };
+}
+
+function withLlmClassificationConcurrency(handler) {
+  return (...args) => {
+    if (llmClassificationScope.getStore()) return handler(...args);
+    return llmClassificationGate(
+      () => configuredLimit('llmClassificationConcurrency', 'LLM_CLASSIFICATION_CONCURRENCY', 1),
+      (...handlerArgs) => llmClassificationScope.run(true, () => handler(...handlerArgs)),
+    )(...args);
   };
 }
 
@@ -101,6 +116,7 @@ function withExtractionConcurrency(handler) {
 module.exports = {
   createConcurrencyGate,
   withClassificationConcurrency,
+  withLlmClassificationConcurrency,
   withExtractionConcurrency,
   withPreprocessingConcurrency,
 };
