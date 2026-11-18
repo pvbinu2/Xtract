@@ -90,6 +90,7 @@ export type IncomingDocument = {
     score: number;
   }>;
   processingMode?: 'ocr' | 'pdf' | 'markdown' | 'spreadsheet';
+  chunkedExtractionUsed?: boolean;
   processingMetrics?: {
     model?: string;
     reasoningEffort?: ReasoningEffort;

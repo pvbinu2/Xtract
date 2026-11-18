@@ -29,6 +29,7 @@ import {
   GripVertical,
   HardDrive,
   ListOrdered,
+  Layers3,
   Radio,
   ScanText,
   TextSelect,
@@ -7818,6 +7819,7 @@ function ValidationScreen({
       classificationModel: document.classificationModel,
       extractionModel: document.processingMetrics?.model,
       processingMode: document.processingMode,
+      chunkedExtractionUsed: document.chunkedExtractionUsed ?? null,
       status: document.status,
       validatedBy: document.validatedBy,
       validatedAt: document.validatedAt,
@@ -7986,6 +7988,21 @@ function ValidationScreen({
                 <span className="document-model-item">
                   <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
                   {extractionReasoningEffort && <span className="reasoning-effort-badge">{extractionReasoningEffort}</span>}
+                </span>
+                <span
+                  className="document-model-item"
+                  title={document.chunkedExtractionUsed === true
+                    ? 'Document extracted using chunks'
+                    : document.chunkedExtractionUsed === false
+                      ? 'Document extracted without chunking'
+                      : 'Extraction strategy not recorded'}
+                >
+                  {document.chunkedExtractionUsed === true
+                    ? <Layers3 size={16} aria-hidden="true" />
+                    : document.chunkedExtractionUsed === false
+                      ? <FileText size={16} aria-hidden="true" />
+                      : <CircleHelp size={16} aria-hidden="true" />}
+                  {document.chunkedExtractionUsed === true ? 'Chunked' : document.chunkedExtractionUsed === false ? 'Standard' : 'Unknown'}
                 </span>
               </div>
               {document.validatedBy && (

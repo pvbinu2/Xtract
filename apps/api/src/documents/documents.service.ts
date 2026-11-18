@@ -345,6 +345,7 @@ export class DocumentsService {
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
     document.chunkExtractionAttemptId = undefined;
+    document.chunkedExtractionUsed = undefined;
     const settings = await this.encryptionSettings();
     if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
       await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
@@ -376,6 +377,7 @@ export class DocumentsService {
     await this.publishDocumentChanged(document, [
       'status',
       'extractedData',
+      'chunkedExtractionUsed',
       'validatedBy',
       'validatedAt',
       'rejectedBy',

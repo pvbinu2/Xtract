@@ -291,6 +291,9 @@ export class IncomingDocument {
   @Prop()
   processingMode?: 'ocr' | 'pdf' | 'markdown' | 'spreadsheet';
 
+  @Prop()
+  chunkedExtractionUsed?: boolean;
+
   @Prop({ default: 'received' })
   status!: DocumentStatus;
 

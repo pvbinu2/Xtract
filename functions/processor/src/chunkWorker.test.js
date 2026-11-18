@@ -123,6 +123,7 @@ test('routes large prepared text through the separate chunk worker', async () =>
       registrations.get('chunkExtractDocument').handler(JSON.parse(retriedMessage), context),
     ]);
     assert.equal(document.status, 'extraction_completed');
+    assert.equal(document.chunkedExtractionUsed, true);
     assert.equal(document.extractedData[0].value, 'A1');
     assert.equal(document.extractedData[0].sourceEvidence[0].quote, 'Invoice: A1');
     assert.equal(document.processingMetrics.embeddingCostUsd, 0.04);
@@ -138,6 +139,7 @@ test('routes large prepared text through the separate chunk worker', async () =>
     outputs.clear();
     await registrations.get('extractDocument').handler({ documentId: String(document._id) }, context);
     assert.equal(outputs.size, 0);
+    assert.equal(document.chunkedExtractionUsed, false);
     assert.equal(document.extractedData[0].value, 'A1');
     assert.equal(recorded, 2);
 
@@ -148,6 +150,7 @@ test('routes large prepared text through the separate chunk worker', async () =>
     embeddingFails = true;
     await registrations.get('chunkExtractDocument').handler(JSON.parse([...outputs.values()][0]), context);
     assert.equal(document.status, 'failed');
+    assert.equal(document.chunkedExtractionUsed, false);
     assert.match(document.error, /Embedding service unavailable/);
     assert.equal(recorded, 2);
     assert.equal(errors.length, 1);

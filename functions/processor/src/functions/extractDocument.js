@@ -809,6 +809,7 @@ async function extractQueuedDocument(message, context, chunked = false) {
         processingMetrics,
         classificationModel: localDocument.classificationModel,
         processingMode: effectiveProcessingMode,
+        chunkedExtractionUsed: chunked,
         error: null,
       },
       ['reprocessOptions', ...(chunked ? ['chunkExtractionAttemptId'] : []), ...Object.keys(protectedExtractedData.$unset || {})],
@@ -819,7 +820,7 @@ async function extractQueuedDocument(message, context, chunked = false) {
     await publishDocumentChanged(
       documents,
       document._id,
-      ['status', 'extractedData', 'processingMetrics', 'processingMode'],
+      ['status', 'extractedData', 'processingMetrics', 'processingMode', 'chunkedExtractionUsed'],
       context,
     );
     await recordBusinessReviewProcessing(db, localDocument, documentType, processingMetrics);
