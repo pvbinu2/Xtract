@@ -279,6 +279,8 @@ Document processing always runs through the Azure Function worker and Service Bu
 
 Under **Configuration → Processing**, enable **Chunked extraction** to use hybrid vector and keyword retrieval for OCR and Markdown text at or above the configured character threshold (24,000 by default). Smaller documents retain the existing extraction path; direct PDF processing and spreadsheets are not chunked. Reprocess existing documents to prepare complete text. Table extraction scans all chunks and conflicting scalar values must be reviewed before validation.
 
+On the validation page, select a conflicting candidate to save it with its source evidence, or edit the value manually. Selecting a candidate clears any previous page highlight.
+
 The validation page shows **Chunked** or **Standard** after extraction. Document API responses include `chunkedExtractionUsed` as a boolean, and the validation JSON download includes it as a boolean or `null` when the strategy was not recorded. Older documents show **Unknown** until reprocessed.
 
 Chunked extraction uses the configured embedding provider and can increase processing time, model calls, and cost. Document text is sent to that provider to generate embeddings. Choose an in-memory vector index or the configured Qdrant service. Qdrant stores temporary vectors and identifiers, not raw chunk text; vectors can still be sensitive. Temporary collections are removed after processing, and collections left by interrupted workers are removed on a subsequent chunked Qdrant run after 24 hours. An embedding or vector-service failure marks the document as failed rather than silently switching strategies.

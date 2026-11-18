@@ -4971,6 +4971,28 @@ select {
   font-weight: 800;
 }
 
+.conflicting-values {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.conflicting-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  padding: 4px 8px;
+}
+
+.conflicting-value button {
+  flex-shrink: 0;
+}
+
 textarea {
   resize: vertical;
 }

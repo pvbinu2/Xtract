@@ -70,6 +70,7 @@ import {
 } from 'lucide-react';
 import { api, authToken, SESSION_EXPIRED_EVENT, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
+import { selectReviewCandidate } from './conflict-resolution';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
@@ -7717,6 +7718,24 @@ function ValidationScreen({
     }
   }
 
+  async function chooseReviewCandidate(index: number, candidate: NonNullable<ExtractedValue['reviewCandidates']>[number]) {
+    if (!document || savingValueKey || editingValueKey !== null || tableEditIndex !== null) return;
+    const current = values[index];
+    if (!current?.needsReview) return;
+    const next = [...values];
+    next[index] = selectReviewCandidate(current, candidate);
+    setSavingValueKey(current.key);
+    try {
+      await persistExtractedData(next);
+      setActiveFieldKey(current.key);
+      onNotify(`${current.label} saved`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to save selected value', 'error');
+    } finally {
+      setSavingValueKey(null);
+    }
+  }
+
   async function updateTableValue(index: number, value: Record<string, unknown>[]) {
     const next = [...values];
     next[index] = {
@@ -7860,7 +7879,7 @@ function ValidationScreen({
 
   const backButton = (
     <>
-    <button type="button" className="secondary-button compact validation-back-button" onClick={onBack}>
+    <button type="button" className="secondary-button compact validation-back-button" disabled={Boolean(savingValueKey)} onClick={onBack}>
       <ChevronLeft size={16} aria-hidden="true" /> Back to documents
     </button>
     <button
@@ -8035,7 +8054,7 @@ function ValidationScreen({
                   {document.processingMode ? document.processingMode.toUpperCase() : 'N/A'}
                 </span>
               </div>
-              <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
+              <button className="icon-button validation-refresh-button" title="Refresh validation page" disabled={Boolean(savingValueKey)} onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
               <button className="icon-button" title={document.processingMode === 'spreadsheet' ? 'Download workbook' : 'Download processing PDF'} onClick={downloadSourceDocument}>
@@ -8063,7 +8082,7 @@ function ValidationScreen({
               <small>Custom entities are saved only in this document instance.</small>
             </div>
             {!isLocked && (
-              <button className="secondary-button compact" type="button" onClick={() => setShowAddEntityDialog(true)}>
+              <button className="secondary-button compact" type="button" disabled={Boolean(savingValueKey)} onClick={() => setShowAddEntityDialog(true)}>
                 <Plus size={15} /> Add entity
               </button>
             )}
@@ -8149,7 +8168,7 @@ function ValidationScreen({
                       }}
                     />
                   ) : (
-                    <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => startTableEdit(index, item)} />
+                    <TableValuePreview item={item} canEdit={!isLocked && !savingValueKey} onEdit={() => startTableEdit(index, item)} />
                   )}
                 </div>
               ) : (
@@ -8174,10 +8193,23 @@ function ValidationScreen({
                     )}
                   </div>
                   {item.needsReview && (
-                    <div className="warning-text">
-                      <strong>Conflicting values: review and edit this field.</strong>
+                    <div className="warning-text conflicting-values">
+                      <strong>Conflicting values: select one or edit this field.</strong>
                       {item.reviewCandidates?.map((candidate, candidateIndex) => (
-                        <p key={candidateIndex}>{coerceValue(candidate.value)} — {candidate.evidence.quote}</p>
+                        <div className="conflicting-value" key={candidateIndex}>
+                          <span><strong>{coerceValue(candidate.value)}</strong> — {candidate.evidence.quote}</span>
+                          {!isLocked && (
+                            <button
+                              className="secondary-button compact"
+                              type="button"
+                              aria-label={`Select ${coerceValue(candidate.value)} for ${item.label}`}
+                              disabled={Boolean(savingValueKey) || editingValueKey !== null || tableEditIndex !== null}
+                              onClick={() => chooseReviewCandidate(index, candidate)}
+                            >
+                              <CheckCircle2 size={16} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -8240,7 +8272,7 @@ function ValidationScreen({
                         </>
                       ) : (
                         !isLocked && (
-                          <button className="icon-button" type="button" title="Edit value" onClick={() => startValueEdit(item)}>
+                          <button className="icon-button" type="button" title="Edit value" disabled={Boolean(savingValueKey)} onClick={() => startValueEdit(item)}>
                             <Pencil size={15} />
                           </button>
                         )
@@ -8297,7 +8329,7 @@ function ValidationScreen({
                 type="button"
                 title="Previous document"
                 aria-label="Previous document"
-                disabled={!canNavigatePrevious || navigationPending}
+                disabled={!canNavigatePrevious || navigationPending || Boolean(savingValueKey)}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -8311,7 +8343,7 @@ function ValidationScreen({
                 type="button"
                 title="Next document"
                 aria-label="Next document"
-                disabled={!canNavigateNext || navigationPending}
+                disabled={!canNavigateNext || navigationPending || Boolean(savingValueKey)}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -8327,7 +8359,7 @@ function ValidationScreen({
                     type="button"
                     title={isLocked ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
                     aria-label="Reclassify document"
-                    disabled={isLocked}
+                    disabled={isLocked || Boolean(savingValueKey)}
                     onClick={() => setShowReclassifyDialog(true)}
                   >
                     <BrainCircuit size={16} />
@@ -8338,7 +8370,7 @@ function ValidationScreen({
                     type="button"
                     title={isLocked ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
                     aria-label="Reprocess document"
-                    disabled={isLocked}
+                    disabled={isLocked || Boolean(savingValueKey)}
                     onClick={() => setShowReprocessDialog(true)}
                   >
                     <RotateCcw size={16} />
@@ -8348,11 +8380,11 @@ function ValidationScreen({
               )}
               {!isLocked && (
                 <>
-                  <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
+                  <button className="secondary-button danger-outline" type="button" disabled={Boolean(savingValueKey)} onClick={() => setPendingValidationAction('reject')}>
                     <X size={16} />
                     Reject
                   </button>
-                  <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
+                  <button className="primary-button" type="button" disabled={Boolean(savingValueKey)} onClick={() => setPendingValidationAction('validate')}>
                     <CheckCircle2 size={16} />
                     Validate
                   </button>
