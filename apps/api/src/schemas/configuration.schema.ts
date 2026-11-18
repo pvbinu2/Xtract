@@ -73,6 +73,18 @@ export class Configuration {
   @Prop({ default: false })
   useOcrForDocumentProcessing!: boolean;
 
+  @Prop({ default: false })
+  chunkedExtractionEnabled!: boolean;
+
+  @Prop({ default: 24000, min: 1000, max: 10000000 })
+  chunkedExtractionThreshold!: number;
+
+  @Prop({ default: 2, min: 1, max: 16 })
+  chunkedExtractionBatchSize!: number;
+
+  @Prop({ default: 'memory', enum: ['memory', 'qdrant'] })
+  chunkedExtractionIndex!: 'memory' | 'qdrant';
+
   @Prop({ default: 'event-grid', enum: ['event-grid', 'blob'] })
   documentIngestionTrigger!: DocumentIngestionTrigger;
 
@@ -138,6 +150,12 @@ export class Configuration {
 
   @Prop({ default: 5, min: 1, max: 50 })
   classificationRagTopK!: number;
+
+  @Prop({ default: false })
+  classificationLowConfidenceFallbackEnabled!: boolean;
+
+  @Prop({ default: 60, min: 1, max: 100 })
+  classificationLowConfidenceThreshold!: number;
 
   @Prop({ default: 4, min: 1, max: 16 })
   preprocessingConcurrency!: number;

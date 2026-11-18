@@ -3,6 +3,7 @@ const fs = require('fs/promises');
 const { PDFDocument } = require('pdf-lib');
 const { app, output } = require('@azure/functions');
 const { withPreprocessingConcurrency } = require('../aiConcurrency');
+const { withFunctionLogging } = require('../functionLogger');
 const {
   ObjectId,
   getClient,
@@ -64,7 +65,7 @@ function workbookArtifactBlobName(document) {
 async function prepareDocumentText(message, context) {
   const documentId = resolveDocumentId(message);
   if (!documentId || !ObjectId.isValid(documentId)) {
-    context.warn(`Skipping text preparation message without a valid documentId: ${JSON.stringify(message)}`);
+    context.warn('Skipping text preparation message without a valid documentId.');
     return;
   }
 
@@ -157,14 +158,17 @@ async function prepareDocumentText(message, context) {
     }
 
     const { documentTextMode, textOptions } = processingOptionsFor(document, configuration);
+    context.info(`Preparing document text (mode=${documentTextMode}, complete=true).`);
     localFilePath = await resolveDocumentFile(document, configuration);
     const excelDocument = isExcelDocument(document);
     const pageCount = excelDocument
       ? 1
       : Math.max(1, (await PDFDocument.load(await fs.readFile(localFilePath))).getPageCount());
     const workbook = excelDocument ? parseWorkbook(await fs.readFile(localFilePath)) : undefined;
-    const content = workbook ? { text: workbook.text } : await extractDocumentContent(localFilePath, undefined, {
+    const completeText = !excelDocument;
+    const content = workbook ? { text: workbook.text } : await extractDocumentContent(localFilePath, Infinity, {
       ...textOptions,
+      documentId: String(document._id),
       fileName: document.convertedToPdf
         ? path.posix.basename(document.storageBlobName || document.fileName)
         : document.originalName || document.fileName,
@@ -218,6 +222,7 @@ async function prepareDocumentText(message, context) {
         textArtifactContainer: PROCESSING_CONTAINER,
         textArtifactBlobName: artifactBlobName,
         textArtifactMode: documentTextMode,
+        textArtifactComplete: completeText,
         spatialTextArtifactContainer: PROCESSING_CONTAINER,
         spatialTextArtifactBlobName: spatialArtifactBlobName,
         pageCount,
@@ -253,7 +258,7 @@ app.serviceBusQueue('prepareDocumentText', {
   queueName: 'document-processing',
   connection: 'ServiceBusConnection',
   extraOutputs: [classificationQueueOutput],
-  handler: withPreprocessingConcurrency(prepareDocumentText),
+  handler: withFunctionLogging('prepareDocumentText', 'document-processing', withPreprocessingConcurrency(prepareDocumentText), { documentMessage: true }),
 });
 
 module.exports = { convertedPdfBlobName, prepareDocumentText, sourceBlobName, spatialTextArtifactBlobName, textArtifactBlobName };

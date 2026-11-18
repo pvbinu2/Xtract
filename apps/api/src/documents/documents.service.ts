@@ -344,6 +344,8 @@ export class DocumentsService {
     this.requireServiceBus();
     const forceClassification = options.forceClassification ?? !newDocumentTypeId;
     this.transitionStatus(document, 'received', true, true);
+    document.chunkExtractionAttemptId = undefined;
+    document.chunkedExtractionUsed = undefined;
     const settings = await this.encryptionSettings();
     if (document.spatialTextArtifactContainer && document.spatialTextArtifactBlobName) {
       await this.blobStorage.deleteBlob(document.spatialTextArtifactContainer, document.spatialTextArtifactBlobName);
@@ -365,6 +367,7 @@ export class DocumentsService {
     }
     document.reprocessOptions = {
       extractionModel: options.extractionModel,
+      extractionReasoningEffort: options.extractionReasoningEffort,
       useOcrForDocumentProcessing: options.useOcrForDocumentProcessing,
       documentTextMode: options.documentTextMode,
       forceClassification,
@@ -374,6 +377,7 @@ export class DocumentsService {
     await this.publishDocumentChanged(document, [
       'status',
       'extractedData',
+      'chunkedExtractionUsed',
       'validatedBy',
       'validatedAt',
       'rejectedBy',
@@ -772,7 +776,8 @@ export class DocumentsService {
 
   private buildKeyValueExtractedData(extractedData: ExtractedValue[]) {
     return extractedData.reduce<Record<string, unknown>>((acc, item) => {
-      acc[item.key] = item.type === 'table' ? this.normalizeTableRows(item.value) : item.value;
+      const entityName = item.label?.trim() || item.key;
+      acc[entityName] = item.type === 'table' ? this.normalizeTableRows(item.value) : item.value;
       return acc;
     }, {});
   }
@@ -836,6 +841,9 @@ export class DocumentsService {
     extractedData: ExtractedValue[],
     user: AuthenticatedUser,
   ): Promise<any> {
+    if (extractedData.some((field) => field.needsReview)) {
+      throw new BadRequestException('Resolve conflicting extracted values before validating the document.');
+    }
     const updated = await this.documentModel.findById(id);
     if (!updated) throw new NotFoundException('Document not found');
     updated.validatedBy = {

@@ -109,6 +109,7 @@ export class HealthService {
       'document-processing',
       'document-classification',
       'document-extraction',
+      'document-chunk-extraction',
       'classifier-training',
       'document-events',
     ];

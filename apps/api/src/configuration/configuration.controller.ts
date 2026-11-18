@@ -35,6 +35,10 @@ export class ConfigurationController {
       deleteAfterDownstream: boolean;
       sendKeyValuePairs?: boolean;
       useOcrForDocumentProcessing?: boolean;
+      chunkedExtractionEnabled?: boolean;
+      chunkedExtractionThreshold?: number;
+      chunkedExtractionBatchSize?: number;
+      chunkedExtractionIndex?: 'memory' | 'qdrant';
       documentIngestionTrigger?: 'event-grid' | 'blob';
       ingestionFileTypes?: IngestionFileType[];
       documentTextMode?: 'ocr' | 'markdown';
@@ -56,6 +60,8 @@ export class ConfigurationController {
       classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
       classificationMode?: 'vector' | 'llm' | 'rag';
       classificationRagTopK?: number;
+      classificationLowConfidenceFallbackEnabled?: boolean;
+      classificationLowConfidenceThreshold?: number;
       preprocessingConcurrency?: number;
       vectorClassificationConcurrency?: number;
       llmClassificationConcurrency?: number;

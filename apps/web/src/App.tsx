@@ -11,6 +11,8 @@ import {
   BrainCircuit,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ChevronUp,
   ChevronDown,
   ClipboardCheck,
@@ -29,6 +31,7 @@ import {
   GripVertical,
   HardDrive,
   ListOrdered,
+  Layers3,
   Radio,
   ScanText,
   TextSelect,
@@ -64,9 +67,12 @@ import {
   Users as UsersIcon,
   ZoomIn,
   ZoomOut,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
-import { api, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
+import { api, authToken, SESSION_EXPIRED_EVENT, AppConfigPayload, clearAuthToken, HealthCheckResult, ReprocessDocumentPayload, saveAuthToken, WorkbookMetadata, WorkbookSheet } from './api';
 import { createDocumentRealtimeConnection } from './document-realtime';
+import { selectReviewCandidate } from './conflict-resolution';
 import { AuthUser, BusinessReviewSummary, DemoRequest, DisplayCurrency, DocumentType, ExtractedValue, ExtractionField, FieldType, IncomingDocument, PagedResult, ReasoningEffort, SubscriptionSummary, TableColumn, UserRole } from './types';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
@@ -645,6 +651,7 @@ function OperationsApp() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [documentWorkspaceFullscreen, setDocumentWorkspaceFullscreen] = useState(false);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('USD');
   const [operationsMetrics, setOperationsMetrics] = useState<OperationsMetrics>({
     filesProcessed: 0,
@@ -674,6 +681,10 @@ function OperationsApp() {
     deleteAfterDownstream: false,
     sendKeyValuePairs: false,
     useOcrForDocumentProcessing: false,
+    chunkedExtractionEnabled: false,
+    chunkedExtractionThreshold: 24000,
+    chunkedExtractionBatchSize: 2,
+    chunkedExtractionIndex: 'memory',
     documentIngestionTrigger: 'event-grid',
     ingestionFileTypes: [],
     documentTextMode: 'ocr',
@@ -699,6 +710,8 @@ function OperationsApp() {
     classificationReasoningEffort: 'low',
     classificationMode: 'vector',
     classificationRagTopK: 5,
+    classificationLowConfidenceFallbackEnabled: false,
+    classificationLowConfidenceThreshold: 60,
     preprocessingConcurrency: 4,
     vectorClassificationConcurrency: 4,
     llmClassificationConcurrency: 1,
@@ -732,6 +745,10 @@ function OperationsApp() {
         deleteAfterDownstream: Boolean(saved.deleteAfterDownstream),
         sendKeyValuePairs: Boolean(saved.sendKeyValuePairs),
         useOcrForDocumentProcessing: Boolean(saved.useOcrForDocumentProcessing),
+        chunkedExtractionEnabled: saved.chunkedExtractionEnabled === true,
+        chunkedExtractionThreshold: Math.min(10000000, Math.max(1000, Number(saved.chunkedExtractionThreshold) || 24000)),
+        chunkedExtractionBatchSize: Math.min(16, Math.max(1, Number(saved.chunkedExtractionBatchSize) || 2)),
+        chunkedExtractionIndex: saved.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
         documentIngestionTrigger: saved.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
         ingestionFileTypes: saved.ingestionFileTypes || [],
         documentTextMode: saved.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
@@ -759,6 +776,8 @@ function OperationsApp() {
         classificationReasoningEffort: saved.classificationReasoningEffort || 'low',
         classificationMode: saved.classificationMode === 'llm' || saved.classificationMode === 'rag' ? saved.classificationMode : 'vector',
         classificationRagTopK: Math.min(50, Math.max(1, Number(saved.classificationRagTopK) || 5)),
+        classificationLowConfidenceFallbackEnabled: Boolean(saved.classificationLowConfidenceFallbackEnabled),
+        classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(saved.classificationLowConfidenceThreshold) || 60)),
         preprocessingConcurrency: Math.min(16, Math.max(1, Number(saved.preprocessingConcurrency) || 4)),
         vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.vectorClassificationConcurrency) || 4)),
         llmClassificationConcurrency: Math.min(16, Math.max(1, Number(saved.llmClassificationConcurrency) || 1)),
@@ -792,6 +811,10 @@ function OperationsApp() {
             deleteAfterDownstream: Boolean(parsed.deleteAfterDownstream),
             sendKeyValuePairs: Boolean(parsed.sendKeyValuePairs),
             useOcrForDocumentProcessing: Boolean(parsed.useOcrForDocumentProcessing),
+            chunkedExtractionEnabled: parsed.chunkedExtractionEnabled === true,
+            chunkedExtractionThreshold: Math.min(10000000, Math.max(1000, Number(parsed.chunkedExtractionThreshold) || 24000)),
+            chunkedExtractionBatchSize: Math.min(16, Math.max(1, Number(parsed.chunkedExtractionBatchSize) || 2)),
+            chunkedExtractionIndex: parsed.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
             documentIngestionTrigger: parsed.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
             ingestionFileTypes: parsed.ingestionFileTypes || [],
             documentTextMode: parsed.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
@@ -817,6 +840,8 @@ function OperationsApp() {
             classificationReasoningEffort: parsed.classificationReasoningEffort || 'low',
             classificationMode: parsed.classificationMode === 'llm' || parsed.classificationMode === 'rag' ? parsed.classificationMode : 'vector',
             classificationRagTopK: Math.min(50, Math.max(1, Number(parsed.classificationRagTopK) || 5)),
+            classificationLowConfidenceFallbackEnabled: Boolean(parsed.classificationLowConfidenceFallbackEnabled),
+            classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(parsed.classificationLowConfidenceThreshold) || 60)),
             preprocessingConcurrency: Math.min(16, Math.max(1, Number(parsed.preprocessingConcurrency) || 4)),
             vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.vectorClassificationConcurrency) || 4)),
             llmClassificationConcurrency: Math.min(16, Math.max(1, Number(parsed.llmClassificationConcurrency) || 1)),
@@ -1196,7 +1221,42 @@ function OperationsApp() {
     setMetricsLoaded(false);
     setActiveDocumentId('');
     setView('documents');
+    setDocumentWorkspaceFullscreen(false);
   }
+
+  useEffect(() => {
+    const expireSession = () => logout();
+    window.addEventListener(SESSION_EXPIRED_EVENT, expireSession);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, expireSession);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const checkExpiry = () => {
+      clearTimeout(timer);
+      const token = authToken();
+      if (!token) { logout(); return; }
+      try {
+        const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const { exp } = JSON.parse(atob(encoded));
+        if (typeof exp !== 'number' || !Number.isFinite(exp)) return;
+        const remaining = exp * 1000 - Date.now();
+        if (remaining <= 0) { logout(); return; }
+        timer = setTimeout(checkExpiry, Math.min(remaining, 2147483647));
+      } catch {
+        // The API remains authoritative for tokens without a readable expiry.
+      }
+    };
+    checkExpiry();
+    window.addEventListener('focus', checkExpiry);
+    document.addEventListener('visibilitychange', checkExpiry);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', checkExpiry);
+      document.removeEventListener('visibilitychange', checkExpiry);
+    };
+  }, [currentUser]);
 
   const navigation = [
     { id: 'documents' as View, label: 'Documents', icon: Files },
@@ -1230,6 +1290,7 @@ function OperationsApp() {
     ? operationsMetrics.totalCostUsd / operationsMetrics.filesProcessed
     : 0;
   const isSubscription = config.deploymentMode === 'subscription';
+  const isDocumentWorkspaceFullscreen = documentWorkspaceFullscreen && (view === 'documents' || view === 'validation');
   const selectedPageLoading =
     (view === 'types' && !documentTypesLoaded) ||
     (view === 'classification' && (!documentTypesLoaded || !configLoaded)) ||
@@ -1260,7 +1321,7 @@ function OperationsApp() {
   }
 
   return (
-    <main className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+    <main className={`${sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}${isDocumentWorkspaceFullscreen ? ' document-workspace-fullscreen' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
           <button
@@ -1421,6 +1482,8 @@ function OperationsApp() {
               setActiveDocumentId(id);
               setView('validation');
             }}
+            isFullscreen={isDocumentWorkspaceFullscreen}
+            onToggleFullscreen={() => setDocumentWorkspaceFullscreen((current) => !current)}
             onPage={(page) => {
               setDocumentPage(page);
               setDocuments(page.items);
@@ -1462,6 +1525,7 @@ function OperationsApp() {
         {!selectedPageLoading && view === 'validation' && (
           <ValidationScreen
             documentId={validationDocumentId}
+            onBack={() => setView('documents')}
             documentTypes={documentTypes}
             config={config}
             canNavigatePrevious={canNavigatePreviousDocument}
@@ -1474,6 +1538,8 @@ function OperationsApp() {
             }}
             onNotify={showToast}
             canAdminActions={canManageDocuments}
+            isFullscreen={isDocumentWorkspaceFullscreen}
+            onToggleFullscreen={() => setDocumentWorkspaceFullscreen((current) => !current)}
           />
         )}
         {!selectedPageLoading && isAdmin && view === 'configuration' && (
@@ -3492,6 +3558,36 @@ function ClassificationModeControls({
           />
         </label>
       )}
+      {config.classificationMode !== 'llm' && (
+        <>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={config.classificationLowConfidenceFallbackEnabled}
+              onChange={(event) => onConfigChange({
+                ...config,
+                classificationLowConfidenceFallbackEnabled: event.target.checked,
+              })}
+            />
+            <span>Send all types to LLM when top vector score is low</span>
+          </label>
+          {config.classificationLowConfidenceFallbackEnabled && (
+            <label>
+              Low-confidence threshold (%)
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={config.classificationLowConfidenceThreshold}
+                onChange={(event) => onConfigChange({
+                  ...config,
+                  classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(event.target.value) || 1)),
+                })}
+              />
+            </label>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -3521,6 +3617,8 @@ const pendingConfigurationFields: Array<{
   { key: 'classificationReasoningEffort', label: 'Reasoning effort' },
   { key: 'classificationMode', label: 'Classification mode' },
   { key: 'classificationRagTopK', label: 'RAG results' },
+  { key: 'classificationLowConfidenceFallbackEnabled', label: 'Low-confidence LLM fallback' },
+  { key: 'classificationLowConfidenceThreshold', label: 'Low-confidence threshold' },
   { key: 'preprocessingConcurrency', label: 'Preprocessing concurrency' },
   { key: 'vectorClassificationConcurrency', label: 'Vector classification concurrency' },
   { key: 'llmClassificationConcurrency', label: 'LLM classification concurrency' },
@@ -3530,6 +3628,10 @@ const pendingConfigurationFields: Array<{
   { key: 'storageEncryptionEnabled', label: 'Storage encryption' },
   { key: 'databaseEncryptionEnabled', label: 'Database encryption' },
   { key: 'useOcrForDocumentProcessing', label: 'OCR processing' },
+  { key: 'chunkedExtractionEnabled', label: 'Chunked extraction' },
+  { key: 'chunkedExtractionThreshold', label: 'Chunked extraction threshold' },
+  { key: 'chunkedExtractionBatchSize', label: 'Chunk extraction batch size' },
+  { key: 'chunkedExtractionIndex', label: 'Chunked extraction index' },
   { key: 'documentIngestionTrigger', label: 'Document ingestion trigger' },
   { key: 'documentTextMode', label: 'Document text mode' },
   { key: 'ingestionFileTypes', label: 'API ingestion file types' },
@@ -3654,10 +3756,12 @@ function ConfigurationScreen({
           <div className="configuration-section-body deployment-mode-options">
             <label className={config.deploymentMode === 'self_hosted' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
               <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'self_hosted'} onChange={() => onConfigChange({ ...config, deploymentMode: 'self_hosted' })} />
+              <HardDrive size={20} aria-hidden="true" />
               <span><strong>Self hosted</strong><small>Show Business Review and AI processing-cost metrics.</small></span>
             </label>
             <label className={config.deploymentMode === 'subscription' ? 'deployment-mode-option selected' : 'deployment-mode-option'}>
               <input type="radio" name="deployment-mode" checked={config.deploymentMode === 'subscription'} onChange={() => onConfigChange({ ...config, deploymentMode: 'subscription' })} />
+              <CreditCard size={20} aria-hidden="true" />
               <span><strong>Subscription</strong><small>Show Subscription and included-page, remaining-page, and overage metrics.</small></span>
             </label>
             {config.deploymentMode === 'subscription' && (
@@ -3680,15 +3784,22 @@ function ConfigurationScreen({
             </span>
           </div>
           <div className="configuration-section-body configuration-summary-grid">
-            <div className="configuration-summary-group">
-              <strong><Building2 size={15} /> Operating model</strong>
+            <div className="configuration-summary-group summary-operating-mode">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('deployment')}><Building2 size={15} /> Operating model</button>
               <dl>
-                <div><dt>Mode</dt><dd>{config.deploymentMode === 'subscription' ? 'Subscription' : 'Self hosted'}</dd></div>
+                <div><dt>Active</dt><dd className="ready">{config.deploymentMode === 'subscription' ? 'Subscription' : 'Self hosted'}</dd></div>
                 {config.deploymentMode === 'subscription' && <><div><dt>Plan</dt><dd>{config.subscriptionPlanName}</dd></div><div><dt>Included pages</dt><dd>{formatNumber(config.subscriptionIncludedPages)} / month</dd></div></>}
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><Sparkles size={15} /> AI Services</strong>
+            <div className="configuration-summary-group summary-caching">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('caching')}><Database size={15} /> Caching</button>
+              <dl>
+                <div><dt>In-memory cache</dt><dd className={config.cachingEnabled ? 'ready' : ''}>{config.cachingEnabled ? 'On' : 'Off'}</dd></div>
+                <div><dt>TTL</dt><dd>{config.cachingEnabled ? `${config.configurationCacheTtlSeconds} seconds` : 'Not applicable'}</dd></div>
+              </dl>
+            </div>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('ai')}><Sparkles size={15} /> AI Services</button>
               <dl>
                 <div><dt>OpenAI key</dt><dd className={config.openAiApiKeyConfigured ? 'ready' : ''}>{config.openAiApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
                 <div><dt>Custom key</dt><dd className={config.customApiKeyConfigured ? 'ready' : ''}>{config.customApiKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
@@ -3699,24 +3810,29 @@ function ConfigurationScreen({
                 <div><dt>Vector database</dt><dd>{config.vectorDatabaseProvider} · {config.vectorDatabaseApiKeyConfigured ? 'Authenticated' : 'No key'}</dd></div>
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><TrendingUp size={15} /> Scaling</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('scaling')}><TrendingUp size={15} /> Scaling</button>
               <dl>
-                <div><dt>Preprocessing</dt><dd>{config.preprocessingConcurrency}/16</dd></div>
-                <div><dt>Vector classification</dt><dd>{config.vectorClassificationConcurrency}/16</dd></div>
-                <div><dt>LLM classification</dt><dd>{config.llmClassificationConcurrency}/16</dd></div>
-                <div><dt>Extraction</dt><dd>{config.extractionConcurrency}/16</dd></div>
+                {[
+                  { label: 'Preprocessing', value: config.preprocessingConcurrency },
+                  { label: 'Vector classification', value: config.vectorClassificationConcurrency },
+                  { label: 'LLM classification', value: config.llmClassificationConcurrency },
+                  { label: 'Extraction', value: config.extractionConcurrency },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd className="summary-scaling-value" title={`${value} of 16 concurrent operations configured`}>
+                      <span className="summary-scaling-track" role="meter" aria-label={`${label} concurrency limit`} aria-valuemin={0} aria-valuemax={16} aria-valuenow={value}>
+                        <span style={{ width: `${Math.min(100, Math.max(0, value / 16 * 100))}%` }} />
+                      </span>
+                      <span>{value}/16</span>
+                    </dd>
+                  </div>
+                ))}
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><Database size={15} /> Caching</strong>
-              <dl>
-                <div><dt>In-memory cache</dt><dd className={config.cachingEnabled ? 'ready' : ''}>{config.cachingEnabled ? 'On' : 'Off'}</dd></div>
-                <div><dt>TTL</dt><dd>{config.cachingEnabled ? `${config.configurationCacheTtlSeconds} seconds` : 'Not applicable'}</dd></div>
-              </dl>
-            </div>
-            <div className="configuration-summary-group">
-              <strong><ShieldCheck size={15} /> Encryption</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('encryption')}><ShieldCheck size={15} /> Encryption</button>
               <dl>
                 <div><dt>Processing storage</dt><dd className={config.storageEncryptionEnabled ? 'ready' : ''}>{config.storageEncryptionEnabled ? 'On' : 'Off'}</dd></div>
                 <div><dt>Storage key</dt><dd className={config.storageEncryptionKeyConfigured ? 'ready' : ''}>{config.storageEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
@@ -3724,8 +3840,8 @@ function ConfigurationScreen({
                 <div><dt>Database key</dt><dd className={config.databaseEncryptionKeyConfigured ? 'ready' : ''}>{config.databaseEncryptionKeyConfigured ? 'Configured' : 'Not configured'}</dd></div>
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><ScanText size={15} /> Processing</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('processing')}><ScanText size={15} /> Processing</button>
               <dl>
                 <div><dt>Ingestion trigger</dt><dd>{config.documentIngestionTrigger === 'blob' ? 'Blob trigger' : 'Event Grid'}</dd></div>
                 <div><dt>Prepared text</dt><dd className={config.useOcrForDocumentProcessing ? 'ready' : ''}>{config.useOcrForDocumentProcessing ? 'On' : 'Off'}</dd></div>
@@ -3733,8 +3849,8 @@ function ConfigurationScreen({
                 {config.documentTextMode === 'markdown' && <div><dt>Docling endpoint</dt><dd title={config.markdownServiceUrl}>{config.markdownServiceUrl || 'Not configured'}</dd></div>}
               </dl>
             </div>
-            <div className="configuration-summary-group">
-              <strong><Network size={15} /> Downstream</strong>
+            <div className="configuration-summary-group summary-compact">
+              <button type="button" className="configuration-summary-section-link" onClick={() => setConfigurationTab('downstream')}><Network size={15} /> Downstream</button>
               <dl>
                 <div><dt>Endpoint</dt><dd title={config.downstreamUrl || 'Not configured'}>{config.downstreamUrl || 'Not configured'}</dd></div>
                 <div><dt>Delete after delivery</dt><dd>{config.deleteAfterDownstream ? 'On' : 'Off'}</dd></div>
@@ -4061,7 +4177,11 @@ function ConfigurationScreen({
                   onChange={(event) => onConfigChange({ ...config, storageEncryptionEnabled: event.target.checked })} />
                 <span><strong>Processing Storage Encryption</strong><small>Encrypt original, converted, OCR, and markdown processing artifacts.</small></span>
               </label>
-              <p className="help-text">{config.storageEncryptionKeyConfigured ? 'Encryption key configured.' : config.storageEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              {config.storageEncryptionKeyConfigured ? (
+                <span className="encryption-key-configured-badge"><CheckCircle2 size={15} aria-hidden="true" /> Encryption key configured</span>
+              ) : (
+                <p className="help-text">{config.storageEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              )}
             </div>
             <div className="document-processing-option-card">
               <label className="checkbox-row">
@@ -4069,7 +4189,11 @@ function ConfigurationScreen({
                   onChange={(event) => onConfigChange({ ...config, databaseEncryptionEnabled: event.target.checked })} />
                 <span><strong>Database Extracted-Data Encryption</strong><small>Encrypt only extracted field values before saving them in the database.</small></span>
               </label>
-              <p className="help-text">{config.databaseEncryptionKeyConfigured ? 'Encryption key configured.' : config.databaseEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              {config.databaseEncryptionKeyConfigured ? (
+                <span className="encryption-key-configured-badge"><CheckCircle2 size={15} aria-hidden="true" /> Encryption key configured</span>
+              ) : (
+                <p className="help-text">{config.databaseEncryptionEnabled ? 'A new encryption key will be created when saved.' : 'Encryption key not configured.'}</p>
+              )}
             </div>
             <p className="help-text">These settings apply only to newly ingested documents. Disabling encryption does not decrypt existing data, which remains readable using the retained keys.</p>
           </div>
@@ -4089,24 +4213,34 @@ function ConfigurationScreen({
           <div className="configuration-section-body configuration-card-grid processing-settings classification-style-settings">
               <div className="document-processing-option-card">
                 <strong>Document ingestion trigger</strong>
-                <label className="document-processing-field">
-                  Trigger mode
-                  <select
-                    value={config.documentIngestionTrigger}
-                    onChange={(event) => onConfigChange({
-                      ...config,
-                      documentIngestionTrigger: event.target.value as AppConfig['documentIngestionTrigger'],
-                    })}
-                  >
-                    <option value="event-grid">Event Grid via Service Bus</option>
-                    <option value="blob">Blob trigger</option>
-                  </select>
-                </label>
-                <p className="help-text">
-                  {config.documentIngestionTrigger === 'event-grid'
-                    ? 'BlobCreated events are delivered through Event Grid and the blob-ingestion Service Bus queue. Recommended for reliable high-volume processing.'
-                    : 'Azure Functions polls the trigger container directly. Useful for simpler deployments and local development.'}
-                </p>
+                <div className="configuration-icon-options" role="radiogroup" aria-label="Document ingestion trigger">
+                  <label className={config.documentIngestionTrigger === 'event-grid' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                    <input
+                      type="radio"
+                      name="document-ingestion-trigger"
+                      checked={config.documentIngestionTrigger === 'event-grid'}
+                      onChange={() => onConfigChange({ ...config, documentIngestionTrigger: 'event-grid' })}
+                    />
+                    <Radio size={20} aria-hidden="true" />
+                    <span>
+                      <strong>Event Grid</strong>
+                      <small>Delivers BlobCreated events through Event Grid and the blob-ingestion Service Bus queue. Best for reliable, high-volume processing.</small>
+                    </span>
+                  </label>
+                  <label className={config.documentIngestionTrigger === 'blob' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                    <input
+                      type="radio"
+                      name="document-ingestion-trigger"
+                      checked={config.documentIngestionTrigger === 'blob'}
+                      onChange={() => onConfigChange({ ...config, documentIngestionTrigger: 'blob' })}
+                    />
+                    <HardDrive size={20} aria-hidden="true" />
+                    <span>
+                      <strong>Blob trigger</strong>
+                      <small>Azure Functions polls the trigger container directly. A simple fit for local development and smaller deployments.</small>
+                    </span>
+                  </label>
+                </div>
               </div>
               <div className="document-processing-option-card">
                 <strong>Text preparation</strong>
@@ -4122,16 +4256,34 @@ function ConfigurationScreen({
                   </span>
                 </label>
                 {config.useOcrForDocumentProcessing && (
-                  <label className="document-processing-field">
-                    Text extraction engine
-                    <select
-                      value={config.documentTextMode}
-                      onChange={(event) => onConfigChange({ ...config, documentTextMode: event.target.value as AppConfig['documentTextMode'] })}
-                    >
-                      <option value="ocr">Built in</option>
-                      <option value="markdown">Markdown (Docling service)</option>
-                    </select>
-                  </label>
+                  <div className="configuration-icon-options" role="radiogroup" aria-label="Text extraction engine">
+                    <label className={config.documentTextMode === 'ocr' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                      <input
+                        type="radio"
+                        name="document-text-mode"
+                        checked={config.documentTextMode === 'ocr'}
+                        onChange={() => onConfigChange({ ...config, documentTextMode: 'ocr' })}
+                      />
+                      <ScanText size={20} aria-hidden="true" />
+                      <span>
+                        <strong>Built in</strong>
+                        <small>Use the application’s built-in text extraction before classification, schema generation, and extraction.</small>
+                      </span>
+                    </label>
+                    <label className={config.documentTextMode === 'markdown' ? 'configuration-icon-option selected' : 'configuration-icon-option'}>
+                      <input
+                        type="radio"
+                        name="document-text-mode"
+                        checked={config.documentTextMode === 'markdown'}
+                        onChange={() => onConfigChange({ ...config, documentTextMode: 'markdown' })}
+                      />
+                      <TextSelect size={20} aria-hidden="true" />
+                      <span>
+                        <strong>Markdown</strong>
+                        <small>Use the configured Docling service to prepare structured markdown text for AI processing.</small>
+                      </span>
+                    </label>
+                  </div>
                 )}
                 {config.useOcrForDocumentProcessing && config.documentTextMode === 'markdown' && (
                   <label className="document-processing-field">
@@ -4150,6 +4302,46 @@ function ConfigurationScreen({
                   </p>
                 )}
               </div>
+              <div className="document-processing-option-card">
+                <strong>Large-document extraction</strong>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={config.chunkedExtractionEnabled}
+                    onChange={(event) => onConfigChange({ ...config, chunkedExtractionEnabled: event.target.checked })}
+                  />
+                  <span>
+                    Enable chunked extraction
+                    <small>Use hybrid search for large OCR and Markdown documents. Direct PDFs and spreadsheets are unchanged.</small>
+                  </span>
+                </label>
+                {config.chunkedExtractionEnabled && (
+                  <>
+                    <label className="document-processing-field">
+                      Threshold (characters)
+                      <input type="number" min={1000} max={10000000} step={1}
+                        value={config.chunkedExtractionThreshold}
+                        onChange={(event) => onConfigChange({ ...config, chunkedExtractionThreshold: Number(event.target.value) })} />
+                    </label>
+                    <label className="document-processing-field">
+                      Chunk extraction batch size
+                      <input type="number" min={1} max={16} step={1}
+                        value={config.chunkedExtractionBatchSize}
+                        onChange={(event) => onConfigChange({ ...config, chunkedExtractionBatchSize: Number(event.target.value) })} />
+                      <small>Maximum parallel chunk extractions per document. Set to 1 for sequential processing.</small>
+                    </label>
+                    <label className="document-processing-field">
+                      Chunk vector index
+                      <select value={config.chunkedExtractionIndex}
+                        onChange={(event) => onConfigChange({ ...config, chunkedExtractionIndex: event.target.value === 'qdrant' ? 'qdrant' : 'memory' })}>
+                        <option value="memory">In memory</option>
+                        <option value="qdrant">Qdrant</option>
+                      </select>
+                    </label>
+                    <p className="help-text">Uses the configured embedding provider and may increase processing time and cost. Qdrant requires the configured vector database.</p>
+                  </>
+                )}
+              </div>
               <div className="document-processing-option-card ingestion-file-types-card">
                 <strong>Processing file types</strong>
                 <p className="help-text">Choose which uploaded and blob-ingested file types enter document processing.</p>
@@ -4165,9 +4357,12 @@ function ConfigurationScreen({
                         )),
                       })}
                     />
-                    <span>
-                      PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
-                      <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                    <span className="ingestion-file-type-content">
+                      <FileText size={18} aria-hidden="true" />
+                      <span>
+                        PDF <strong>{pdfIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                        <small>{pdfIngestionTypes.flatMap((fileType) => fileType.mimeTypes).join(', ')}</small>
+                      </span>
                     </span>
                   </label>
                   <label className="checkbox-row">
@@ -4183,9 +4378,12 @@ function ConfigurationScreen({
                         )),
                       })}
                     />
-                    <span>
-                      Excel <strong>{excelIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
-                      <small>{excelIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                    <span className="ingestion-file-type-content">
+                      <FileSpreadsheet size={18} aria-hidden="true" />
+                      <span>
+                        Excel <strong>{excelIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                        <small>{excelIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                      </span>
                     </span>
                   </label>
                   <label className="checkbox-row">
@@ -4201,9 +4399,12 @@ function ConfigurationScreen({
                         )),
                       })}
                     />
-                    <span>
-                      Images <strong>{imageIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
-                      <small>{imageIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                    <span className="ingestion-file-type-content">
+                      <FileImage size={18} aria-hidden="true" />
+                      <span>
+                        Images <strong>{imageIngestionTypes.flatMap((fileType) => fileType.extensions).join(', ')}</strong>
+                        <small>{imageIngestionTypes.map((fileType) => fileType.label).join(', ')}</small>
+                      </span>
                     </span>
                   </label>
                 </div>
@@ -4440,9 +4641,11 @@ function ClassificationScreen({
     ? 'training'
     : failedCount
       ? 'failed'
-      : trainableTypes.length && trainedCount === trainableTypes.length
+      : trainedCount > 0
         ? 'trained'
         : 'untrained';
+  const untrainedTypes = includedTypes.filter((type) =>
+    type.classifierTrainingStatus !== 'trained' && type.classifierTrainingStatus !== 'training');
   const lastTrainedType = includedTypes
     .filter((type) => type.classifierTrainedAt)
     .sort((left, right) =>
@@ -4484,6 +4687,17 @@ function ClassificationScreen({
                 <span>Last trained by</span>
                 <strong>{lastTrainedType?.classifierTrainedBy || '—'}</strong>
               </div>
+              {overallStatus !== 'untrained' && untrainedTypes.length > 0 && (
+                <div>
+                  <span>Pending training</span>
+                  <strong
+                    className="classifier-pill pending"
+                    title={untrainedTypes.map((type) => type.name).join(', ')}
+                  >
+                    {untrainedTypes.length} untrained type{untrainedTypes.length === 1 ? '' : 's'}
+                  </strong>
+                </div>
+              )}
             </div>
             <div className="panel-heading-actions">
               <button className="icon-button" title="Refresh classifier status" onClick={onRefresh}>
@@ -4526,9 +4740,9 @@ function ClassificationScreen({
               <strong>{aiModelLabel(config)}</strong>
               <small>
                 {config.classificationMode === 'vector'
-                  ? `Top vector result using ${embeddingModelLabel(config)}.`
+                  ? `Top vector result using ${embeddingModelLabel(config)}; large documents use all retrieved types and an LLM decision.`
                   : config.classificationMode === 'rag'
-                    ? `LLM chooses from the top ${config.classificationRagTopK} vector results.`
+                    ? `LLM chooses from the top ${config.classificationRagTopK} vector results, or all retrieved types for large documents.`
                     : 'LLM chooses from all configured document types.'}
               </small>
             </div>
@@ -5415,6 +5629,22 @@ function DocumentTypeManagement({
                         <Pencil size={16} />
                         Edit Schema
                       </button>
+                      {!activeType.finalized && fields.length > 0 && (
+                        <button
+                          className="primary-button"
+                          onClick={() =>
+                            onRun(async () => {
+                              const updated = await api.finalizeTemplate(activeType._id, fields);
+                              onDocumentTypeSaved(updated);
+                              setFields(withUiIds(updated.fields));
+                              await onRefresh();
+                            }, 'Document type finalized')
+                          }
+                        >
+                          <CheckCircle2 size={16} />
+                          Finalize
+                        </button>
+                      )}
                     </div>
                   ) : schemaOrdering ? (
                     <div className="schema-actions">
@@ -6022,7 +6252,7 @@ function CreateDocumentTypeModal({
                     className={errors.category ? 'input-error' : ''}
                   >
                     <option value="">Select a category</option>
-                    {categories.map((cat) => (
+                    {(category && !categories.includes(category) ? [...categories, category].sort() : categories).map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>
@@ -6308,6 +6538,8 @@ function DocumentList({
   canManage = false,
   onOpen,
   onPage,
+  isFullscreen = false,
+  onToggleFullscreen,
 }: {
   documents: IncomingDocument[];
   documentTypes: DocumentType[];
@@ -6318,6 +6550,8 @@ function DocumentList({
   canManage?: boolean;
   onOpen: (id: string) => void;
   onPage: (page: PagedResult<IncomingDocument>) => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen: () => void;
 }) {
   const [status, setStatus] = useState<DocumentStatusFilter>('');
   const [category, setCategory] = useState('');
@@ -6472,6 +6706,14 @@ function DocumentList({
         </div>
         <div className="panel-heading-actions">
           <span className="document-total-badge"><strong>{pagination.total}</strong> total documents</span>
+          <button
+            type="button"
+            className="icon-button"
+            title={isFullscreen ? 'Exit full-screen workspace' : 'Open full-screen workspace'}
+            onClick={onToggleFullscreen}
+          >
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button className="icon-button" title="Refresh document list" onClick={() => loadPage(pagination.page)}>
             <RefreshCw size={16} />
           </button>
@@ -7185,6 +7427,9 @@ function ReprocessDialog({
   const [extractionModel, setExtractionModel] = useState(
     document.processingMetrics?.model || documentType?.extractionModel || lowCostOpenAIModel,
   );
+  const [extractionReasoningEffort, setExtractionReasoningEffort] = useState<ReasoningEffort>(
+    document.processingMetrics?.reasoningEffort || documentType?.extractionReasoningEffort || 'low',
+  );
   const reprocessModelOptions = openAIModelOptions.some((option) => option.value === extractionModel)
     ? openAIModelOptions
     : [{ value: extractionModel, label: displayModel(extractionModel) }, ...openAIModelOptions];
@@ -7196,6 +7441,7 @@ function ReprocessDialog({
     try {
       await onConfirm({
         extractionModel,
+        extractionReasoningEffort,
         useOcrForDocumentProcessing: processingMode !== 'pdf',
         documentTextMode: processingMode === 'markdown' ? 'markdown' : 'ocr',
         forceClassification: true,
@@ -7224,6 +7470,20 @@ function ReprocessDialog({
               {reprocessModelOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Reasoning effort
+            <select
+              value={extractionReasoningEffort}
+              disabled={!supportsReasoningEffort(extractionModel)}
+              onChange={(event) => setExtractionReasoningEffort(event.target.value as ReasoningEffort)}
+            >
+              {reasoningEffortOptions.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
                 </option>
               ))}
             </select>
@@ -7258,6 +7518,8 @@ function ReprocessDialog({
 
 function ValidationScreen({
   documentId,
+  onBack,
+  onToggleFullscreen,
   documentTypes,
   config,
   canNavigatePrevious = false,
@@ -7268,8 +7530,11 @@ function ValidationScreen({
   onValidated,
   onNotify,
   canAdminActions = false,
+  isFullscreen = false,
 }: {
   documentId: string;
+  onBack: () => void;
+  onToggleFullscreen: () => void;
   documentTypes: DocumentType[];
   config: AppConfig;
   canNavigatePrevious?: boolean;
@@ -7280,6 +7545,7 @@ function ValidationScreen({
   onValidated: (notification: string) => Promise<void>;
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
   canAdminActions?: boolean;
+  isFullscreen?: boolean;
 }) {
   const [document, setDocument] = useState<IncomingDocument | null>(null);
   const [values, setValues] = useState<ExtractedValue[]>([]);
@@ -7478,7 +7744,7 @@ function ValidationScreen({
     if (!current) return;
 
     const next = [...values];
-    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes, cellReferences: editingValueCellReferences };
+    next[index] = { ...current, value: editingValueDraft, confidence: 1, boundingBoxes: editingValueBoundingBoxes, cellReferences: editingValueCellReferences, needsReview: false, reviewCandidates: [], sourceEvidence: [] };
 
     setSavingValueKey(current.key);
     try {
@@ -7487,6 +7753,24 @@ function ValidationScreen({
       onNotify(`${current.label} saved`, 'success');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Failed to save value', 'error');
+    } finally {
+      setSavingValueKey(null);
+    }
+  }
+
+  async function chooseReviewCandidate(index: number, candidate: NonNullable<ExtractedValue['reviewCandidates']>[number]) {
+    if (!document || savingValueKey || editingValueKey !== null || tableEditIndex !== null) return;
+    const current = values[index];
+    if (!current?.needsReview) return;
+    const next = [...values];
+    next[index] = selectReviewCandidate(current, candidate);
+    setSavingValueKey(current.key);
+    try {
+      await persistExtractedData(next);
+      setActiveFieldKey(current.key);
+      onNotify(`${current.label} saved`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Failed to save selected value', 'error');
     } finally {
       setSavingValueKey(null);
     }
@@ -7594,6 +7878,7 @@ function ValidationScreen({
       classificationModel: document.classificationModel,
       extractionModel: document.processingMetrics?.model,
       processingMode: document.processingMode,
+      chunkedExtractionUsed: document.chunkedExtractionUsed ?? null,
       status: document.status,
       validatedBy: document.validatedBy,
       validatedAt: document.validatedAt,
@@ -7632,8 +7917,30 @@ function ValidationScreen({
     }
   }
 
-  if (!documentId) return <EmptyState text="Select a document from the list." />;
-  if (!document) return <EmptyState text="Loading document." />;
+  const backButton = (
+    <>
+    <button type="button" className="secondary-button compact validation-back-button" disabled={Boolean(savingValueKey)} onClick={onBack}>
+      <ChevronLeft size={16} aria-hidden="true" /> Back to documents
+    </button>
+    <button
+      type="button"
+      className="icon-button"
+      title={isFullscreen ? 'Exit full-screen workspace' : 'Open full-screen workspace'}
+      aria-label={isFullscreen ? 'Exit full-screen workspace' : 'Open full-screen workspace'}
+      aria-pressed={isFullscreen}
+      onClick={onToggleFullscreen}
+    >
+      {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+    </button>
+    </>
+  );
+
+  if (!documentId || !document) return (
+    <section className="panel">
+      {backButton}
+      <EmptyState text={!documentId ? 'Select a document from the list.' : 'Loading document.'} />
+    </section>
+  );
 
   const isLocked = ['validated', 'rejected', 'unsupported_format'].includes(document.status);
   const documentType = documentTypeFor(document);
@@ -7642,11 +7949,12 @@ function ValidationScreen({
   const showClassificationReasoning = document.classificationMethod !== 'vector' && Boolean(classificationReasoningEffort);
 
   return (
-    <div className="validation-layout">
+    <div className={`validation-layout${isFullscreen ? ' validation-fullscreen' : ''}`}>
       <section className="pdf-pane">
         {document.processingMode === 'spreadsheet' || Boolean(document.workbookArtifactBlobName) ? (
           <SpreadsheetViewer
             documentId={document._id}
+            navigation={backButton}
             activeReferences={tableEditIndex !== null && values[tableEditIndex]?.key === activeFieldKey
               ? tableEditCellReferences
               : values.find((item) => item.key === activeFieldKey)?.cellReferences || []}
@@ -7675,6 +7983,7 @@ function ValidationScreen({
         ) : (
         <PdfViewer
           documentId={document._id}
+          navigation={backButton}
           highlights={pdfHighlights}
           activeFieldKey={activeFieldKey}
           selectionMode={copyFromDocumentKey !== null}
@@ -7739,6 +8048,19 @@ function ValidationScreen({
                   <span>Extraction: {displayModel(document.processingMetrics?.model)}</span>
                   {extractionReasoningEffort && <span className="reasoning-effort-badge">{extractionReasoningEffort}</span>}
                 </span>
+                {typeof document.chunkedExtractionUsed === 'boolean' && (
+                  <span
+                    className="document-model-item"
+                    title={document.chunkedExtractionUsed
+                      ? 'Document extracted using chunks'
+                      : 'Document extracted without chunking'}
+                  >
+                    {document.chunkedExtractionUsed
+                      ? <Layers3 size={16} aria-hidden="true" />
+                      : <FileText size={16} aria-hidden="true" />}
+                    {document.chunkedExtractionUsed ? 'Chunked' : 'Standard'}
+                  </span>
+                )}
               </div>
               {document.validatedBy && (
                 <div className="validation-audit-line">
@@ -7770,7 +8092,7 @@ function ValidationScreen({
                   {document.processingMode ? document.processingMode.toUpperCase() : 'N/A'}
                 </span>
               </div>
-              <button className="icon-button validation-refresh-button" title="Refresh validation page" onClick={refreshPage}>
+              <button className="icon-button validation-refresh-button" title="Refresh validation page" disabled={Boolean(savingValueKey)} onClick={refreshPage}>
                 <RefreshCw size={16} />
               </button>
               <button className="icon-button" title={document.processingMode === 'spreadsheet' ? 'Download workbook' : 'Download processing PDF'} onClick={downloadSourceDocument}>
@@ -7798,7 +8120,7 @@ function ValidationScreen({
               <small>Custom entities are saved only in this document instance.</small>
             </div>
             {!isLocked && (
-              <button className="secondary-button compact" type="button" onClick={() => setShowAddEntityDialog(true)}>
+              <button className="secondary-button compact" type="button" disabled={Boolean(savingValueKey)} onClick={() => setShowAddEntityDialog(true)}>
                 <Plus size={15} /> Add entity
               </button>
             )}
@@ -7884,7 +8206,7 @@ function ValidationScreen({
                       }}
                     />
                   ) : (
-                    <TableValuePreview item={item} canEdit={!isLocked} onEdit={() => startTableEdit(index, item)} />
+                    <TableValuePreview item={item} canEdit={!isLocked && !savingValueKey} onEdit={() => startTableEdit(index, item)} />
                   )}
                 </div>
               ) : (
@@ -7908,6 +8230,27 @@ function ValidationScreen({
                       </span>
                     )}
                   </div>
+                  {item.needsReview && (
+                    <div className="warning-text conflicting-values">
+                      <strong>Conflicting values: select one or edit this field.</strong>
+                      {item.reviewCandidates?.map((candidate, candidateIndex) => (
+                        <div className="conflicting-value" key={candidateIndex}>
+                          <span><strong>{coerceValue(candidate.value)}</strong> — {candidate.evidence.quote}</span>
+                          {!isLocked && (
+                            <button
+                              className="secondary-button compact"
+                              type="button"
+                              aria-label={`Select ${coerceValue(candidate.value)} for ${item.label}`}
+                              disabled={Boolean(savingValueKey) || editingValueKey !== null || tableEditIndex !== null}
+                              onClick={() => chooseReviewCandidate(index, candidate)}
+                            >
+                              <CheckCircle2 size={16} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="value-editor">
                     <input
                       aria-label={`${item.label} value`}
@@ -7967,7 +8310,7 @@ function ValidationScreen({
                         </>
                       ) : (
                         !isLocked && (
-                          <button className="icon-button" type="button" title="Edit value" onClick={() => startValueEdit(item)}>
+                          <button className="icon-button" type="button" title="Edit value" disabled={Boolean(savingValueKey)} onClick={() => startValueEdit(item)}>
                             <Pencil size={15} />
                           </button>
                         )
@@ -8024,7 +8367,7 @@ function ValidationScreen({
                 type="button"
                 title="Previous document"
                 aria-label="Previous document"
-                disabled={!canNavigatePrevious || navigationPending}
+                disabled={!canNavigatePrevious || navigationPending || Boolean(savingValueKey)}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -8038,7 +8381,7 @@ function ValidationScreen({
                 type="button"
                 title="Next document"
                 aria-label="Next document"
-                disabled={!canNavigateNext || navigationPending}
+                disabled={!canNavigateNext || navigationPending || Boolean(savingValueKey)}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -8054,7 +8397,7 @@ function ValidationScreen({
                     type="button"
                     title={isLocked ? 'Reclassification is not allowed for locked documents' : 'Reclassify document'}
                     aria-label="Reclassify document"
-                    disabled={isLocked}
+                    disabled={isLocked || Boolean(savingValueKey)}
                     onClick={() => setShowReclassifyDialog(true)}
                   >
                     <BrainCircuit size={16} />
@@ -8065,7 +8408,7 @@ function ValidationScreen({
                     type="button"
                     title={isLocked ? 'Reprocessing is not allowed for locked documents' : 'Reprocess document'}
                     aria-label="Reprocess document"
-                    disabled={isLocked}
+                    disabled={isLocked || Boolean(savingValueKey)}
                     onClick={() => setShowReprocessDialog(true)}
                   >
                     <RotateCcw size={16} />
@@ -8075,11 +8418,11 @@ function ValidationScreen({
               )}
               {!isLocked && (
                 <>
-                  <button className="secondary-button danger-outline" type="button" onClick={() => setPendingValidationAction('reject')}>
+                  <button className="secondary-button danger-outline" type="button" disabled={Boolean(savingValueKey)} onClick={() => setPendingValidationAction('reject')}>
                     <X size={16} />
                     Reject
                   </button>
-                  <button className="primary-button" type="button" onClick={() => setPendingValidationAction('validate')}>
+                  <button className="primary-button" type="button" disabled={Boolean(savingValueKey)} onClick={() => setPendingValidationAction('validate')}>
                     <CheckCircle2 size={16} />
                     Validate
                   </button>
@@ -8188,8 +8531,9 @@ function spreadsheetCellCoordinates(address: string) {
   return { row: Number(match[2]) - 1, column };
 }
 
-function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onReplaceSelection, onAppendSelection, onNotify }: {
+function SpreadsheetViewer({ documentId, navigation, activeReferences, selectionMode, onReplaceSelection, onAppendSelection, onNotify }: {
   documentId: string;
+  navigation?: ReactNode;
   activeReferences: NonNullable<ExtractedValue['cellReferences']>;
   selectionMode: boolean;
   onReplaceSelection: (selection: { text: string; reference: NonNullable<ExtractedValue['cellReferences']>[number] }) => void;
@@ -8251,8 +8595,11 @@ function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onRepl
   const columns = sheet ? Array.from({ length: Math.min(12, Math.max(0, sheet.columnCount - viewport.column)) }, (_, index) => viewport.column + index) : [];
 
   return <div className="spreadsheet-viewer">
+    <div className="document-viewer-navigation">
+      {navigation}
     <div className="spreadsheet-tabs">
       {(metadata?.sheets || []).map((candidate) => <button key={candidate.index} className={candidate.index === sheetIndex ? 'active' : ''} onClick={() => setSheetIndex(candidate.index)}>{candidate.name}</button>)}
+    </div>
     </div>
     {!sheet && <div className="pdf-page-state">Loading worksheet.</div>}
     {sheet && sheet.rowCount === 0 && <div className="pdf-page-state">This worksheet is empty.</div>}
@@ -8293,6 +8640,7 @@ function SpreadsheetViewer({ documentId, activeReferences, selectionMode, onRepl
 
 function PdfViewer({
   documentId,
+  navigation,
   highlights,
   activeFieldKey,
   selectionMode,
@@ -8301,6 +8649,7 @@ function PdfViewer({
   onNotify,
 }: {
   documentId: string;
+  navigation?: ReactNode;
   highlights: Array<{
     page: number;
     x: number;
@@ -8318,6 +8667,7 @@ function PdfViewer({
   onNotify: (notification: string, type?: 'success' | 'error' | 'info') => void;
 }) {
   const [selectedPage, setSelectedPage] = useState(1);
+  const [pageInput, setPageInput] = useState('1');
   const [pageCount, setPageCount] = useState(0);
   const [pageImage, setPageImage] = useState<{ dataUrl: string; width: number; height: number } | null>(null);
   const [loadingPage, setLoadingPage] = useState(false);
@@ -8540,6 +8890,10 @@ function PdfViewer({
   }, [pageCount]);
 
   useEffect(() => {
+    setPageInput(String(selectedPage));
+  }, [selectedPage]);
+
+  useEffect(() => {
     const selectedHighlights = highlights.filter((box) => box.fieldKey === activeFieldKey);
     if (selectedHighlights.length === 0) return;
 
@@ -8606,10 +8960,31 @@ function PdfViewer({
   const pageHighlights = highlights.filter((box) => box.page === selectedPage - 1);
   const canGoToPreviousPage = selectedPage > 1 && !loadingPage;
   const canGoToNextPage = Boolean(pageCount) && selectedPage < pageCount && !loadingPage;
+  const targetPage = Number(pageInput);
+  const canGoToTargetPage = Number.isInteger(targetPage) && targetPage >= 1 && targetPage <= pageCount && !loadingPage;
+
+  function navigateToEnteredPage() {
+    if (canGoToTargetPage) {
+      setSelectedPage(targetPage);
+    } else {
+      setPageInput(String(selectedPage));
+    }
+  }
 
   return (
     <div className="pdf-viewer">
+      <div className="document-viewer-navigation">
+        {navigation}
       <div className="pdf-toolbar" aria-label="PDF page and zoom controls">
+        <button
+          className="icon-button"
+          type="button"
+          title="First PDF page"
+          disabled={!pageCount || selectedPage <= 1 || loadingPage}
+          onClick={() => setSelectedPage(1)}
+        >
+          <ChevronsLeft size={16} />
+        </button>
         <button
           className="icon-button"
           type="button"
@@ -8619,7 +8994,26 @@ function PdfViewer({
         >
           <ChevronLeft size={16} />
         </button>
-        <span className="pdf-page-value">Page {selectedPage} / {pageCount || '-'}</span>
+        <div className="pdf-page-jump">
+          <label htmlFor="pdf-page-number">Page</label>
+          <input
+            id="pdf-page-number"
+            type="number"
+            min={1}
+            max={pageCount || undefined}
+            value={pageInput}
+            disabled={!pageCount || loadingPage}
+            onChange={(event) => setPageInput(event.target.value)}
+            onBlur={navigateToEnteredPage}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                navigateToEnteredPage();
+              }
+            }}
+          />
+          <span>/ {pageCount || '-'}</span>
+        </div>
         <button
           className="icon-button"
           type="button"
@@ -8628,6 +9022,15 @@ function PdfViewer({
           onClick={() => setSelectedPage((page) => Math.min(pageCount || page, page + 1))}
         >
           <ChevronRight size={16} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          title="Last PDF page"
+          disabled={!pageCount || selectedPage >= pageCount || loadingPage}
+          onClick={() => setSelectedPage(pageCount)}
+        >
+          <ChevronsRight size={16} />
         </button>
         <button
           className="icon-button"
@@ -8657,6 +9060,7 @@ function PdfViewer({
         >
           <ZoomIn size={16} />
         </button>
+      </div>
       </div>
       <div
         className={`pdf-pages${isPanning ? ' panning' : ''}${selectionMode ? ' selecting-text' : ''}`}

@@ -21,6 +21,7 @@ var queueNames = [
   'document-processing'
   'document-classification'
   'document-extraction'
+  'document-chunk-extraction'
   'classifier-training'
   'document-events'
 ]

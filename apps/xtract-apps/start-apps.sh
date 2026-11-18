@@ -17,6 +17,6 @@ cd /app/apps/api
 npm run dev -- --watch --host 0.0.0.0 &
 
 cd /app/functions/processor
-"$FUNC_BIN" start --javascript --host 0.0.0.0
+"$FUNC_BIN" start --javascript --host 0.0.0.0 &
 
 wait

@@ -38,7 +38,7 @@ Xtract is designed for organizations that need to automate document processing w
 
 - Document type management with configurable extraction schemas.
 - Sample PDF upload for template generation and classifier training.
-- Configurable classification using the top vector result, an LLM with all document types, or RAG with the top vector-retrieved types.
+- Configurable classification using vector search, an LLM with all document types, or RAG with vector-retrieved types.
 - PDF extraction through OpenAI, built-in text extraction, or Docling markdown extraction.
 - Blob-triggered ingestion from the `trigger` storage container into the existing processing workflow.
 - API-key-authenticated multipart ingestion for external systems, with idempotent retries and caller metadata.
@@ -122,10 +122,15 @@ Request shape:
 
 ```json
 {
+  "documentId": "0123456789abcdef01234567",
   "fileName": "invoice.pdf",
   "fileBase64": "..."
 }
 ```
+
+`documentId` is optional and correlates Docling logs with the processor's document logs. Function application logs include `[correlationId=<documentId>]`; invocations without a valid document ID use an invocation-specific fallback until an ID is available. Azure Functions host and Service Bus listener logs are generated outside the handlers and may not have a document ID.
+
+For Docker Compose, restart `xtract-apps` to load processor changes and rebuild `docling-markdown` to load its Python changes. These operations interrupt active processing.
 
 Successful response shape:
 
@@ -198,6 +203,8 @@ docker compose up -d mongo azurite servicebus-sql servicebus-emulator qdrant doc
 
 The Service Bus emulator exposes AMQP on port `5672` and its health endpoint at `http://127.0.0.1:5300/health`. Its queues are declared in `servicebus-emulator-config.json`; emulator data is intentionally non-persistent.
 
+After changing the queue configuration, recreate the emulator with `docker compose up -d --no-deps --force-recreate servicebus-emulator`. This interrupts processing and discards emulator messages.
+
 Docling is exposed to the host at:
 
 ```text
@@ -267,6 +274,20 @@ curl --request POST http://localhost:3000/api/ingestion/documents \
 `category` and `type` must be supplied together to select an existing document type, or both omitted to use automatic classification. The endpoint accepts one file up to 50 MB; administrators manage the database-backed processing allowlist under **Configuration → Processing → API ingestion file types**. Files outside that allowlist are still stored as document instances with status **Unsupported**, but are not queued for processing. `metadata` is an optional JSON object up to 16 KB. Repeating a successful request with the same `Idempotency-Key` returns the original document receipt without queueing a duplicate.
 
 Document processing always runs through the Azure Function worker and Service Bus. A document progresses through the persisted statuses **Received**, **Preprocessing - Started**, **Preprocessing - Completed**, **Classification - Started**, **Classification - Completed**, **Extraction - Started**, and **Extraction - Completed**. The API enqueues work on `document-processing`; text preparation enqueues `document-classification`; classification then enqueues `document-extraction`. Classifier training and realtime events also use Service Bus. The Configuration screen's **Scaling** section controls independent preprocessing, vector-classification, LLM/RAG-classification, and extraction concurrency limits from 1 to 16. Saved limits apply to subsequent queue invocations without restarting the Function App. Environment fallbacks are `PREPROCESSING_CONCURRENCY`, `VECTOR_CLASSIFICATION_CONCURRENCY`, `LLM_CLASSIFICATION_CONCURRENCY`, and `EXTRACTION_CONCURRENCY`.
+
+### Large-document extraction
+
+Under **Configuration → Processing**, enable **Chunked extraction** to use hybrid vector and keyword retrieval for OCR and Markdown text at or above the configured character threshold (24,000 by default). Smaller documents retain the existing extraction path; direct PDF processing and spreadsheets are not chunked. Reprocess existing documents to prepare complete text. Table extraction scans all chunks and conflicting scalar values must be reviewed before validation.
+
+On the validation page, select a conflicting candidate to save it with its source evidence, or edit the value manually. Selecting a candidate clears any previous page highlight.
+
+The validation page shows **Chunked** or **Standard** after extraction. Document API responses include `chunkedExtractionUsed` as a boolean, and the validation JSON download includes it as a boolean or `null` when the strategy was not recorded. Older documents show **Unknown** until reprocessed.
+
+Chunked extraction uses the configured embedding provider and can increase processing time, model calls, and cost. Document text is sent to that provider to generate embeddings. Choose an in-memory vector index or the configured Qdrant service. Qdrant stores temporary vectors and identifiers, not raw chunk text; vectors can still be sensitive. Temporary collections are removed after processing, and collections left by interrupted workers are removed on a subsequent chunked Qdrant run after 24 hours. An embedding or vector-service failure marks the document as failed rather than silently switching strategies.
+
+Set **Chunk extraction batch size** to control parallel chunk extraction requests per document (1–16, default 2); 1 preserves sequential processing. Fields are processed sequentially, and the limit applies independently to each active document and Function host. Higher values can increase concurrent provider requests and rate limiting; document-level extraction concurrency remains a separate setting.
+
+Provision the `document-chunk-extraction` Service Bus queue before enabling this option. It is included in the repository's Azure messaging template and local Service Bus emulator configuration. Chunked and regular workers share the configured extraction concurrency limit within each Function host.
 
 Copy the tracked Function settings template before starting the worker:
 
@@ -346,7 +367,7 @@ http://docling-markdown:7072/api/extract-markdown
 - With an AI API key saved under **Configuration → AI Services**, template generation and extraction use the selected provider, and classifier training stores embeddings in Qdrant.
 - When using Ollama from Docker Compose, set the app configuration's Ollama base URL to `http://host.docker.internal:11434`. The `xtract-apps` service also defaults `OLLAMA_MODEL=llama3.2` and `OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b`.
 - If no OpenAI key is configured, the app falls back to deterministic mock values for local UI testing.
-- Classification mode is configured in the application: **Vector** selects Qdrant's top result, **LLM** sends all eligible document types to the model, and **RAG** sends only the configured top-K vector-retrieved types to the model.
+- Classification mode is configured in the application: **Vector** selects Qdrant's top result, **LLM** sends all eligible document types to the model, and **RAG** sends the configured top-K vector-retrieved types to the model. When the complete text exceeds the embedding model's input window, Vector and RAG search every chunk, combine all retrieved eligible types, and use the LLM to choose among them. Long text is summarized in sections before the final LLM decision; this incurs additional model calls and cost. Complete text is prepared independently of the chunked-extraction setting, and older incomplete artifacts are regenerated for classification. Large-document classification requires a configured LLM; if candidates do not fit its context, processing fails rather than silently dropping types.
 - Optional classifier tuning env vars include `CLASSIFIER_EMBED_TEXT_LIMIT=6000`, `CLASSIFIER_TRAIN_CHUNKS_PER_DOCUMENT=6`, and `CLASSIFIER_QUERY_CHUNKS_PER_DOCUMENT=3`.
 - OpenAI requests retry rate-limit and transient errors automatically. Use `OPENAI_MAX_RETRIES=8` to tune retry attempts.
 - The Function queue host is configured with a batch size of 1 so multi-file uploads process steadily without stampeding token-per-minute limits.

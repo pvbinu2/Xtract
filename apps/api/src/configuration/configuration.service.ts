@@ -43,6 +43,10 @@ export class ConfigurationService {
       deleteAfterDownstream: false,
       sendKeyValuePairs: false,
       useOcrForDocumentProcessing: false,
+      chunkedExtractionEnabled: false,
+      chunkedExtractionThreshold: 24000,
+      chunkedExtractionBatchSize: 2,
+      chunkedExtractionIndex: 'memory',
       documentIngestionTrigger: 'event-grid',
       ingestionFileTypes: DEFAULT_INGESTION_FILE_TYPES,
       documentTextMode: 'ocr',
@@ -60,6 +64,8 @@ export class ConfigurationService {
       classificationReasoningEffort: 'low',
       classificationMode: 'vector',
       classificationRagTopK: 5,
+      classificationLowConfidenceFallbackEnabled: false,
+      classificationLowConfidenceThreshold: 60,
       preprocessingConcurrency: 4,
       vectorClassificationConcurrency: 4,
       llmClassificationConcurrency: 1,
@@ -81,6 +87,12 @@ export class ConfigurationService {
       turnstileExpectedHostname: config?.turnstileExpectedHostname?.trim().toLowerCase() || '',
       turnstileExpectedAction: config?.turnstileExpectedAction?.trim() || 'request-demo',
       documentTextMode: config?.documentTextMode === 'markdown' ? 'markdown' : 'ocr',
+      chunkedExtractionEnabled: config?.chunkedExtractionEnabled === true,
+      chunkedExtractionThreshold: Number.isInteger(config?.chunkedExtractionThreshold) && config.chunkedExtractionThreshold >= 1000 && config.chunkedExtractionThreshold <= 10000000
+        ? config.chunkedExtractionThreshold : defaults.chunkedExtractionThreshold,
+      chunkedExtractionBatchSize: Number.isInteger(config?.chunkedExtractionBatchSize) && config.chunkedExtractionBatchSize >= 1 && config.chunkedExtractionBatchSize <= 16
+        ? config.chunkedExtractionBatchSize : defaults.chunkedExtractionBatchSize,
+      chunkedExtractionIndex: config?.chunkedExtractionIndex === 'qdrant' ? 'qdrant' : 'memory',
       documentIngestionTrigger: config?.documentIngestionTrigger === 'blob' ? 'blob' : 'event-grid',
       ingestionFileTypes: normalizeIngestionFileTypes(config?.ingestionFileTypes),
       markdownServiceUrl: config?.markdownServiceUrl || '',
@@ -99,6 +111,8 @@ export class ConfigurationService {
         ? config?.classificationMode
         : defaults.classificationMode,
       classificationRagTopK: Math.min(50, Math.max(1, Number(config?.classificationRagTopK) || defaults.classificationRagTopK)),
+      classificationLowConfidenceFallbackEnabled: Boolean(config?.classificationLowConfidenceFallbackEnabled),
+      classificationLowConfidenceThreshold: Math.min(100, Math.max(1, Number(config?.classificationLowConfidenceThreshold) || defaults.classificationLowConfidenceThreshold)),
       preprocessingConcurrency: Math.min(16, Math.max(1, Number(config?.preprocessingConcurrency) || defaults.preprocessingConcurrency)),
       vectorClassificationConcurrency: Math.min(16, Math.max(1, Number(config?.vectorClassificationConcurrency) || defaults.vectorClassificationConcurrency)),
       llmClassificationConcurrency: Math.min(16, Math.max(1, Number(config?.llmClassificationConcurrency) || defaults.llmClassificationConcurrency)),
@@ -183,6 +197,10 @@ export class ConfigurationService {
     deleteAfterDownstream: boolean;
     sendKeyValuePairs?: boolean;
     useOcrForDocumentProcessing?: boolean;
+    chunkedExtractionEnabled?: boolean;
+    chunkedExtractionThreshold?: number;
+    chunkedExtractionBatchSize?: number;
+    chunkedExtractionIndex?: 'memory' | 'qdrant';
     documentIngestionTrigger?: 'event-grid' | 'blob';
     ingestionFileTypes?: IngestionFileType[];
     documentTextMode?: 'ocr' | 'markdown';
@@ -204,11 +222,22 @@ export class ConfigurationService {
     classificationReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     classificationMode?: 'vector' | 'llm' | 'rag';
     classificationRagTopK?: number;
+    classificationLowConfidenceFallbackEnabled?: boolean;
+    classificationLowConfidenceThreshold?: number;
     preprocessingConcurrency?: number;
     vectorClassificationConcurrency?: number;
     llmClassificationConcurrency?: number;
     extractionConcurrency?: number;
   }): Promise<Configuration> {
+    if (config.chunkedExtractionThreshold !== undefined && (!Number.isInteger(config.chunkedExtractionThreshold) || config.chunkedExtractionThreshold < 1000 || config.chunkedExtractionThreshold > 10000000)) {
+      throw new BadRequestException('Chunked extraction threshold must be an integer between 1,000 and 10,000,000 characters.');
+    }
+    if (config.chunkedExtractionIndex !== undefined && !['memory', 'qdrant'].includes(config.chunkedExtractionIndex)) {
+      throw new BadRequestException('Chunked extraction index must be memory or qdrant.');
+    }
+    if (config.chunkedExtractionBatchSize !== undefined && (!Number.isInteger(config.chunkedExtractionBatchSize) || config.chunkedExtractionBatchSize < 1 || config.chunkedExtractionBatchSize > 16)) {
+      throw new BadRequestException('Chunked extraction batch size must be an integer between 1 and 16.');
+    }
     const deploymentMode = config.deploymentMode === 'subscription' ? 'subscription' : 'self_hosted';
     const subscriptionPlanName = config.subscriptionPlanName?.trim().slice(0, 80) || 'Growth';
     const subscriptionIncludedPages = Math.max(0, Math.floor(Number(config.subscriptionIncludedPages) || 8000));
@@ -230,6 +259,8 @@ export class ConfigurationService {
       ? config.classificationMode
       : 'vector';
     const classificationRagTopK = Math.min(50, Math.max(1, Number(config.classificationRagTopK) || 5));
+    const classificationLowConfidenceFallbackEnabled = Boolean(config.classificationLowConfidenceFallbackEnabled);
+    const classificationLowConfidenceThreshold = Math.min(100, Math.max(1, Number(config.classificationLowConfidenceThreshold) || 60));
     const preprocessingConcurrency = Math.min(16, Math.max(1, Number(config.preprocessingConcurrency) || 4));
     const vectorClassificationConcurrency = Math.min(16, Math.max(1, Number(config.vectorClassificationConcurrency) || 4));
     const llmClassificationConcurrency = Math.min(16, Math.max(1, Number(config.llmClassificationConcurrency) || 1));
@@ -312,6 +343,10 @@ export class ConfigurationService {
           databaseEncryptionKeyVersion: Number(existing?.databaseEncryptionKeyVersion) || 1,
           sendKeyValuePairs: Boolean(config.sendKeyValuePairs),
           useOcrForDocumentProcessing: Boolean(config.useOcrForDocumentProcessing),
+          chunkedExtractionEnabled: config.chunkedExtractionEnabled === true,
+          chunkedExtractionThreshold: config.chunkedExtractionThreshold ?? 24000,
+          chunkedExtractionBatchSize: config.chunkedExtractionBatchSize ?? existing?.chunkedExtractionBatchSize ?? 2,
+          chunkedExtractionIndex: config.chunkedExtractionIndex ?? 'memory',
           documentIngestionTrigger,
           ingestionFileTypes,
           documentTextMode,
@@ -332,6 +367,8 @@ export class ConfigurationService {
           classificationReasoningEffort: config.classificationReasoningEffort || 'low',
           classificationMode,
           classificationRagTopK,
+          classificationLowConfidenceFallbackEnabled,
+          classificationLowConfidenceThreshold,
           preprocessingConcurrency,
           vectorClassificationConcurrency,
           llmClassificationConcurrency,

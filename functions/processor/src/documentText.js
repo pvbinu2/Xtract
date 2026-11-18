@@ -135,6 +135,7 @@ async function extractMarkdownContent(filePath, options = {}) {
     body: JSON.stringify({
       fileName: options.fileName || path.basename(filePath),
       fileBase64: fs.readFileSync(filePath).toString('base64'),
+      ...(options.documentId ? { documentId: options.documentId } : {}),
     }),
   });
 
