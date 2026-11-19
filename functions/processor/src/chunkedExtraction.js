@@ -121,9 +121,23 @@ async function extractChunkedDocument({ text, fields, indexOptions, extractChunk
 
     for (const [fieldIndex, field] of tableFields.entries()) {
       const base = { key: field.key, label: field.label, type: field.type };
-      log(`Processing table field ${fieldIndex + 1}/${tableFields.length}.`);
-      for (let offset = 0; offset < chunks.length; offset += batchSize) {
-        const batch = chunks.slice(offset, offset + batchSize);
+      const query = [
+        field.label,
+        field.key.replace(/_/g, ' '),
+        field.description,
+        ...(field.columns || []).flatMap((column) => [
+          column.label,
+          column.key.replace(/_/g, ' '),
+          column.description,
+        ]),
+      ].filter(Boolean).join(' ');
+      const retrieved = await index.search(query, Math.min(5, chunks.length));
+      const selected = [...new Set(retrieved.flatMap((chunk) => [
+        chunks[chunk.index - 1], chunk, chunks[chunk.index + 1],
+      ]).filter(Boolean))].sort((a, b) => a.index - b.index);
+      log(`Processing table field ${fieldIndex + 1}/${tableFields.length} (selectedChunks=${selected.length}).`);
+      for (let offset = 0; offset < selected.length; offset += batchSize) {
+        const batch = selected.slice(offset, offset + batchSize);
         const results = await Promise.allSettled(batch.map((chunk) => {
           log(`Processing table field ${fieldIndex + 1}/${tableFields.length}, chunk ${chunk.index + 1}/${chunks.length}.`);
           return Promise.resolve().then(() => extractChunk({ type: 'table', field }, chunk));

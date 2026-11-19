@@ -61,7 +61,43 @@ test('processes every table chunk and retains repeated rows from different sourc
   assert.notEqual(result.values[0].sourceEvidence[0].start, result.values[0].sourceEvidence[1].start);
 });
 
-test('groups scalar fields per chunk and extracts each table field in a separate full-document pass', async () => {
+test('uses table description and column names to retrieve chunks with adjacent context', async () => {
+  const searchQueries = [];
+  const processedChunks = [];
+  const result = await extractChunkedDocument({
+    text: 'a'.repeat(16000),
+    fields: [{
+      key: 'line_items',
+      label: 'Line items',
+      description: 'Purchased goods and services',
+      type: 'table',
+      columns: [
+        { key: 'sku', label: 'Product code', description: 'Item identifier' },
+        { key: 'amount', label: 'Line total', description: 'Extended price' },
+      ],
+    }],
+    createIndex: async (chunks) => ({
+      metrics: {},
+      search: async (query) => {
+        searchQueries.push(query);
+        return [chunks[2]];
+      },
+      close: async () => {},
+    }),
+    extractChunk: async (_, chunk) => {
+      processedChunks.push(chunk.index);
+      return { value: [{ value: { source: chunk.index }, evidence: 'a' }], metrics };
+    },
+  });
+  assert.equal(searchQueries.length, 1);
+  for (const term of ['Purchased goods and services', 'Product code', 'sku', 'Item identifier', 'Line total', 'amount', 'Extended price']) {
+    assert.ok(searchQueries[0].includes(term));
+  }
+  assert.deepEqual(processedChunks, [1, 2, 3]);
+  assert.deepEqual(result.values[0].value.map((row) => row.source), [1, 2, 3]);
+});
+
+test('groups scalar fields and extracts each table field in a separate retrieved-chunk pass', async () => {
   const fields = [
     { key: 'items_a', label: 'Items A', type: 'table' },
     { key: 'invoice_number', label: 'Invoice number', type: 'string' },
@@ -92,8 +128,8 @@ test('groups scalar fields per chunk and extracts each table field in a separate
   assert.ok(scalarCalls.length > 0);
   assert.ok(scalarCalls.every((call) => call.fieldKeys.join(',') === 'invoice_number,vendor'));
   assert.equal(scalarCalls.length, new Set(scalarCalls.map((call) => call.chunk)).size);
-  assert.equal(tableACalls.length, 3);
-  assert.equal(tableBCalls.length, 3);
+  assert.equal(tableACalls.length, 2);
+  assert.equal(tableBCalls.length, 2);
   assert.deepEqual(result.values.map((value) => value.key), fields.map((item) => item.key));
   assert.equal(result.values[1].value, 'A');
   assert.equal(result.values[3].value, 'B');
@@ -151,7 +187,7 @@ test('limits concurrent chunk requests and preserves table row order despite out
     text,
     fields: [{ key: 'items', label: 'Items', type: 'table' }],
     batchSize: 2,
-    createIndex: fakeIndex([0]).create,
+    createIndex: fakeIndex([0, 2]).create,
     extractChunk: async (_, chunk) => {
       active += 1;
       peak = Math.max(peak, active);
@@ -177,7 +213,10 @@ test('waits for all in-flight requests before closing the index after a failure'
     text: 'a'.repeat(12000),
     fields: [{ key: 'items', label: 'Items', type: 'table' }],
     batchSize: 2,
-    createIndex: async () => ({ close: async () => { closed = true; } }),
+    createIndex: async (chunks) => ({
+      search: async () => [chunks[0]],
+      close: async () => { closed = true; },
+    }),
     extractChunk: (_, chunk) => {
       if (chunk.index === 0) throw new Error('request failed');
       started();
