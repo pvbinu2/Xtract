@@ -25,8 +25,8 @@ test('finds a missing scalar in a non-retrieved chunk', async () => {
     text, fields: [field], createIndex: index.create,
     log: (message) => logs.push(message),
     extractChunk: async (_, chunk) => chunk.index === 2
-      ? { value: 'A12', evidence: 'Invoice number: A12', confidence: 0.9, metrics }
-      : { value: '', metrics },
+      ? { values: [{ key: field.key, value: 'A12', evidence: 'Invoice number: A12', confidence: 0.9 }], metrics }
+      : { values: [{ key: field.key, value: '', evidence: '', confidence: 0 }], metrics },
   });
   assert.equal(result.values[0].value, 'A12');
   assert.equal(result.values[0].sourceEvidence[0].start, 8000);
@@ -42,8 +42,8 @@ test('flags conflicting values with evidence instead of selecting one', async ()
   const result = await extractChunkedDocument({
     text: `${'A1 '.repeat(1333)}A1 B2`, fields: [field], createIndex: index.create,
     extractChunk: async (_, chunk) => chunk.index === 0
-      ? { value: 'A1', evidence: 'A1', metrics }
-      : { value: 'B2', evidence: 'B2', metrics },
+      ? { values: [{ key: field.key, value: 'A1', evidence: 'A1' }], metrics }
+      : { values: [{ key: field.key, value: 'B2', evidence: 'B2' }], metrics },
   });
   assert.equal(result.values[0].needsReview, true);
   assert.equal(result.values[0].value, '');
@@ -61,11 +61,49 @@ test('processes every table chunk and retains repeated rows from different sourc
   assert.notEqual(result.values[0].sourceEvidence[0].start, result.values[0].sourceEvidence[1].start);
 });
 
+test('groups scalar fields per chunk and extracts each table field in a separate full-document pass', async () => {
+  const fields = [
+    { key: 'items_a', label: 'Items A', type: 'table' },
+    { key: 'invoice_number', label: 'Invoice number', type: 'string' },
+    { key: 'items_b', label: 'Items B', type: 'table' },
+    { key: 'vendor', label: 'Vendor', type: 'string' },
+  ];
+  const calls = [];
+  const text = `${'A B\n'.repeat(2500)}`;
+  const result = await extractChunkedDocument({
+    text, fields, createIndex: fakeIndex([0]).create,
+    extractChunk: async (operation, chunk) => {
+      calls.push({ type: operation.type, fieldKeys: operation.fields?.map((item) => item.key), fieldKey: operation.field?.key, chunk: chunk.index });
+      if (operation.type === 'scalar') {
+        return {
+          values: [
+            { key: 'invoice_number', value: 'A', evidence: 'A', confidence: 0.9 },
+            { key: 'vendor', value: 'B', evidence: 'B', confidence: 0.8 },
+          ],
+          metrics,
+        };
+      }
+      return { value: [], metrics };
+    },
+  });
+  const scalarCalls = calls.filter((call) => call.type === 'scalar');
+  const tableACalls = calls.filter((call) => call.fieldKey === 'items_a');
+  const tableBCalls = calls.filter((call) => call.fieldKey === 'items_b');
+  assert.ok(scalarCalls.length > 0);
+  assert.ok(scalarCalls.every((call) => call.fieldKeys.join(',') === 'invoice_number,vendor'));
+  assert.equal(scalarCalls.length, new Set(scalarCalls.map((call) => call.chunk)).size);
+  assert.equal(tableACalls.length, 3);
+  assert.equal(tableBCalls.length, 3);
+  assert.deepEqual(result.values.map((value) => value.key), fields.map((item) => item.key));
+  assert.equal(result.values[1].value, 'A');
+  assert.equal(result.values[3].value, 'B');
+});
+
 test('rejects fabricated evidence and closes the index', async () => {
   const index = fakeIndex([0]);
   await assert.rejects(extractChunkedDocument({
     text: 'Invoice A1', fields: [field], createIndex: index.create,
-    extractChunk: async () => ({ value: 'B2', evidence: 'B2', metrics }),
+    extractChunk: async () => ({ values: [{ key: field.key, value: 'B2', evidence: 'B2' }], metrics }),
   }), /not found/);
   assert.equal(index.wasClosed(), true);
 });

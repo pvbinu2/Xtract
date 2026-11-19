@@ -532,6 +532,94 @@ async function extractChunkField(document, documentType, field, chunk, aiOptions
   };
 }
 
+async function extractChunkScalars(document, documentType, fields, chunk, aiOptions, textSourceLabel) {
+  const schema = JSON.stringify(schemaForFields(fields));
+  if (schema.length > 12000) throw new Error('Combined scalar schema exceeds the chunk extraction limit.');
+  async function request(requestedFields, issues, previous) {
+    const correction = issues
+      ? `\nVerification issues: ${JSON.stringify(issues)}\nPrevious extraction: ${JSON.stringify(previous)}\nCorrect the result using only the chunk and provide exact evidence.`
+      : '';
+    const prompt = [
+      `Extract the scalar fields from this part of a ${documentType.name} document.`,
+      'Return JSON only. Extract only values found in the target chunk; surrounding context is for interpretation only.',
+      'Return every field in the schema exactly once. Use an empty string and empty evidence when a value is absent. Do not infer missing values.',
+      'Evidence for a non-empty value must be an exact, contiguous quote from the target chunk, not a paraphrase.',
+      ...(chunk.contextBefore ? [`Context before the target chunk:\n${chunk.contextBefore}`] : []),
+      ...(chunk.contextAfter ? [`Context after the target chunk:\n${chunk.contextAfter}`] : []),
+      'Return this shape: {"fields":[{"key":"field_key","value":"extracted value","evidence":"exact source quote or empty string","confidence":0.9}]}',
+      `Schema: ${JSON.stringify(schemaForFields(requestedFields))}`,
+      `Target chunk:\n${chunk.text}`,
+    ].join('\n');
+    if (prompt.length + correction.length > 24000) throw new Error('Combined scalar chunk extraction prompt exceeds the request budget.');
+    const response = await createJsonResponse(
+      [{ type: 'input_text', text: prompt + correction }],
+      aiOptions,
+      `Chunk extraction for document ${document._id || document.fileName}`,
+    );
+    if (!response) throw new Error('An AI provider must be configured for chunked extraction.');
+    const parsed = parseJsonObject(response.outputText);
+    if (!Array.isArray(parsed.fields)) throw new Error('Missing fields in scalar chunk response.');
+    const requestedByKey = new Map(requestedFields.map((field) => [field.key, field]));
+    const extractedByKey = new Map();
+    for (const extracted of parsed.fields) {
+      if (!extracted || !requestedByKey.has(extracted.key) || extractedByKey.has(extracted.key) ||
+        !Object.prototype.hasOwnProperty.call(extracted, 'value') ||
+        (extracted.value !== null && typeof extracted.value === 'object')) {
+        throw new Error('Invalid scalar field in chunk response.');
+      }
+      extractedByKey.set(extracted.key, extracted);
+    }
+    if (extractedByKey.size !== requestedFields.length) throw new Error('Scalar chunk response omitted one or more requested fields.');
+    return {
+      values: requestedFields.map((field) => {
+        const extracted = extractedByKey.get(field.key);
+        return {
+          key: field.key,
+          value: extracted.value ?? '',
+          evidence: extracted.evidence,
+          confidence: typeof extracted.confidence === 'number' && extracted.confidence >= 0 && extracted.confidence <= 1
+            ? extracted.confidence : undefined,
+        };
+      }),
+      metrics: processingMetricsFromResponse(response.raw, response.model),
+    };
+  }
+
+  let result = await request(fields);
+  let metrics = result.metrics;
+  if (documentType.extractionVerification) {
+    for (const field of fields) {
+      const fieldValue = result.values.find((item) => item.key === field.key);
+      if (JSON.stringify(schemaForFields([field])).length + chunk.text.length + JSON.stringify(fieldValue.value).length > 20000) {
+        throw new Error(`Chunk verification input for ${field.key} exceeds the request budget.`);
+      }
+      const verification = await verifyExtractionWithOpenAI({
+        aiOptions,
+        document,
+        documentType,
+        selectedFields: [field],
+        values: [{
+          key: field.key,
+          label: field.label,
+          type: field.type,
+          value: fieldValue.value,
+          confidence: fieldValue.confidence,
+        }],
+        useOcr: true,
+        documentText: chunk.text,
+        textSourceLabel,
+      });
+      metrics = combineMetrics(metrics, verification.metrics);
+      if (verification.needsCorrection) {
+        const correction = await request([field], verification.issues, [fieldValue]);
+        metrics = combineMetrics(metrics, correction.metrics);
+        result.values = result.values.map((item) => item.key === field.key ? correction.values[0] : item);
+      }
+    }
+  }
+  return { values: result.values, metrics };
+}
+
 async function extractChunkedValues(document, documentType, documentText, textMode, aiOptions, index, batchSize, context) {
   if (providerName(aiOptions) !== 'ollama' && !getOpenAI(aiOptions)) {
     throw new Error('An AI provider must be configured for chunked extraction.');
@@ -551,10 +639,15 @@ async function extractChunkedValues(document, documentType, documentText, textMo
       documentId: String(document._id),
       embeddingOptions: { ...aiOptions, aiProvider: 'openai', apiKey: aiOptions.openAiApiKey },
     },
-    extractChunk: (field, chunk) => extractChunkField(
-      document, documentType, field, chunk, requestOptions,
-      textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text',
-    ),
+    extractChunk: (operation, chunk) => operation.type === 'table'
+      ? extractChunkField(
+        document, documentType, operation.field, chunk, requestOptions,
+        textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text',
+      )
+      : extractChunkScalars(
+        document, documentType, operation.fields, chunk, requestOptions,
+        textMode === 'markdown' ? 'Docling markdown' : 'locally extracted OCR/text',
+      ),
   });
   return { ...result, spatialItems: await extractDocumentSpatialItems(document.filePath) };
 }

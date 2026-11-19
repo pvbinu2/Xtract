@@ -90,6 +90,16 @@ test('routes large prepared text through the separate chunk worker', async () =>
     let value = target.includes('Invoice: A1')
       ? { value: 'A1', evidence: 'Invoice: A1', confidence: 0.95 }
       : { value: '', confidence: 0 };
+    if (prompt.includes('Extract the scalar fields')) {
+      value = {
+        fields: [{
+          key: 'invoice_number',
+          value: target.includes('Invoice: A1') ? 'A1' : '',
+          evidence: target.includes('Invoice: A1') ? 'Invoice: A1' : '',
+          confidence: 0.95,
+        }],
+      };
+    }
     if (prompt.includes('Return this exact shape:')) {
       value = { fields: [{ key: 'invoice_number', value: 'A1', confidence: 0.95 }] };
     }
@@ -128,7 +138,7 @@ test('routes large prepared text through the separate chunk worker', async () =>
     assert.equal(document.extractedData[0].sourceEvidence[0].quote, 'Invoice: A1');
     assert.equal(document.processingMetrics.embeddingCostUsd, 0.04);
     assert.equal(recorded, 1);
-    assert.ok(logs.some((message) => message.includes('Processing field')));
+    assert.ok(logs.some((message) => message.includes('Processing scalar fields')));
     assert.ok(logs.some((message) => message.includes('batchSize=1')));
     assert.ok(logs.every((message) => message.startsWith(`[correlationId=${document._id}]`)));
     await registrations.get('chunkExtractDocument').handler(JSON.parse(message), context);

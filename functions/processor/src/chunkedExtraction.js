@@ -56,73 +56,118 @@ async function extractChunkedDocument({ text, fields, indexOptions, extractChunk
   let extractionError;
   try {
     const values = [];
-    for (const [fieldIndex, field] of fields.entries()) {
-      const base = { key: field.key, label: field.label, type: field.type };
-      const query = [field.label, field.key.replace(/_/g, ' '), field.description, ...(field.columns || []).map((column) => column.label)].filter(Boolean).join(' ');
-      const retrieved = field.type === 'table' ? chunks : await index.search(query, Math.min(5, chunks.length));
-      const selected = field.type === 'table' ? chunks : [...new Set(retrieved.flatMap((chunk) => [
+    const scalarFields = fields.filter((field) => field.type !== 'table');
+    const tableFields = fields.filter((field) => field.type === 'table');
+    const scalarCandidates = new Map(scalarFields.map((field) => [field.key, []]));
+    const tableCandidates = new Map(tableFields.map((field) => [field.key, []]));
+
+    if (scalarFields.length) {
+      const query = scalarFields.map((field) => [
+        field.label, field.key.replace(/_/g, ' '), field.description,
+      ].filter(Boolean).join(' ')).join(' ');
+      const retrieved = await index.search(query, Math.min(5, chunks.length));
+      const selected = [...new Set(retrieved.flatMap((chunk) => [
         chunks[chunk.index - 1], chunk, chunks[chunk.index + 1],
       ]).filter(Boolean))].sort((a, b) => a.index - b.index);
-      log(`Processing field ${fieldIndex + 1}/${fields.length} (selectedChunks=${selected.length}, table=${field.type === 'table'}).`);
-      const candidates = [];
+      log(`Processing scalar fields (fieldCount=${scalarFields.length}, selectedChunks=${selected.length}).`);
       const visited = new Set();
-      const processResult = (chunk, result) => {
+      const allScalarKeys = new Set(scalarFields.map((field) => field.key));
+      const fieldsByKey = new Map(scalarFields.map((field) => [field.key, field]));
+      const processResult = (chunk, result, targetKeys = allScalarKeys) => {
         addMetrics(metrics, result.metrics);
-        if (field.type === 'table') {
-          if (!Array.isArray(result.value)) throw new Error(`Invalid table extraction result for ${field.key}.`);
-          let nextEvidenceOffset = 0;
-          for (const row of result.value) {
-            if (!row || typeof row.value !== 'object' || Array.isArray(row.value) || row.value === null) {
-              throw new Error(`Invalid table row for ${field.key}.`);
-            }
-            const evidence = evidenceFor(chunk, row.evidence, nextEvidenceOffset);
-            nextEvidenceOffset = evidence.end - chunk.start;
-            candidates.push({ value: row.value, evidence, confidence: result.confidence });
+        if (!Array.isArray(result.values)) throw new Error('Invalid scalar extraction result.');
+        const seen = new Set();
+        for (const extracted of result.values) {
+          if (!extracted || !fieldsByKey.has(extracted.key) || seen.has(extracted.key)) {
+            throw new Error('Invalid scalar field in chunk extraction result.');
           }
-        } else if (hasValue(result.value)) {
-          candidates.push({ value: result.value, evidence: evidenceFor(chunk, result.evidence), confidence: result.confidence });
+          seen.add(extracted.key);
+          if (!hasValue(extracted.value)) continue;
+          if (typeof extracted.value === 'object') throw new Error(`Invalid scalar value for ${extracted.key}.`);
+          if (targetKeys.has(extracted.key)) {
+            scalarCandidates.get(extracted.key).push({
+              value: extracted.value,
+              evidence: evidenceFor(chunk, extracted.evidence),
+              confidence: extracted.confidence,
+            });
+          }
         }
+        if (seen.size !== scalarFields.length) throw new Error('Scalar chunk result omitted one or more requested fields.');
       };
-      const processChunks = async (items) => {
+      const processChunks = async (items, targetKeys = allScalarKeys) => {
         for (let offset = 0; offset < items.length; offset += batchSize) {
           const batch = items.slice(offset, offset + batchSize);
           const results = await Promise.allSettled(batch.map((chunk) => {
             visited.add(chunk.index);
-            log(`Processing field ${fieldIndex + 1}/${fields.length}, chunk ${chunk.index + 1}/${chunks.length}.`);
-            return Promise.resolve().then(() => extractChunk(field, chunk));
+            log(`Processing scalar fields, chunk ${chunk.index + 1}/${chunks.length}.`);
+            return Promise.resolve().then(() => extractChunk({ type: 'scalar', fields: scalarFields }, chunk));
           }));
           const failure = results.find((result) => result.status === 'rejected');
           if (failure) throw failure.reason;
-          results.forEach((result, index) => processResult(batch[index], result.value));
+          results.forEach((result, index) => processResult(batch[index], result.value, targetKeys));
         }
       };
       await processChunks(selected);
-      if (field.type !== 'table' && !candidates.length) {
-        log(`No candidates in selected chunks for field ${fieldIndex + 1}; scanning remaining chunks.`);
-        await processChunks(chunks.filter((chunk) => !visited.has(chunk.index)));
+      const missingKeys = new Set(scalarFields
+        .filter((field) => scalarCandidates.get(field.key).length === 0)
+        .map((field) => field.key));
+      if (missingKeys.size) {
+        log(`No candidates in selected chunks for ${missingKeys.size} scalar field(s); scanning remaining chunks.`);
+        const remaining = chunks.filter((chunk) => !visited.has(chunk.index));
+        await processChunks(remaining, missingKeys);
       }
-      log(`Processed field ${fieldIndex + 1}/${fields.length} (visitedChunks=${visited.size}, candidates=${candidates.length}).`);
-
-      if (field.type === 'table') {
-        candidates.sort((a, b) => a.evidence.start - b.evidence.start);
-        values.push({ ...base, value: candidates.map((candidate) => candidate.value), sourceEvidence: candidates.map((candidate) => candidate.evidence) });
-      } else {
-        const unique = new Map();
-        for (const candidate of candidates) {
-          const key = JSON.stringify(candidate.value);
-          if (!unique.has(key)) unique.set(key, candidate);
-        }
-        if (unique.size > 1) {
-          values.push({ ...base, value: '', confidence: 0, needsReview: true, reviewCandidates: [...unique.values()] });
-        } else if (unique.size === 1) {
-          const candidate = unique.values().next().value;
-          values.push({ ...base, value: candidate.value, confidence: candidate.confidence, sourceEvidence: [candidate.evidence] });
-        } else {
-          values.push({ ...base, value: '', confidence: 0 });
-        }
-      }
+      log(`Processed scalar fields (visitedChunks=${visited.size}, missingFields=${missingKeys.size}).`);
     }
-    return { values, metrics, embeddingMetrics: index.metrics };
+
+    for (const [fieldIndex, field] of tableFields.entries()) {
+      const base = { key: field.key, label: field.label, type: field.type };
+      log(`Processing table field ${fieldIndex + 1}/${tableFields.length}.`);
+      for (let offset = 0; offset < chunks.length; offset += batchSize) {
+        const batch = chunks.slice(offset, offset + batchSize);
+        const results = await Promise.allSettled(batch.map((chunk) => {
+          log(`Processing table field ${fieldIndex + 1}/${tableFields.length}, chunk ${chunk.index + 1}/${chunks.length}.`);
+          return Promise.resolve().then(() => extractChunk({ type: 'table', field }, chunk));
+        }));
+        const failure = results.find((result) => result.status === 'rejected');
+        if (failure) throw failure.reason;
+        results.forEach((result, index) => {
+          const { value } = result.value;
+          addMetrics(metrics, result.value.metrics);
+          if (!Array.isArray(value)) throw new Error(`Invalid table extraction result for ${field.key}.`);
+          let nextEvidenceOffset = 0;
+          for (const row of value) {
+            if (!row || typeof row.value !== 'object' || Array.isArray(row.value) || row.value === null) {
+              throw new Error(`Invalid table row for ${field.key}.`);
+            }
+            const evidence = evidenceFor(batch[index], row.evidence, nextEvidenceOffset);
+            nextEvidenceOffset = evidence.end - batch[index].start;
+            tableCandidates.get(field.key).push({ value: row.value, evidence });
+          }
+        });
+      }
+      const candidates = tableCandidates.get(field.key).sort((a, b) => a.evidence.start - b.evidence.start);
+      values.push({ ...base, value: candidates.map((candidate) => candidate.value), sourceEvidence: candidates.map((candidate) => candidate.evidence) });
+    }
+
+    const scalarValues = scalarFields.map((field) => {
+      const base = { key: field.key, label: field.label, type: field.type };
+      const unique = new Map();
+      for (const candidate of scalarCandidates.get(field.key)) {
+        const key = JSON.stringify(candidate.value);
+        if (!unique.has(key)) unique.set(key, candidate);
+      }
+      if (unique.size > 1) {
+        return { ...base, value: '', confidence: 0, needsReview: true, reviewCandidates: [...unique.values()] };
+      }
+      if (unique.size === 1) {
+        const candidate = unique.values().next().value;
+        return { ...base, value: candidate.value, confidence: candidate.confidence, sourceEvidence: [candidate.evidence] };
+      }
+      return { ...base, value: '', confidence: 0 };
+    });
+    const valuesByKey = new Map([...scalarValues, ...values].map((value) => [value.key, value]));
+    const orderedValues = fields.map((field) => valuesByKey.get(field.key));
+    return { values: orderedValues, metrics, embeddingMetrics: index.metrics };
   } catch (error) {
     extractionError = error;
     throw error;
