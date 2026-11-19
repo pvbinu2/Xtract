@@ -150,6 +150,41 @@ async function markDocumentFailed(documents, documentId, error, guard) {
   );
 }
 
+async function recordDocumentProcessingError(documents, message, functionName, error) {
+  const payload = resolveMessage(message);
+  const documentId = payload.documentId || payload.id;
+  if (!documentId || !ObjectId.isValid(documentId)) return false;
+
+  const id = new ObjectId(documentId);
+  const document = await documents.findOne({ _id: id });
+  const processingStatuses = new Set([
+    'received',
+    'preprocessing_started',
+    'preprocessing_completed',
+    'classification_started',
+    'classification_completed',
+    'extraction_started',
+    'uploaded',
+    'processing',
+  ]);
+  if (!document || !processingStatuses.has(document.status)) return false;
+  if (document.chunkExtractionAttemptId &&
+    document.chunkExtractionAttemptId !== payload.chunkExtractionAttemptId) return false;
+
+  const guard = { status: document.status };
+  if (document.revision !== undefined) guard.revision = document.revision;
+  if (document.chunkExtractionAttemptId) guard.chunkExtractionAttemptId = document.chunkExtractionAttemptId;
+  const details = error instanceof Error
+    ? error.stack || `${error.name}: ${error.message}`
+    : String(error);
+  return markDocumentFailed(
+    documents,
+    id,
+    `Unhandled ${functionName} processing error:\n${details}`,
+    guard,
+  );
+}
+
 async function beginDocumentStage(documents, documentId, status) {
   const now = new Date();
   await documents.updateOne(
@@ -371,5 +406,6 @@ module.exports = {
   resolveDocumentId,
   resolvePreparedDocumentText,
   readExtractedData,
+  recordDocumentProcessingError,
   resolveMessage,
 };

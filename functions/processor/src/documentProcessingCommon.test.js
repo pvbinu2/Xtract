@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { transitionDocumentStatus } = require('./documentProcessingCommon');
+const { recordDocumentProcessingError, transitionDocumentStatus } = require('./documentProcessingCommon');
 
 test('guarded transition atomically updates status and unsets fields', async () => {
   const calls = [];
@@ -29,4 +29,27 @@ test('a stale guarded transition does not unset fields', async () => {
   );
   assert.equal(result, false);
   assert.equal(calls, 1);
+});
+
+test('does not apply an uncaught chunk error to a different extraction attempt', async () => {
+  let updates = 0;
+  const documents = {
+    findOne: async () => ({
+      status: 'extraction_started',
+      revision: 3,
+      chunkExtractionAttemptId: 'current-attempt',
+    }),
+    updateOne: async () => {
+      updates += 1;
+      return { matchedCount: 1 };
+    },
+  };
+  const recorded = await recordDocumentProcessingError(
+    documents,
+    { documentId: '0123456789abcdef01234567', chunkExtractionAttemptId: 'stale-attempt' },
+    'chunkExtractDocument',
+    new Error('stale request failed'),
+  );
+  assert.equal(recorded, false);
+  assert.equal(updates, 0);
 });

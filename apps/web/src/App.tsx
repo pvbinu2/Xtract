@@ -6571,6 +6571,12 @@ function DocumentList({
   const [reclassifyDocumentType, setReclassifyDocumentType] = useState('');
   const categories = Array.from(new Set(documentTypes.map((type) => type.category))).sort();
 
+  useEffect(() => {
+    if (!flowTarget) return;
+    const latestDocument = documents.find((document) => document._id === flowTarget._id);
+    if (latestDocument && latestDocument !== flowTarget) setFlowTarget(latestDocument);
+  }, [documents, flowTarget]);
+
   const reclassifyAvailableTypes = documentTypes.filter((type) => type.category === reclassifyCategory);
   const selectedDocuments = documents.filter((document) => selectedDocumentIds.has(document._id));
   const selectedUnlockedDocuments = selectedDocuments.filter(
@@ -7247,6 +7253,7 @@ function DocumentFlowDialog({
   document: IncomingDocument;
   onClose: () => void;
 }) {
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const baseStages = [
     { key: 'received', label: 'Received', startedStatus: 'received', completedStatus: 'received' },
     { key: 'preprocessed', label: 'Preprocessed', startedStatus: 'preprocessing_started', completedStatus: 'preprocessing_completed' },
@@ -7297,111 +7304,141 @@ function DocumentFlowDialog({
   const processingTimeIncludingQueue = Math.max(0, processingEnd - processingStart);
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="confirm-modal document-flow-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-heading">
-          <div>
-            <h2>Document flow</h2>
-            <p>{document.originalName}</p>
-          </div>
-          <button className="icon-button" title="Close document flow" onClick={onClose}>
-            <X size={17} />
-          </button>
-        </div>
-        <div className="document-flow-summary">
-          <div>
-            <span>Processing time</span>
-            <strong>{formatDurationMilliseconds(processingTimeExcludingQueue)}</strong>
-            <small>{isUnsupported ? 'Processing was not started' : 'Function execution only'}</small>
-          </div>
-          {!isUnsupported && (
+    <>
+      <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+        <section className="confirm-modal document-flow-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-heading">
             <div>
-              <span>Total elapsed time</span>
-              <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
-              <small>Including queue wait</small>
+              <h2>Document flow</h2>
+              <p>{document.originalName}</p>
+            </div>
+            <button className="icon-button" title="Close document flow" onClick={onClose}>
+              <X size={17} />
+            </button>
+          </div>
+          <div className="document-flow-summary">
+            <div>
+              <span>Processing time</span>
+              <strong>{formatDurationMilliseconds(processingTimeExcludingQueue)}</strong>
+              <small>{isUnsupported ? 'Processing was not started' : 'Function execution only'}</small>
+            </div>
+            {!isUnsupported && (
+              <div>
+                <span>Total elapsed time</span>
+                <strong>{formatDurationMilliseconds(processingTimeIncludingQueue)}</strong>
+                <small>Including queue wait</small>
+              </div>
+            )}
+          </div>
+          {document.status === 'failed' && (
+            <div className="document-flow-error">
+              <AlertTriangle size={18} />
+              <span>Document processing failed.</span>
+              <button type="button" className="document-error-link" onClick={() => setShowErrorDetails(true)}>
+                View error details
+              </button>
             </div>
           )}
-        </div>
-        <div className="document-flow">
-          {visibleStages.map((stage, index) => {
-            const timing = stage.timing;
-            const nextStage = visibleStages[index + 1];
-            const nextTiming = nextStage?.timing;
-            const isCurrent = document.status === stage.startedStatus;
-            const completed = Boolean(timing?.endTime);
-            const showQueueWait = Boolean(nextStage && timing?.endTime && nextTiming?.startTime);
-            return (
-              <Fragment key={stage.key}>
-                <div className={`document-flow-stage ${isCurrent ? stage.startedStatus : stage.completedStatus}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+          <div className="document-flow">
+            {visibleStages.map((stage, index) => {
+              const timing = stage.timing;
+              const nextStage = visibleStages[index + 1];
+              const nextTiming = nextStage?.timing;
+              const isCurrent = document.status === stage.startedStatus;
+              const completed = Boolean(timing?.endTime);
+              const showQueueWait = Boolean(nextStage && timing?.endTime && nextTiming?.startTime);
+              return (
+                <Fragment key={stage.key}>
+                  <div className={`document-flow-stage ${isCurrent ? stage.startedStatus : stage.completedStatus}${isCurrent ? ' current' : ''}${completed ? ' completed' : ''}`}>
+                    <div className="document-flow-marker">
+                      {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
+                      {index < visibleStages.length - 1 || visibleTerminalStatuses.length > 0 ? <span /> : null}
+                    </div>
+                    <div className="document-flow-stage-card">
+                      <div className="document-flow-stage-heading">
+                        <strong>{stage.label}</strong>
+                        <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>Start time</dt>
+                          <dd>{formatStageTimestamp(timing?.startTime)}</dd>
+                        </div>
+                        <div>
+                          <dt>End time</dt>
+                          <dd>{formatStageTimestamp(timing?.endTime)}</dd>
+                        </div>
+                        <div>
+                          <dt>Duration</dt>
+                          <dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </div>
+                  {showQueueWait && (
+                    <div className="document-queue-wait">
+                      <div className="document-queue-wait-icon">
+                        <Clock3 size={16} />
+                      </div>
+                      <div>
+                        <strong>Queue wait for {nextStage.label}</strong>
+                        <span>
+                          {formatStageTimestamp(timing?.endTime)}
+                          {' → '}
+                          {nextTiming?.startTime ? formatStageTimestamp(nextTiming.startTime) : 'Waiting'}
+                        </span>
+                      </div>
+                      <em>{formatStageDuration(timing?.endTime, nextTiming?.startTime)}</em>
+                    </div>
+                  )}
+                </Fragment>
+              );
+            })}
+            {visibleTerminalStatuses.map((status, index) => {
+              const timing = [...recordedTimings].reverse().find((item) => item.status === status);
+              return (
+                <div className={`document-flow-stage ${status} completed`} key={status}>
                   <div className="document-flow-marker">
-                    {completed ? <CheckCircle2 size={18} /> : <Clock3 size={18} />}
-                    {index < visibleStages.length - 1 || visibleTerminalStatuses.length > 0 ? <span /> : null}
+                    <CheckCircle2 size={18} />
+                    {index < visibleTerminalStatuses.length - 1 && <span />}
                   </div>
                   <div className="document-flow-stage-card">
                     <div className="document-flow-stage-heading">
-                      <strong>{stage.label}</strong>
-                      <span>{completed ? 'Completed' : isCurrent ? 'In progress' : timing ? 'Started' : 'Not started'}</span>
+                      <strong>{documentStatusLabel(status)}</strong>
+                      <span>Completed</span>
                     </div>
                     <dl>
-                      <div>
-                        <dt>Start time</dt>
-                        <dd>{formatStageTimestamp(timing?.startTime)}</dd>
-                      </div>
-                      <div>
-                        <dt>End time</dt>
-                        <dd>{formatStageTimestamp(timing?.endTime)}</dd>
-                      </div>
-                      <div>
-                        <dt>Duration</dt>
-                        <dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd>
-                      </div>
+                      <div><dt>Start time</dt><dd>{formatStageTimestamp(timing?.startTime)}</dd></div>
+                      <div><dt>End time</dt><dd>{formatStageTimestamp(timing?.endTime)}</dd></div>
+                      <div><dt>Duration</dt><dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd></div>
                     </dl>
                   </div>
                 </div>
-                {showQueueWait && (
-                  <div className="document-queue-wait">
-                    <div className="document-queue-wait-icon">
-                      <Clock3 size={16} />
-                    </div>
-                    <div>
-                      <strong>Queue wait for {nextStage.label}</strong>
-                      <span>
-                        {formatStageTimestamp(timing?.endTime)}
-                        {' → '}
-                        {nextTiming?.startTime ? formatStageTimestamp(nextTiming.startTime) : 'Waiting'}
-                      </span>
-                    </div>
-                    <em>{formatStageDuration(timing?.endTime, nextTiming?.startTime)}</em>
-                  </div>
-                )}
-              </Fragment>
-            );
-          })}
-          {visibleTerminalStatuses.map((status, index) => {
-            const timing = [...recordedTimings].reverse().find((item) => item.status === status);
-            return (
-              <div className={`document-flow-stage ${status} completed`} key={status}>
-                <div className="document-flow-marker">
-                  <CheckCircle2 size={18} />
-                  {index < visibleTerminalStatuses.length - 1 && <span />}
-                </div>
-                <div className="document-flow-stage-card">
-                  <div className="document-flow-stage-heading">
-                    <strong>{documentStatusLabel(status)}</strong>
-                    <span>Completed</span>
-                  </div>
-                  <dl>
-                    <div><dt>Start time</dt><dd>{formatStageTimestamp(timing?.startTime)}</dd></div>
-                    <div><dt>End time</dt><dd>{formatStageTimestamp(timing?.endTime)}</dd></div>
-                    <div><dt>Duration</dt><dd>{formatStageDuration(timing?.startTime, timing?.endTime)}</dd></div>
-                  </dl>
-                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+      {showErrorDetails && (
+        <div className="modal-backdrop document-error-backdrop" role="dialog" aria-modal="true" onClick={() => setShowErrorDetails(false)}>
+          <section className="confirm-modal document-error-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading">
+              <div>
+                <h2>Document error details</h2>
+                <p>{document.originalName}</p>
               </div>
-            );
-          })}
+              <button type="button" className="icon-button" title="Close error details" onClick={() => setShowErrorDetails(false)}>
+                <X size={17} />
+              </button>
+            </div>
+            <pre className="document-error-content">{document.error || 'No error details were recorded for this failed document.'}</pre>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setShowErrorDetails(false)}>Close</button>
+            </div>
+          </section>
         </div>
-      </section>
-    </div>
+      )}
+    </>
   );
 }
 

@@ -1,5 +1,7 @@
 const { AsyncLocalStorage } = require('async_hooks');
 const { randomUUID } = require('crypto');
+const documentProcessingCommon = require('./documentProcessingCommon');
+const documentEvents = require('./documentEvents');
 
 const currentLogger = new AsyncLocalStorage();
 const levels = new Set(['log', 'info', 'warn', 'error', 'debug', 'trace']);
@@ -52,9 +54,33 @@ function withFunctionLogging(name, source, handler, { documentMessage = false } 
         logger.write('info', `Function ${name} returned (durationMs=${Date.now() - started}).`);
         return result;
       } catch (error) {
-        const errorType = typeof error?.name === 'string' && /^[a-zA-Z][a-zA-Z0-9]{0,80}$/.test(error.name) ? error.name : 'Error';
+        let failure = error;
+        const documentId = documentMessage
+          ? documentIdFromMessage(message)
+          : /^[a-f\d]{24}$/i.test(logger.correlationId) ? logger.correlationId : undefined;
+        if (documentId) {
+          try {
+            const client = await documentProcessingCommon.getClient();
+            const documents = client.db().collection('incomingdocuments');
+            const recorded = await documentProcessingCommon.recordDocumentProcessingError(
+              documents, message, name, error,
+            );
+            if (recorded) {
+              await documentEvents.publishDocumentChanged(
+                documents,
+                new documentProcessingCommon.ObjectId(documentId),
+                ['status', 'error'],
+                logger.scopedContext(),
+              );
+            }
+          } catch (captureError) {
+            failure = new AggregateError([error, captureError], 'Processing failed and the error could not be recorded on the document.');
+            logger.write('error', `Unable to persist processing error (captureType=${captureError?.name || 'Error'}).`);
+          }
+        }
+        const errorType = typeof failure?.name === 'string' && /^[a-zA-Z][a-zA-Z0-9]{0,80}$/.test(failure.name) ? failure.name : 'Error';
         logger.write('error', `Function ${name} threw (durationMs=${Date.now() - started}, errorType=${errorType}).`);
-        throw error;
+        throw failure;
       }
     });
   };

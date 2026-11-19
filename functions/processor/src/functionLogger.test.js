@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { InvocationContext } = require('@azure/functions');
 const { getFunctionLogger, withFunctionLogging } = require('./functionLogger');
+const documentProcessingCommon = require('./documentProcessingCommon');
+const documentEvents = require('./documentEvents');
 
 test('correlates concurrent invocation and retry logs without mixing document IDs', async () => {
   const entries = [];
@@ -51,4 +53,50 @@ test('switches to the document ID once ingestion has resolved it', async () => {
   }));
   assert.match(entries[0], /correlationId=invocation:ingest-1/);
   assert.ok(entries.slice(1).every((entry) => entry.includes('correlationId=0123456789abcdef01234567')));
+});
+
+test('persists uncaught processing errors on the document instance', async () => {
+  const documentId = '0123456789abcdef01234567';
+  const originalGetClient = documentProcessingCommon.getClient;
+  const originalPublishDocumentChanged = documentEvents.publishDocumentChanged;
+  const document = { status: 'classification_started', revision: 7 };
+  let update;
+  let publishedFields;
+  const documents = {
+    findOne: async () => document,
+    updateOne: async (filter, operation) => {
+      update = { filter, operation };
+      return { matchedCount: 1 };
+    },
+  };
+  documentProcessingCommon.getClient = async () => ({
+    db: () => ({ collection: () => documents }),
+  });
+  documentEvents.publishDocumentChanged = async (_, __, changedFields) => {
+    publishedFields = changedFields;
+  };
+
+  const error = new Error('configuration lookup failed');
+  const handler = withFunctionLogging('classifyDocument', 'document-classification', async () => {
+    throw error;
+  }, { documentMessage: true });
+
+  try {
+    await assert.rejects(
+      handler({ documentId }, new InvocationContext({
+        invocationId: 'capture-error',
+        logHandler: () => {},
+      })),
+      (actual) => actual === error,
+    );
+    assert.equal(update.filter.status, 'classification_started');
+    assert.equal(update.filter.revision, 7);
+    assert.equal(update.operation[0].$set.status, 'failed');
+    assert.match(update.operation[0].$set.error.$literal, /Unhandled classifyDocument processing error/);
+    assert.ok(update.operation[0].$set.error.$literal.includes(error.stack));
+    assert.deepEqual(publishedFields, ['status', 'error']);
+  } finally {
+    documentProcessingCommon.getClient = originalGetClient;
+    documentEvents.publishDocumentChanged = originalPublishDocumentChanged;
+  }
 });
