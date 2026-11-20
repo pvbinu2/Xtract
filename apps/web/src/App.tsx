@@ -3666,13 +3666,13 @@ function ConfigurationScreen({
   const [configurationTab, setConfigurationTab] = useState<'summary' | 'deployment' | 'ai' | 'scaling' | 'caching' | 'encryption' | 'processing' | 'downstream'>('summary');
   const configurationTabs = [
     { id: 'summary', label: 'Summary', icon: Gauge },
-    { id: 'deployment', label: 'Operating model', icon: Building2 },
+    { id: 'processing', label: 'Processing', icon: ScanText },
+    { id: 'downstream', label: 'Downstream', icon: Network },
     { id: 'ai', label: 'AI Services', icon: Sparkles },
     { id: 'scaling', label: 'Scaling', icon: TrendingUp },
     { id: 'caching', label: 'Caching', icon: Database },
     { id: 'encryption', label: 'Encryption', icon: ShieldCheck },
-    { id: 'processing', label: 'Processing', icon: ScanText },
-    { id: 'downstream', label: 'Downstream', icon: Network },
+    { id: 'deployment', label: 'Operating model', icon: Building2 },
   ] as const;
   const pdfIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.includes('application/pdf'));
   const imageIngestionTypes = config.ingestionFileTypes.filter((fileType) => fileType.mimeTypes.some((mimeType) => mimeType.startsWith('image/')));
